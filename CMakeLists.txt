@@ -45,6 +45,8 @@ else()
     add_library(zstreamer STATIC ${CORE_SOURCES})
 endif()
 
+include(GNUInstallDirs)
+
 target_include_directories(zstreamer
     PUBLIC  ${ZSTREAMER_INCLUDE_DIR}
     PRIVATE ${CMAKE_SOURCE_DIR}/src
@@ -68,6 +70,8 @@ set(ELEMENT_SOURCES
     src/h264_encoder.c
     src/mp4_muxer.c
     src/file_sink.c
+    src/alsa_source.c
+    src/aac_encoder.c
 )
 
 # ── Tests ────────────────────────────────────────────────────────────────
