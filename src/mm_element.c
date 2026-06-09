@@ -48,6 +48,13 @@ mm_element_set_state(mm_element_t* el, mm_state_t state)
 {
     if (!el) return MM_ERROR;
 
+    if (state != MM_STATE_NULL && state != MM_STATE_READY &&
+        state != MM_STATE_PAUSED && state != MM_STATE_PLAYING) {
+        return MM_ERROR;
+    }
+
+    if (el->state == state) return MM_OK;
+
     /* Call the appropriate lifecycle hook */
     mm_result_t ret = MM_OK;
 

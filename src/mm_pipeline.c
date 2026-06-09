@@ -4,6 +4,7 @@
 
 #include "mm_pipeline.h"
 #include <stdlib.h>
+#include <string.h>
 
 mm_pipeline_t*
 mm_pipeline_create(void)
@@ -71,18 +72,23 @@ mm_pipeline_set_state(mm_pipeline_t* pipe, mm_state_t state)
 {
     if (!pipe) return MM_ERROR;
 
-    mm_result_t ret = MM_OK;
+    mm_state_t old_state = pipe->state;
+    if (old_state == state) return MM_OK;
 
     /* Propagate state to all elements */
     for (uint32_t i = 0; i < pipe->nb_elements; i++) {
         mm_result_t r = mm_element_set_state(pipe->elements[i], state);
-        if (r != MM_OK) ret = r;
+        if (r != MM_OK) {
+            /* Error rollback: revert previous elements to old_state */
+            for (uint32_t j = 0; j < i; j++) {
+                mm_element_set_state(pipe->elements[j], old_state);
+            }
+            return r;
+        }
     }
 
-    if (ret == MM_OK)
-        pipe->state = state;
-
-    return ret;
+    pipe->state = state;
+    return MM_OK;
 }
 
 mm_result_t
@@ -95,4 +101,62 @@ mm_result_t
 mm_pipeline_stop(mm_pipeline_t* pipe)
 {
     return mm_pipeline_set_state(pipe, MM_STATE_NULL);
+}
+
+static void
+dfs_sort(mm_element_t* el, mm_element_t** temp, uint32_t* temp_idx, int* visited, mm_pipeline_t* pipe)
+{
+    int idx = -1;
+    for (uint32_t i = 0; i < pipe->nb_elements; i++) {
+        if (pipe->elements[i] == el) {
+            idx = (int)i;
+            break;
+        }
+    }
+    if (idx == -1 || visited[idx]) return;
+
+    visited[idx] = 1;
+
+    for (uint32_t i = 0; i < el->nb_src_pads; i++) {
+        mm_pad_t* src_pad = el->src_pads[i];
+        if (src_pad->peer && src_pad->peer->parent) {
+            dfs_sort(src_pad->peer->parent, temp, temp_idx, visited, pipe);
+        }
+    }
+
+    temp[--(*temp_idx)] = el;
+}
+
+void
+mm_pipeline_topological_sort(mm_pipeline_t* pipe)
+{
+    if (!pipe || pipe->nb_elements <= 1) return;
+
+    mm_element_t** temp = malloc(pipe->nb_elements * sizeof(mm_element_t*));
+    if (!temp) return;
+
+    int* visited = calloc(pipe->nb_elements, sizeof(int));
+    if (!visited) {
+        free(temp);
+        return;
+    }
+
+    uint32_t temp_idx = pipe->nb_elements;
+
+    for (uint32_t i = 0; i < pipe->nb_elements; i++) {
+        if (pipe->elements[i]->nb_sink_pads == 0) {
+            dfs_sort(pipe->elements[i], temp, &temp_idx, visited, pipe);
+        }
+    }
+
+    for (uint32_t i = 0; i < pipe->nb_elements; i++) {
+        if (!visited[i]) {
+            dfs_sort(pipe->elements[i], temp, &temp_idx, visited, pipe);
+        }
+    }
+
+    memcpy(pipe->elements, temp, pipe->nb_elements * sizeof(mm_element_t*));
+
+    free(visited);
+    free(temp);
 }

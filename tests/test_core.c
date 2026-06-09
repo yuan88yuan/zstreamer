@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <time.h>
 
 #include "mm_types.h"
 #include "mm_buffer.h"
@@ -15,6 +16,7 @@
 #include "mm_element.h"
 #include "mm_pipeline.h"
 #include "mm_queue.h"
+#include "mm_scheduler.h"
 
 static int g_tests_run   = 0;
 static int g_tests_passed = 0;
@@ -346,6 +348,259 @@ test_queue_flush(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   Scheduler / Pipeline integration tests (Phase 2)
+   ═══════════════════════════════════════════════════════════════ */
+static void
+mock_buf_destroy(mm_buffer_t* b)
+{
+    free(b->payload);
+}
+
+static mm_result_t
+mock_source_process(mm_element_t* el, mm_buffer_t* in, mm_buffer_t** out)
+{
+    (void)in;
+    int* counter = el->priv;
+    if (*counter >= 5) {
+        return MM_EOF;
+    }
+
+    mm_buffer_t* buf = mm_buffer_create(MM_BUFFER_USER);
+    if (!buf) return MM_ERROR;
+
+    int* data = malloc(sizeof(int));
+    if (!data) {
+        mm_buffer_unref(buf);
+        return MM_ERROR;
+    }
+    *data = ++(*counter);
+    buf->payload = data;
+    buf->destroy = mock_buf_destroy;
+
+    *out = buf;
+    return MM_OK;
+}
+
+static mm_result_t
+mock_transform_process(mm_element_t* el, mm_buffer_t* in, mm_buffer_t** out)
+{
+    (void)el;
+    if (!in || !in->payload) return MM_ERROR;
+
+    int val = *(int*)in->payload;
+
+    mm_buffer_t* buf = mm_buffer_create(MM_BUFFER_USER);
+    if (!buf) return MM_ERROR;
+
+    int* data = malloc(sizeof(int));
+    if (!data) {
+        mm_buffer_unref(buf);
+        return MM_ERROR;
+    }
+    *data = val * 2;
+    buf->payload = data;
+    buf->destroy = mock_buf_destroy;
+
+    *out = buf;
+    return MM_OK;
+}
+
+typedef struct {
+    int count;
+    int sum;
+} mock_sink_t;
+
+static mm_result_t
+mock_sink_process(mm_element_t* el, mm_buffer_t* in, mm_buffer_t** out)
+{
+    (void)out;
+    mock_sink_t* sink = el->priv;
+    if (!in || !in->payload) return MM_ERROR;
+
+    int val = *(int*)in->payload;
+    sink->count++;
+    sink->sum += val;
+
+    return MM_OK;
+}
+
+static void
+test_scheduler_single_threaded(void)
+{
+    TEST("scheduler single-threaded pipeline");
+
+    mm_pipeline_t* pipe = mm_pipeline_create();
+    mm_scheduler_config_t cfg = {
+        .mode = MM_SCHEDULER_SINGLE_THREAD,
+        .worker_threads = 1
+    };
+    mm_scheduler_t* sched = mm_scheduler_create(&cfg);
+    mm_scheduler_attach(sched, pipe);
+
+    int* source_counter = malloc(sizeof(int));
+    *source_counter = 0;
+    static mm_element_ops_t source_ops = {
+        .name = "mock_source",
+        .process = mock_source_process
+    };
+    mm_element_t* source = mm_element_create(&source_ops, source_counter);
+    mm_pad_t* src_pad = mm_pad_create("src", MM_PAD_SRC);
+    mm_element_add_pad(source, src_pad);
+
+    static mm_element_ops_t transform_ops = {
+        .name = "mock_transform",
+        .process = mock_transform_process
+    };
+    mm_element_t* transform = mm_element_create(&transform_ops, NULL);
+    mm_pad_t* trans_sink = mm_pad_create("sink", MM_PAD_SINK);
+    mm_pad_t* trans_src = mm_pad_create("src", MM_PAD_SRC);
+    mm_element_add_pad(transform, trans_sink);
+    mm_element_add_pad(transform, trans_src);
+
+    mock_sink_t* sink_data = calloc(1, sizeof(mock_sink_t));
+    static mm_element_ops_t sink_ops = {
+        .name = "mock_sink",
+        .process = mock_sink_process
+    };
+    mm_element_t* sink = mm_element_create(&sink_ops, sink_data);
+    mm_pad_t* sink_pad = mm_pad_create("sink", MM_PAD_SINK);
+    mm_element_add_pad(sink, sink_pad);
+
+    mm_pipeline_add(pipe, source);
+    mm_pipeline_add(pipe, transform);
+    mm_pipeline_add(pipe, sink);
+
+    mm_pad_link(src_pad, trans_sink);
+    mm_pad_link(trans_src, sink_pad);
+
+    mm_pipeline_set_state(pipe, MM_STATE_PLAYING);
+    mm_scheduler_run(sched);
+
+    struct timespec ts = { .tv_sec = 0, .tv_nsec = 50000000 }; /* 50 ms */
+    nanosleep(&ts, NULL);
+
+    mm_pipeline_set_state(pipe, MM_STATE_NULL);
+    mm_scheduler_stop(sched);
+
+    assert(sink_data->count == 5);
+    assert(sink_data->sum == 30);
+
+    mm_scheduler_destroy(sched);
+    mm_pipeline_destroy(pipe);
+
+    PASS();
+}
+
+static void
+test_scheduler_multi_threaded(void)
+{
+    TEST("scheduler multi-threaded pipeline with queues");
+
+    mm_pipeline_t* pipe = mm_pipeline_create();
+    mm_scheduler_config_t cfg = {
+        .mode = MM_SCHEDULER_MULTI_THREAD,
+        .worker_threads = 3
+    };
+    mm_scheduler_t* sched = mm_scheduler_create(&cfg);
+    mm_scheduler_attach(sched, pipe);
+
+    int* source_counter = malloc(sizeof(int));
+    *source_counter = 0;
+    static mm_element_ops_t source_ops = {
+        .name = "mock_source",
+        .process = mock_source_process
+    };
+    mm_element_t* source = mm_element_create(&source_ops, source_counter);
+    mm_pad_t* src_pad = mm_pad_create("src", MM_PAD_SRC);
+    mm_element_add_pad(source, src_pad);
+
+    static mm_element_ops_t transform_ops = {
+        .name = "mock_transform",
+        .process = mock_transform_process
+    };
+    mm_element_t* transform = mm_element_create(&transform_ops, NULL);
+    mm_pad_t* trans_sink = mm_pad_create("sink", MM_PAD_SINK);
+    mm_pad_t* trans_src = mm_pad_create("src", MM_PAD_SRC);
+    mm_element_add_pad(transform, trans_sink);
+    mm_element_add_pad(transform, trans_src);
+
+    mock_sink_t* sink_data = calloc(1, sizeof(mock_sink_t));
+    static mm_element_ops_t sink_ops = {
+        .name = "mock_sink",
+        .process = mock_sink_process
+    };
+    mm_element_t* sink = mm_element_create(&sink_ops, sink_data);
+    mm_pad_t* sink_pad = mm_pad_create("sink", MM_PAD_SINK);
+    mm_element_add_pad(sink, sink_pad);
+
+    mm_pipeline_add(pipe, source);
+    mm_pipeline_add(pipe, transform);
+    mm_pipeline_add(pipe, sink);
+
+    mm_pad_link(src_pad, trans_sink);
+    mm_pad_link(trans_src, sink_pad);
+
+    mm_pipeline_set_state(pipe, MM_STATE_PLAYING);
+    mm_scheduler_run(sched);
+
+    struct timespec ts = { .tv_sec = 0, .tv_nsec = 50000000 }; /* 50 ms */
+    nanosleep(&ts, NULL);
+
+    mm_pipeline_set_state(pipe, MM_STATE_NULL);
+    mm_scheduler_stop(sched);
+
+    assert(sink_data->count == 5);
+    assert(sink_data->sum == 30);
+
+    mm_scheduler_destroy(sched);
+    mm_pipeline_destroy(pipe);
+
+    PASS();
+}
+
+static void
+test_pipeline_topological_sort_check(void)
+{
+    TEST("pipeline topological sort");
+
+    mm_pipeline_t* pipe = mm_pipeline_create();
+
+    mm_element_t* a = mm_element_create(&g_dummy_ops, NULL);
+    mm_pad_t* a_src = mm_pad_create("src", MM_PAD_SRC);
+    mm_element_add_pad(a, a_src);
+
+    mm_element_t* b = mm_element_create(&g_dummy_ops, NULL);
+    mm_pad_t* b_sink = mm_pad_create("sink", MM_PAD_SINK);
+    mm_pad_t* b_src = mm_pad_create("src", MM_PAD_SRC);
+    mm_element_add_pad(b, b_sink);
+    mm_element_add_pad(b, b_src);
+
+    mm_element_t* c = mm_element_create(&g_dummy_ops, NULL);
+    mm_pad_t* c_sink = mm_pad_create("sink", MM_PAD_SINK);
+    mm_element_add_pad(c, c_sink);
+
+    mm_pad_link(a_src, b_sink);
+    mm_pad_link(b_src, c_sink);
+
+    mm_pipeline_add(pipe, c);
+    mm_pipeline_add(pipe, b);
+    mm_pipeline_add(pipe, a);
+
+    assert(pipe->elements[0] == c);
+    assert(pipe->elements[1] == b);
+    assert(pipe->elements[2] == a);
+
+    mm_pipeline_topological_sort(pipe);
+
+    assert(pipe->elements[0] == a);
+    assert(pipe->elements[1] == b);
+    assert(pipe->elements[2] == c);
+
+    mm_pipeline_destroy(pipe);
+    PASS();
+}
+
+/* ═══════════════════════════════════════════════════════════════
    Main
    ═══════════════════════════════════════════════════════════════ */
 int main(void)
@@ -377,12 +632,18 @@ int main(void)
     test_pipeline_create_destroy();
     test_pipeline_add_remove();
     test_pipeline_state_propagation();
+    test_pipeline_topological_sort_check();
 
     /* ── Queue ── */
     printf("[queue]\n");
     test_queue_push_pop();
     test_queue_timeout();
     test_queue_flush();
+
+    /* ── Scheduler (Phase 2) ── */
+    printf("[scheduler]\n");
+    test_scheduler_single_threaded();
+    test_scheduler_multi_threaded();
 
     /* ── Summary ── */
     printf("\n──────────────────────────────────────────────────\n");

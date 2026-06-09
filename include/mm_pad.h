@@ -61,6 +61,17 @@ mm_result_t mm_pad_link(
 void mm_pad_unlink(
     mm_pad_t* pad);
 
+mm_result_t mm_pad_push(
+    mm_pad_t* pad,
+    mm_buffer_t* buf);
+
+mm_result_t mm_pad_pull(
+    mm_pad_t* pad,
+    mm_buffer_t** out);
+
+void mm_pad_reset_callbacks(
+    mm_pad_t* pad);
+
 #ifdef __cplusplus
 }
 #endif

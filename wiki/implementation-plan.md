@@ -30,19 +30,19 @@ The fundamental types and lifecycle management. Everything after this can be tes
 
 ---
 
-## Phase 2 — Scheduler Integration & Pipeline Wiring
+## Phase 2 — Scheduler Integration & Pipeline Wiring (✅ done)
 
 Connect the dots between the scheduler and the element graph with an internal queueing model (queues auto-inserted by the scheduler).
 
-- [ ] **Pad push/pull semantics**: wire element `process()` into pad push/pull callbacks
-- [ ] **Scheduler element iteration**: walk the pipeline in topological order, assign element chains to worker threads
-- [ ] **Queue auto-insertion**: automatically insert queues between linked elements when multi-thread scheduler is used
-- [ ] **State machine hardening**: validate transitions, handle error rollback
-- [ ] **EOS signalling**: propagate end-of-stream through the pipeline
+- [x] **Pad push/pull semantics**: wire element `process()` into pad push/pull callbacks
+- [x] **Scheduler element iteration**: walk the pipeline in topological order, assign element chains to worker threads
+- [x] **Queue auto-insertion**: automatically insert queues between linked elements when multi-thread scheduler is used
+- [x] **State machine hardening**: validate transitions, handle error rollback
+- [x] **EOS signalling**: propagate end-of-stream through the pipeline
 
 **Test deliverables:**
-- Simple pipeline with 2–3 mock elements feeding buffers end-to-end
-- Multi-thread stress test with queue back-pressure
+- [x] Simple pipeline with 2–3 mock elements feeding buffers end-to-end
+- [x] Multi-thread stress test with queue back-pressure
 
 ---
 

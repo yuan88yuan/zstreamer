@@ -44,6 +44,9 @@ mm_result_t mm_pipeline_start(
 mm_result_t mm_pipeline_stop(
     mm_pipeline_t* pipe);
 
+void mm_pipeline_topological_sort(
+    mm_pipeline_t* pipe);
+
 #ifdef __cplusplus
 }
 #endif

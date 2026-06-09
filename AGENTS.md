@@ -38,14 +38,17 @@ It provides a **GStreamer-like** pipeline architecture: elements connected via p
 │   ├── v4l2_source.c  ← V4L2 camera capture (stub)
 │   ├── h264_encoder.c ← x264 H.264 encoder (stub)
 │   ├── mp4_muxer.c    ← FFmpeg/libavformat MP4 muxer (stub)
-│   └── file_sink.c    ← FILE* writer (stub, open implemented)
+│   ├── file_sink.c    ← FILE* writer (stub, open implemented)
+│   ├── alsa_source.c  ← ALSA audio capture (stub)
+│   └── aac_encoder.c  ← AAC audio encoder (stub)
 ├── tests/
 │   ├── test_core.c    ← 15 unit tests: buffer, pad, element, pipeline, queue
 │   └── example_record.c ← Full pipeline demo (links all elements)
 └── wiki/
     ├── architecture.md        ← Detailed design doc
-    ├── implementation-plan.md ← Step-by-step roadmap (8 phases)
-    └── pipeline-flow.md       ← Scheduler flow diagram
+    ├── implementation-plan.md ← Step-by-step roadmap (10 phases)
+    ├── pipeline-flow.md       ← Scheduler flow diagram
+    └── future.md              ← Planned features with Chinese notes
 ```
 
 ---
@@ -59,9 +62,26 @@ cmake .. -DBUILD_TESTS=ON
 make -j$(nproc)
 ctest --output-on-failure
 
-# Docker
+# Docker — one-shot test (fastest, uses cached build)
 docker build -t zstreamer .
-docker run --rm -it zstreamer
+docker run --rm zstreamer                     # runs ctest --output-on-failure
+
+# Docker — verbose test output
+docker run --rm --entrypoint bash zstreamer \
+    -c "/workspace/build/ctest -V"
+
+# Docker — interactive shell (source + build tree available)
+docker run --rm -it zstreamer bash            # starts in /workspace
+# then: cd /workspace/build && ctest -V
+
+# Docker — live code mount (edit on host, rebuild in container, no docker build needed)
+docker run --rm -it \
+    -v $(pwd):/workspace \
+    zstreamer bash
+# then: cd /workspace/build && cmake .. && make -j && ctest -V
+
+# Docker — rebuild after source changes
+docker build -t zstreamer . && docker run --rm zstreamer
 ```
 
 ### Build Options
@@ -71,6 +91,15 @@ docker run --rm -it zstreamer
 | `BUILD_TESTS`     | ON      | Build unit tests                      |
 | `BUILD_SHARED`    | OFF     | Build core as `.so` instead of `.a`   |
 | `ENABLE_PLUGINS`  | ON      | Enable dlopen-based plugin loading    |
+
+### Docker Targets
+
+The Dockerfile has two build targets:
+
+| Target | Command                                    | Purpose                       |
+|--------|--------------------------------------------|-------------------------------|
+| `ci`   | `docker run --rm zstreamer`                 | One-shot `ctest` (default)    |
+| `dev`  | `docker run --rm -it zstreamer bash`        | Interactive shell with build  |
 
 ---
 
@@ -104,8 +133,8 @@ MM_STATE_NULL  ──open──→  MM_STATE_READY  ──start──→  MM_STA
 |----------------------|----------------------------------|
 | Scaffolding          | ✅ CMake, Docker, git, AGENTS.md |
 | Core Framework       | ✅ All 8 core modules implemented|
-| Unit Tests           | ✅ 15 tests, all passing         |
-| Scheduler Integration| 🔄 Next — wiring elements to threads |
+| Unit Tests           | ✅ 18 tests, all passing         |
+| Scheduler Integration| ✅ Topological sort, wiring, auto-queues, EOS |
 | Element Stubs        | 📝 Implementations needed for v4l2, x264, mp4, file |
 | Caps Negotiation     | 📝 Future                        |
 | Dynamic Plugins      | 📝 Future                        |

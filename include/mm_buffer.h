@@ -24,6 +24,8 @@ typedef enum {
     MM_MEMORY_VULKAN
 } mm_memory_type_t;
 
+#define MM_BUFFER_FLAG_EOS (1 << 0)
+
 typedef struct {
 
     mm_memory_type_t type;
