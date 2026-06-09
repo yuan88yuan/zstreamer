@@ -9,6 +9,7 @@
 #include <alsa/asoundlib.h>
 
 #include "zst_element.h"
+#include "zst_log.h"
 #include "zst_buffer.h"
 
 typedef struct {
@@ -45,7 +46,7 @@ alsa_open(zst_element_t* el)
 
     int err = snd_pcm_open(&s->handle, "default", SND_PCM_STREAM_CAPTURE, 0);
     if (err < 0) {
-        printf("[alsasrc] Failed to open default ALSA capture device: %s. Falling back to synthetic source.\n", snd_strerror(err));
+        ZST_LOG_WARN("alsasrc", "Failed to open default ALSA capture device: %s. Falling back to synthetic source.", snd_strerror(err));
         s->is_mock = 1;
         s->handle = NULL;
         return ZST_OK;
@@ -59,7 +60,7 @@ alsa_open(zst_element_t* el)
                              1, // soft resample
                              500000); // 0.5s latency
     if (err < 0) {
-        printf("[alsasrc] Failed to set parameters: %s. Falling back to synthetic source.\n", snd_strerror(err));
+        ZST_LOG_WARN("alsasrc", "Failed to set parameters: %s. Falling back to synthetic source.", snd_strerror(err));
         snd_pcm_close(s->handle);
         s->handle = NULL;
         s->is_mock = 1;

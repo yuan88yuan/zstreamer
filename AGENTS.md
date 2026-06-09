@@ -26,7 +26,8 @@ It provides a **GStreamer-like** pipeline architecture: elements connected via p
 │   ├── zst_pipeline.h  ← Element container with state propagation
 │   ├── zst_queue.h     ← Thread-safe bounded buffer queue
 │   ├── zst_scheduler.h ← Single / multi-thread pipeline driver
-│   └── zst_plugin.h    ← Dynamic plugin loading (dlopen)
+│   ├── zst_plugin.h    ← Dynamic plugin loading (dlopen)
+│   └── zst_log.h       ← Lightweight logging system
 ├── src/               ← Core library + element implementations
 │   ├── zst_buffer.c
 │   ├── zst_pad.c
@@ -35,6 +36,7 @@ It provides a **GStreamer-like** pipeline architecture: elements connected via p
 │   ├── zst_queue.c
 │   ├── zst_queue_element.c ← First-class queue element
 │   ├── zst_scheduler.c
+│   ├── zst_log.c      ← Logging implementation
 │   ├── zst_plugin.c
 │   ├── v4l2_source.c  ← V4L2 camera capture (real V4L2 + mock fallback)
 │   ├── h264_encoder.c ← x264 H.264 encoder (real x264)

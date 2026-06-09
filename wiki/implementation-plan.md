@@ -63,6 +63,30 @@ v4l2src → queue → h264enc → queue → mp4mux → queue → filesink
 
 ---
 
+## Phase 3.5 — Logging System  (✅ done)
+
+A lightweight, thread-safe logging subsystem replacing ad-hoc `printf` calls.
+Provides compile-time-strippable, category-tagged log macros with runtime level
+filtering, source location capture, and custom output handler support.
+
+| Component   | Status | Notes                                                      |
+|-------------|--------|------------------------------------------------------------|
+| zst_log     | ✅ done  | Log levels (ERROR..TRACE), colour output, compile-time strip |
+
+- [x] `ZST_LOG_ERROR` / `ZST_LOG_WARN` / `ZST_LOG_INFO` / `ZST_LOG_DEBUG` / `ZST_LOG_TRACE` macros
+- [x] Compile-time ceiling (`ZST_LOG_LEVEL` define; debug builds default TRACE, release WARNING)
+- [x] Runtime level filter (`zst_log_set_level` / `zst_log_get_level`)
+- [x] Default handler: stderr with HH:MM:SS.mmm timestamp and ANSI colour when connected to a TTY
+- [x] Custom handler callback (`zst_log_set_handler`)
+- [x] Source location capture (`__FILE__`, `__LINE__`, `__func__`)
+- [x] Category tag per message (e.g. `"v4l2src"`, `"alsasrc"`)
+- [x] Thread-safe output via `pthread_mutex`
+- [x] All existing `printf`-based diagnostics migrated to `ZST_LOG_*`
+
+**Test deliverables:** ✅ Unit tests for level filtering, compile-time strip, custom handler, thread safety
+
+---
+
 ## Phase 4 — Real Element Implementations  (✅ done)
 
 Eight elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.

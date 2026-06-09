@@ -15,6 +15,7 @@
 #include <linux/videodev2.h>
 
 #include "zst_element.h"
+#include "zst_log.h"
 #include "zst_buffer.h"
 
 static void v4l2_buf_free(zst_buffer_t* buf);
@@ -64,7 +65,7 @@ v4l2_open(zst_element_t* el)
 
     s->fd = open("/dev/video0", O_RDWR | O_NONBLOCK);
     if (s->fd < 0) {
-        printf("[v4l2src] Failed to open /dev/video0. Falling back to synthetic source.\n");
+        ZST_LOG_WARN("v4l2src", "Failed to open /dev/video0. Falling back to synthetic source.");
         s->is_mock = 1;
         return ZST_OK;
     }
@@ -77,7 +78,7 @@ v4l2_open(zst_element_t* el)
     fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
     fmt.fmt.pix.field = V4L2_FIELD_NONE;
     if (ioctl(s->fd, VIDIOC_S_FMT, &fmt) < 0) {
-        printf("[v4l2src] VIDIOC_S_FMT failed. Falling back to synthetic source.\n");
+        ZST_LOG_WARN("v4l2src", "VIDIOC_S_FMT failed. Falling back to synthetic source.");
         close(s->fd);
         s->fd = -1;
         s->is_mock = 1;
@@ -90,7 +91,7 @@ v4l2_open(zst_element_t* el)
     req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     req.memory = V4L2_MEMORY_MMAP;
     if (ioctl(s->fd, VIDIOC_REQBUFS, &req) < 0) {
-        printf("[v4l2src] VIDIOC_REQBUFS failed. Falling back to synthetic source.\n");
+        ZST_LOG_WARN("v4l2src", "VIDIOC_REQBUFS failed. Falling back to synthetic source.");
         close(s->fd);
         s->fd = -1;
         s->is_mock = 1;
@@ -106,13 +107,13 @@ v4l2_open(zst_element_t* el)
         buf.memory = V4L2_MEMORY_MMAP;
         buf.index = i;
         if (ioctl(s->fd, VIDIOC_QUERYBUF, &buf) < 0) {
-            printf("[v4l2src] VIDIOC_QUERYBUF failed.\n");
+            ZST_LOG_ERROR("v4l2src", "VIDIOC_QUERYBUF failed.");
             goto error;
         }
         s->buffers[i].length = buf.length;
         s->buffers[i].start = mmap(NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, s->fd, buf.m.offset);
         if (s->buffers[i].start == MAP_FAILED) {
-            printf("[v4l2src] mmap failed.\n");
+            ZST_LOG_ERROR("v4l2src", "mmap failed.");
             goto error;
         }
     }
@@ -124,7 +125,7 @@ v4l2_open(zst_element_t* el)
         buf.memory = V4L2_MEMORY_MMAP;
         buf.index = i;
         if (ioctl(s->fd, VIDIOC_QBUF, &buf) < 0) {
-            printf("[v4l2src] VIDIOC_QBUF failed.\n");
+            ZST_LOG_ERROR("v4l2src", "VIDIOC_QBUF failed.");
             goto error;
         }
     }
@@ -173,7 +174,7 @@ v4l2_start(zst_element_t* el)
     if (!s->is_mock && s->fd >= 0) {
         enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         if (ioctl(s->fd, VIDIOC_STREAMON, &type) < 0) {
-            printf("[v4l2src] VIDIOC_STREAMON failed.\n");
+            ZST_LOG_ERROR("v4l2src", "VIDIOC_STREAMON failed.");
             return ZST_ERROR;
         }
     }

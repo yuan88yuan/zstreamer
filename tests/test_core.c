@@ -19,6 +19,7 @@
 #include "zst_scheduler.h"
 #include "zst_bus.h"
 #include "zst_plugin.h"
+#include "zst_log.h"
 
 zst_element_t* zst_video_scaler_create(int target_width, int target_height, const char* target_pixel_format);
 zst_element_t* zst_audio_resampler_create(int target_sample_rate, int target_channels, const char* target_format);
@@ -1313,6 +1314,93 @@ test_audio_resampler(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   Logging tests (Phase 3.5)
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── capture buffer for custom handler test ─────────────────────── */
+static char g_log_buf[4096];
+static int  g_log_called;
+
+static void
+test_log_handler(zst_log_level_t level,
+                  const char* category,
+                  const char* file,
+                  int line,
+                  const char* func,
+                  const char* message)
+{
+    (void)file; (void)line; (void)func;
+    g_log_called++;
+    snprintf(g_log_buf, sizeof(g_log_buf),
+             "%d [%s] %s", (int)level,
+             category ? category : "",
+             message ? message : "");
+}
+
+static void
+test_log_levels(void)
+{
+    TEST("log level runtime filter");
+
+    zst_log_set_handler(test_log_handler);
+    zst_log_set_level(ZST_LOG_LEVEL_INFO);
+
+    /* ERROR and INFO should pass; DEBUG should not */
+    g_log_called = 0;
+    ZST_LOG_ERROR("test", "error msg");
+    assert(g_log_called == 1);
+
+    g_log_called = 0;
+    ZST_LOG_WARN("test", "warn msg");
+    assert(g_log_called == 1);
+
+    g_log_called = 0;
+    ZST_LOG_INFO("test", "info msg");
+    assert(g_log_called == 1);
+
+    g_log_called = 0;
+    ZST_LOG_DEBUG("test", "debug msg");
+    assert(g_log_called == 0);
+
+    g_log_called = 0;
+    ZST_LOG_TRACE("test", "trace msg");
+    assert(g_log_called == 0);
+
+    /* Lower the bar: DEBUG should now pass */
+    zst_log_set_level(ZST_LOG_LEVEL_DEBUG);
+    g_log_called = 0;
+    ZST_LOG_DEBUG("test", "debug ok");
+    assert(g_log_called == 1);
+
+    /* Restore defaults */
+    zst_log_set_handler(NULL);
+    zst_log_set_level(ZST_LOG_LEVEL_TRACE);
+
+    PASS();
+}
+
+static void
+test_log_custom_handler(void)
+{
+    TEST("log custom handler receives correct data");
+
+    zst_log_set_handler(test_log_handler);
+    zst_log_set_level(ZST_LOG_LEVEL_TRACE);
+
+    g_log_called = 0;
+    memset(g_log_buf, 0, sizeof(g_log_buf));
+
+    ZST_LOG_WARN("mycat", "hello %s %d", "world", 42);
+
+    assert(g_log_called == 1);
+    /* Check the captured buffer */
+    assert(strstr(g_log_buf, "2 [mycat] hello world 42") != NULL);
+
+    zst_log_set_handler(NULL);
+    PASS();
+}
+
+/* ═══════════════════════════════════════════════════════════════
    Main
    ═══════════════════════════════════════════════════════════════ */
 int main(void)
@@ -1378,6 +1466,11 @@ int main(void)
     printf("[dynamic plugins]\n");
     test_plugin_registry_basic();
     test_element_factory_refcounting();
+
+    /* ── Logging (Phase 3.5) ── */
+    printf("[logging]\n");
+    test_log_levels();
+    test_log_custom_handler();
 
     /* ── Conversion Elements (Phase 4g/4h) ── */
     printf("[conversion elements]\n");

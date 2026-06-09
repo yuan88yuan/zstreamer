@@ -67,6 +67,7 @@ set(CORE_SOURCES
     src/zst_queue_element.c
     src/zst_scheduler.c
     src/zst_bus.c
+    src/zst_log.c
 )
 
 if(ENABLE_PLUGINS)
@@ -86,6 +87,9 @@ target_include_directories(zstreamer
     PUBLIC  ${ZSTREAMER_INCLUDE_DIR}
     PRIVATE ${CMAKE_SOURCE_DIR}/src
 )
+
+# Required for shared plugin libraries that link against the static lib
+set_target_properties(zstreamer PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 target_link_libraries(zstreamer
     PUBLIC  Threads::Threads

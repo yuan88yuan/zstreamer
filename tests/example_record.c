@@ -2,6 +2,7 @@
 #include <stdlib.h>
 
 #include "zst_pipeline.h"
+#include "zst_log.h"
 #include "zst_scheduler.h"
 #include "zst_pad.h"
 #include "zst_element.h"
@@ -151,7 +152,7 @@ int main(void)
 
     zst_scheduler_run(sched);
 
-    printf("recording...\n");
+    ZST_LOG_INFO("example", "recording...");
 
     getchar();
 
