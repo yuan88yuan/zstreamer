@@ -3,6 +3,7 @@
 =============================================================================*/
 
 #include "mm_pipeline.h"
+#include "mm_bus.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -16,6 +17,7 @@ mm_pipeline_create(void)
     pipe->nb_elements = 0;
     pipe->state       = MM_STATE_NULL;
     pipe->priv        = NULL;
+    pipe->bus         = mm_bus_create();
 
     return pipe;
 }
@@ -29,8 +31,18 @@ mm_pipeline_destroy(mm_pipeline_t* pipe)
     for (uint32_t i = pipe->nb_elements; i > 0; i--)
         mm_element_destroy(pipe->elements[i - 1]);
 
+    if (pipe->bus) {
+        mm_bus_destroy(pipe->bus);
+    }
+
     free(pipe->elements);
     free(pipe);
+}
+
+mm_bus_t*
+mm_pipeline_get_bus(mm_pipeline_t* pipe)
+{
+    return pipe ? pipe->bus : NULL;
 }
 
 mm_result_t
@@ -44,6 +56,7 @@ mm_pipeline_add(mm_pipeline_t* pipe, mm_element_t* el)
 
     els[pipe->nb_elements++] = el;
     pipe->elements = els;
+    el->bus = pipe->bus;
     return MM_OK;
 }
 
@@ -64,7 +77,11 @@ mm_pipeline_remove(mm_pipeline_t* pipe, mm_element_t* el)
         }
     }
 
-    return found ? MM_OK : MM_ERROR;
+    if (found) {
+        el->bus = NULL;
+        return MM_OK;
+    }
+    return MM_ERROR;
 }
 
 mm_result_t
@@ -83,11 +100,20 @@ mm_pipeline_set_state(mm_pipeline_t* pipe, mm_state_t state)
             for (uint32_t j = 0; j < i; j++) {
                 mm_element_set_state(pipe->elements[j], old_state);
             }
+            /* Post MM_EVENT_ERROR */
+            if (pipe->bus) {
+                mm_event_t* ev = mm_event_new_error(pipe->elements[i], r, "Element failed to set state");
+                mm_bus_post(pipe->bus, ev);
+            }
             return r;
         }
     }
 
     pipe->state = state;
+    if (pipe->bus) {
+        mm_event_t* ev = mm_event_new_state_changed(NULL, old_state, state);
+        mm_bus_post(pipe->bus, ev);
+    }
     return MM_OK;
 }
 

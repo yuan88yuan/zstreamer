@@ -7,6 +7,7 @@
 #include "mm_pad.h"
 #include "mm_element.h"
 #include "mm_buffer.h"
+#include "mm_bus.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -19,6 +20,11 @@ default_sink_pad_push(mm_pad_t* pad, mm_buffer_t* buf)
     if (buf && (buf->flags & MM_BUFFER_FLAG_EOS)) {
         if (el->nb_src_pads > 0) {
             return mm_pad_push(el->src_pads[0], buf);
+        }
+        /* Sink element receiving EOS */
+        if (el->bus) {
+            mm_event_t* eos_ev = mm_event_new_eos(el);
+            mm_bus_post(el->bus, eos_ev);
         }
         return MM_OK;
     }
@@ -39,6 +45,13 @@ default_sink_pad_push(mm_pad_t* pad, mm_buffer_t* buf)
         }
     }
 
+    if (ret != MM_OK && ret != MM_EOF && ret != MM_TIMEOUT && ret != MM_AGAIN) {
+        if (el->bus) {
+            mm_event_t* err_ev = mm_event_new_error(el, ret, "Element push processing failed");
+            mm_bus_post(el->bus, err_ev);
+        }
+    }
+
     return ret;
 }
 
@@ -54,7 +67,15 @@ default_src_pad_pull(mm_pad_t* pad, mm_buffer_t** out)
     if (el->nb_sink_pads > 0) {
         mm_buffer_t* in_buf = NULL;
         ret = mm_pad_pull(el->sink_pads[0], &in_buf);
-        if (ret != MM_OK) return ret;
+        if (ret != MM_OK) {
+            if (ret != MM_EOF && ret != MM_TIMEOUT && ret != MM_AGAIN) {
+                if (el->bus) {
+                    mm_event_t* err_ev = mm_event_new_error(el, ret, "Upstream pull failed");
+                    mm_bus_post(el->bus, err_ev);
+                }
+            }
+            return ret;
+        }
 
         if (in_buf && (in_buf->flags & MM_BUFFER_FLAG_EOS)) {
             *out = in_buf;
@@ -73,6 +94,13 @@ default_src_pad_pull(mm_pad_t* pad, mm_buffer_t** out)
 
     if (ret == MM_OK) {
         *out = out_buf;
+    } else {
+        if (ret != MM_EOF && ret != MM_TIMEOUT && ret != MM_AGAIN) {
+            if (el->bus) {
+                mm_event_t* err_ev = mm_event_new_error(el, ret, "Element pull processing failed");
+                mm_bus_post(el->bus, err_ev);
+            }
+        }
     }
 
     return ret;

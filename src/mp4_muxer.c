@@ -274,3 +274,39 @@ mm_mp4_muxer_create(void)
 
     return el;
 }
+
+#ifdef BUILDING_PLUGIN
+#include "mm_plugin.h"
+#include <string.h>
+
+static mm_element_t*
+plugin_create_element(const char* name)
+{
+    if (strcmp(name, "mp4mux") == 0) {
+        return mm_mp4_muxer_create();
+    }
+    return NULL;
+}
+
+static mm_plugin_t g_plugin = {
+    .desc = {
+        .name = "mp4muxer_plugin",
+        .author = "Antigravity",
+        .version = "1.0.0",
+        .init = NULL,
+        .deinit = NULL
+    },
+    .create_element = plugin_create_element
+};
+
+MM_PLUGIN_EXPORT
+mm_plugin_t*
+mm_get_plugin(void)
+{
+    mm_plugin_t* p = malloc(sizeof(*p));
+    if (p) {
+        *p = g_plugin;
+    }
+    return p;
+}
+#endif

@@ -19,11 +19,16 @@ struct mm_pipeline {
     mm_state_t state;
 
     void* priv;
+
+    mm_bus_t* bus;
 };
 
 mm_pipeline_t* mm_pipeline_create(void);
 
 void mm_pipeline_destroy(
+    mm_pipeline_t* pipe);
+
+mm_bus_t* mm_pipeline_get_bus(
     mm_pipeline_t* pipe);
 
 mm_result_t mm_pipeline_add(

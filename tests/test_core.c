@@ -17,6 +17,8 @@
 #include "mm_pipeline.h"
 #include "mm_queue.h"
 #include "mm_scheduler.h"
+#include "mm_bus.h"
+#include "mm_plugin.h"
 
 static int g_tests_run   = 0;
 static int g_tests_passed = 0;
@@ -880,6 +882,247 @@ test_pad_negotiate_and_link(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   Event Bus tests (Phase 6)
+   ═══════════════════════════════════════════════════════════════ */
+static void
+test_event_create_destroy(void)
+{
+    TEST("event create / destroy");
+    
+    mm_event_t* ev1 = mm_event_new_eos(NULL);
+    assert(ev1 != NULL);
+    assert(ev1->type == MM_EVENT_EOS);
+    assert(ev1->src == NULL);
+    mm_event_destroy(ev1);
+    
+    mm_event_t* ev2 = mm_event_new_error(NULL, MM_ERROR, "test error");
+    assert(ev2 != NULL);
+    assert(ev2->type == MM_EVENT_ERROR);
+    assert(ev2->as.error.result == MM_ERROR);
+    assert(strcmp(ev2->as.error.message, "test error") == 0);
+    mm_event_destroy(ev2);
+    
+    mm_event_t* ev3 = mm_event_new_state_changed(NULL, MM_STATE_NULL, MM_STATE_READY);
+    assert(ev3 != NULL);
+    assert(ev3->type == MM_EVENT_STATE_CHANGED);
+    assert(ev3->as.state_changed.old_state == MM_STATE_NULL);
+    assert(ev3->as.state_changed.new_state == MM_STATE_READY);
+    mm_event_destroy(ev3);
+    
+    PASS();
+}
+
+static void
+test_bus_basic(void)
+{
+    TEST("bus basic post / pop");
+    
+    mm_bus_t* bus = mm_bus_create();
+    assert(bus != NULL);
+    
+    mm_event_t* ev = mm_event_new_eos(NULL);
+    mm_result_t r = mm_bus_post(bus, ev);
+    assert(r == MM_OK);
+    
+    mm_event_t* popped = NULL;
+    r = mm_bus_pop(bus, &popped, 0);
+    assert(r == MM_OK);
+    assert(popped != NULL);
+    assert(popped->type == MM_EVENT_EOS);
+    
+    mm_event_destroy(popped);
+    mm_bus_destroy(bus);
+    
+    PASS();
+}
+
+static void
+test_bus_timeout(void)
+{
+    TEST("bus pop timeout");
+    
+    mm_bus_t* bus = mm_bus_create();
+    assert(bus != NULL);
+    
+    mm_event_t* popped = NULL;
+    mm_result_t r = mm_bus_pop(bus, &popped, 10);
+    assert(r == MM_TIMEOUT);
+    assert(popped == NULL);
+    
+    mm_bus_destroy(bus);
+    
+    PASS();
+}
+
+static volatile int g_handler_called = 0;
+static mm_event_type_t g_last_event_type;
+
+static void
+test_bus_handler_cb(mm_bus_t* bus, mm_event_t* event, void* user_data)
+{
+    (void)bus;
+    (void)user_data;
+    g_handler_called++;
+    g_last_event_type = event->type;
+}
+
+static void
+test_bus_async_dispatch(void)
+{
+    TEST("bus async dispatch handler");
+    
+    mm_bus_t* bus = mm_bus_create();
+    assert(bus != NULL);
+    
+    g_handler_called = 0;
+    
+    mm_result_t r = mm_bus_set_handler(bus, test_bus_handler_cb, NULL);
+    assert(r == MM_OK);
+    
+    mm_event_t* ev = mm_event_new_eos(NULL);
+    r = mm_bus_post(bus, ev);
+    assert(r == MM_OK);
+    
+    /* Sleep a bit to allow dispatch thread to run */
+    struct timespec ts = { .tv_sec = 0, .tv_nsec = 50000000 }; /* 50 ms */
+    nanosleep(&ts, NULL);
+    
+    assert(g_handler_called == 1);
+    assert(g_last_event_type == MM_EVENT_EOS);
+    
+    /* Remove handler (stops thread) */
+    r = mm_bus_set_handler(bus, NULL, NULL);
+    assert(r == MM_OK);
+    
+    mm_bus_destroy(bus);
+    
+    PASS();
+}
+
+static void
+test_pipeline_bus_events(void)
+{
+    TEST("pipeline/element lifecycle events on bus");
+    
+    mm_pipeline_t* pipe = mm_pipeline_create();
+    assert(pipe != NULL);
+    assert(pipe->bus != NULL);
+    
+    mm_element_ops_t ops = { .name = "test_el" };
+    mm_element_t* el = mm_element_create(&ops, NULL);
+    assert(el != NULL);
+    
+    mm_result_t r = mm_pipeline_add(pipe, el);
+    assert(r == MM_OK);
+    assert(el->bus == pipe->bus);
+    
+    /* Transition pipeline state */
+    r = mm_pipeline_set_state(pipe, MM_STATE_READY);
+    assert(r == MM_OK);
+    
+    /* We expect two events: element state changed, then pipeline state changed */
+    mm_event_t* ev = NULL;
+    r = mm_bus_pop(pipe->bus, &ev, 100);
+    assert(r == MM_OK);
+    assert(ev != NULL);
+    assert(ev->type == MM_EVENT_STATE_CHANGED);
+    assert(ev->src == el);
+    assert(ev->as.state_changed.old_state == MM_STATE_NULL);
+    assert(ev->as.state_changed.new_state == MM_STATE_READY);
+    mm_event_destroy(ev);
+    
+    ev = NULL;
+    r = mm_bus_pop(pipe->bus, &ev, 100);
+    assert(r == MM_OK);
+    assert(ev != NULL);
+    assert(ev->type == MM_EVENT_STATE_CHANGED);
+    assert(ev->src == NULL); // Pipeline itself
+    assert(ev->as.state_changed.old_state == MM_STATE_NULL);
+    assert(ev->as.state_changed.new_state == MM_STATE_READY);
+    mm_event_destroy(ev);
+    
+    mm_pipeline_destroy(pipe); // also destroys el and bus
+    
+    PASS();
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Dynamic Plugins tests (Phase 7)
+   ═══════════════════════════════════════════════════════════════ */
+static void
+test_plugin_registry_basic(void)
+{
+    TEST("plugin registry initialization and scanning");
+    
+    mm_result_t r = mm_plugin_registry_init();
+    assert(r == MM_OK);
+    
+    r = mm_plugin_registry_scan("/workspace/build/plugins");
+    assert(r == MM_OK);
+    
+    setenv("ZSTREAMER_PLUGIN_PATH", "/workspace/build/plugins", 1);
+    r = mm_plugin_registry_scan_env();
+    assert(r == MM_OK);
+    
+    PASS();
+}
+
+static void
+test_element_factory_refcounting(void)
+{
+    TEST("element factory make and plugin refcounting");
+    
+    mm_plugin_registry_init();
+    mm_plugin_registry_scan("/workspace/build/plugins");
+    
+    mm_element_t* filesink = mm_element_factory_make("filesink");
+    assert(filesink != NULL);
+    assert(filesink->plugin != NULL);
+    assert(strcmp(filesink->ops->name, "filesink") == 0);
+    
+    mm_element_t* v4l2source = mm_element_factory_make("v4l2src");
+    assert(v4l2source != NULL);
+    assert(v4l2source->plugin != NULL);
+    assert(strcmp(v4l2source->ops->name, "v4l2src") == 0);
+    
+    mm_element_t* alsasource = mm_element_factory_make("alsasrc");
+    assert(alsasource != NULL);
+    assert(alsasource->plugin != NULL);
+    assert(strcmp(alsasource->ops->name, "alsasrc") == 0);
+    
+    mm_element_t* h264encoder = mm_element_factory_make("h264enc");
+    assert(h264encoder != NULL);
+    assert(h264encoder->plugin != NULL);
+    assert(strcmp(h264encoder->ops->name, "h264enc") == 0);
+    
+    mm_element_t* aacencoder = mm_element_factory_make("aacenc");
+    assert(aacencoder != NULL);
+    assert(aacencoder->plugin != NULL);
+    assert(strcmp(aacencoder->ops->name, "aacenc") == 0);
+    
+    mm_element_t* mp4muxer = mm_element_factory_make("mp4mux");
+    assert(mp4muxer != NULL);
+    assert(mp4muxer->plugin != NULL);
+    assert(strcmp(mp4muxer->ops->name, "mp4mux") == 0);
+    
+    mm_plugin_t* filesink_plugin = filesink->plugin;
+    assert(filesink_plugin->refcount == 2);
+    
+    mm_element_destroy(filesink);
+    assert(filesink_plugin->refcount == 1);
+    
+    mm_element_destroy(v4l2source);
+    mm_element_destroy(alsasource);
+    mm_element_destroy(h264encoder);
+    mm_element_destroy(aacencoder);
+    mm_element_destroy(mp4muxer);
+    
+    mm_plugin_registry_deinit();
+    
+    PASS();
+}
+
+/* ═══════════════════════════════════════════════════════════════
    Main
    ═══════════════════════════════════════════════════════════════ */
 int main(void)
@@ -932,6 +1175,19 @@ int main(void)
     test_caps_intersection_audio();
     test_caps_fixate();
     test_pad_negotiate_and_link();
+
+    /* ── Event Bus (Phase 6) ── */
+    printf("[event bus]\n");
+    test_event_create_destroy();
+    test_bus_basic();
+    test_bus_timeout();
+    test_bus_async_dispatch();
+    test_pipeline_bus_events();
+
+    /* ── Dynamic Plugins (Phase 7) ── */
+    printf("[dynamic plugins]\n");
+    test_plugin_registry_basic();
+    test_element_factory_refcounting();
 
     /* ── Summary ── */
     printf("\n──────────────────────────────────────────────────\n");

@@ -31,6 +31,8 @@ struct mm_plugin {
     mm_create_element_fn create_element;
 
     void* priv;
+
+    int refcount;
 };
 
 typedef mm_plugin_t* (*mm_get_plugin_fn)(void);
@@ -41,6 +43,24 @@ typedef mm_plugin_t* (*mm_get_plugin_fn)(void);
 mm_plugin_t* mm_plugin_load(const char* path);
 
 void mm_plugin_unload(mm_plugin_t* plugin);
+
+mm_plugin_t* mm_plugin_ref(
+    mm_plugin_t* plugin);
+
+void mm_plugin_unref(
+    mm_plugin_t* plugin);
+
+mm_result_t mm_plugin_registry_init(void);
+
+void mm_plugin_registry_deinit(void);
+
+mm_result_t mm_plugin_registry_scan(
+    const char* directory);
+
+mm_result_t mm_plugin_registry_scan_env(void);
+
+mm_element_t* mm_element_factory_make(
+    const char* name);
 
 MM_PLUGIN_EXPORT
 mm_plugin_t* mm_get_plugin(void);

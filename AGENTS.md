@@ -141,10 +141,10 @@ MM_STATE_NULL  ──open──→  MM_STATE_READY  ──start──→  MM_STA
 | Queue Element               | ✅ First-class queue with worker thread |
 | Real Element Implementations| ✅ All 6 elements: V4L2, x264, MP4(mux), file, ALSA, AAC |
 | Video Scaler / Audio Resampler | 📝 Planned (Phase 4g/4h)       |
-| Unit Tests                  | ✅ 19 tests, all passing         |
-| Caps Negotiation            | 📝 Future                        |
-| Event Bus                   | 📝 Future                        |
-| Dynamic Plugins             | 📝 Future                        |
+| Unit Tests                  | ✅ 31 tests, all passing         |
+| Caps Negotiation            | ✅ Done                          |
+| Event Bus                   | ✅ Done                          |
+| Dynamic Plugins             | ✅ Done                          |
 | Allocator API               | 📝 Future                        |
 | Clock / A/V Sync            | 📝 Future                        |
 | CI Pipeline                 | 📝 Future                        |

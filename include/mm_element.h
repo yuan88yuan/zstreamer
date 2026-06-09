@@ -58,6 +58,10 @@ struct mm_element {
     uint32_t nb_sink_pads;
 
     void* priv;
+
+    mm_bus_t* bus;
+
+    mm_plugin_t* plugin;
 };
 
 mm_element_t* mm_element_create(

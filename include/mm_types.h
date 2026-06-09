@@ -26,6 +26,8 @@ typedef struct mm_element     mm_element_t;
 typedef struct mm_pipeline    mm_pipeline_t;
 typedef struct mm_scheduler   mm_scheduler_t;
 typedef struct mm_plugin      mm_plugin_t;
+typedef struct mm_bus         mm_bus_t;
+typedef struct mm_event       mm_event_t;
 
 #ifdef __cplusplus
 }

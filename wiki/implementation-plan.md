@@ -175,23 +175,23 @@ negotiation process when formats don't match.
 
 ---
 
-## Phase 6 — Event Bus  (from `wiki/future.md`)
+## Phase 6 — Event Bus  (✅ done)
 
 An async notification channel (`mm_bus_t`) that decouples error/state/EOS from the data path. Events: `EOS`, `ERROR`, `STATE_CHANGED`, `WARNING`.
 
-- [ ] `mm_bus_t` — thread-safe event queue
-- [ ] `mm_bus_post()` / `mm_bus_pop(timeout_ms)`
-- [ ] Async callback dispatch
-- [ ] Wire pipeline lifecycle events
-- [ ] Wire error returns → `MM_EVENT_ERROR`
+- [x] `mm_bus_t` — thread-safe event queue
+- [x] `mm_bus_post()` / `mm_bus_pop(timeout_ms)`
+- [x] Async callback dispatch
+- [x] Wire pipeline lifecycle events
+- [x] Wire error returns → `MM_EVENT_ERROR`
 
 ---
 
-## Phase 7 — Dynamic Plugins
+## Phase 7 — Dynamic Plugins  (✅ done)
 
-- [ ] Build each element as a separate `.so`
-- [ ] Plugin discovery path (`ZSTREAMER_PLUGIN_PATH` env var)
-- [ ] Ref-counted plugin registry
+- [x] Build each element as a separate `.so`
+- [x] Plugin discovery path (`ZSTREAMER_PLUGIN_PATH` env var)
+- [x] Ref-counted plugin registry
 
 ---
 

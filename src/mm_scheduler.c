@@ -9,6 +9,7 @@
 #include "mm_pad.h"
 #include "mm_element.h"
 #include "mm_buffer.h"
+#include "mm_bus.h"
 #include <stdlib.h>
 #include <time.h>
 #include <pthread.h>
@@ -112,6 +113,11 @@ worker_loop(void* arg)
                             mm_buffer_unref(eos_buf);
                         }
                         el->state = MM_STATE_READY;
+                    } else if (ret != MM_TIMEOUT && ret != MM_AGAIN) {
+                        if (el->bus) {
+                            mm_event_t* err_ev = mm_event_new_error(el, ret, "Source process failed");
+                            mm_bus_post(el->bus, err_ev);
+                        }
                     }
                 }
             }

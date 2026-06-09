@@ -3,6 +3,8 @@
 =============================================================================*/
 
 #include "mm_element.h"
+#include "mm_bus.h"
+#include "mm_plugin.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -21,6 +23,7 @@ mm_element_create(const mm_element_ops_t* ops, void* priv)
     el->sink_pads    = NULL;
     el->nb_sink_pads = 0;
     el->priv         = priv;
+    el->plugin       = NULL;
 
     return el;
 }
@@ -40,7 +43,12 @@ mm_element_destroy(mm_element_t* el)
     free(el->sink_pads);
 
     free(el->priv);
+    mm_plugin_t* plugin = el->plugin;
     free(el);
+
+    if (plugin) {
+        mm_plugin_unref(plugin);
+    }
 }
 
 mm_result_t
@@ -91,7 +99,12 @@ mm_element_set_state(mm_element_t* el, mm_state_t state)
         if (ret != MM_OK) return ret;
     }
 
+    mm_state_t old_state = el->state;
     el->state = state;
+    if (el->state != old_state && el->bus) {
+        mm_event_t* ev = mm_event_new_state_changed(el, old_state, el->state);
+        mm_bus_post(el->bus, ev);
+    }
     return ret;
 }
 

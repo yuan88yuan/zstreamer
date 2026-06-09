@@ -60,6 +60,7 @@ set(CORE_SOURCES
     src/mm_queue.c
     src/mm_queue_element.c
     src/mm_scheduler.c
+    src/mm_bus.c
 )
 
 if(ENABLE_PLUGINS)
@@ -101,6 +102,38 @@ set(ELEMENT_SOURCES
     src/alsa_source.c
     src/aac_encoder.c
 )
+
+# ── Dynamic Plugins ──────────────────────────────────────────────────────
+add_library(mm_filesink SHARED src/file_sink.c)
+target_compile_definitions(mm_filesink PRIVATE BUILDING_PLUGIN)
+target_link_libraries(mm_filesink PRIVATE zstreamer)
+
+add_library(mm_v4l2source SHARED src/v4l2_source.c)
+target_compile_definitions(mm_v4l2source PRIVATE BUILDING_PLUGIN)
+target_link_libraries(mm_v4l2source PRIVATE zstreamer ${V4L2_LIBRARIES})
+
+add_library(mm_alsasource SHARED src/alsa_source.c)
+target_compile_definitions(mm_alsasource PRIVATE BUILDING_PLUGIN)
+target_link_libraries(mm_alsasource PRIVATE zstreamer ${ALSA_LIBRARIES})
+
+add_library(mm_h264encoder SHARED src/h264_encoder.c)
+target_compile_definitions(mm_h264encoder PRIVATE BUILDING_PLUGIN)
+target_link_libraries(mm_h264encoder PRIVATE zstreamer ${X264_LIBRARIES})
+
+add_library(mm_aacencoder SHARED src/aac_encoder.c)
+target_compile_definitions(mm_aacencoder PRIVATE BUILDING_PLUGIN)
+target_link_libraries(mm_aacencoder PRIVATE zstreamer ${AVCODEC_LIBRARIES})
+
+add_library(mm_mp4muxer SHARED src/mp4_muxer.c)
+target_compile_definitions(mm_mp4muxer PRIVATE BUILDING_PLUGIN)
+target_link_libraries(mm_mp4muxer PRIVATE zstreamer ${AVFORMAT_LIBRARIES} ${AVCODEC_LIBRARIES} ${AVUTIL_LIBRARIES})
+
+set(PLUGIN_TARGETS mm_filesink mm_v4l2source mm_alsasource mm_h264encoder mm_aacencoder mm_mp4muxer)
+foreach(plugin ${PLUGIN_TARGETS})
+    target_include_directories(${plugin} PRIVATE ${ZSTREAMER_INCLUDE_DIR} PRIVATE ${ELEMENT_INCLUDE_DIRS})
+    set_target_properties(${plugin} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
+endforeach()
+
 
 # ── Tests ────────────────────────────────────────────────────────────────
 if(BUILD_TESTS)
