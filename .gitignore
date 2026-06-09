@@ -1,0 +1,26 @@
+# Build output
+build/
+out/
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Compiled test binaries
+tests/*.exe
+tests/*.out
+
+# Pi agent artifacts
+.pi/
