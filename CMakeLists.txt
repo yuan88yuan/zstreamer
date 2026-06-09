@@ -26,6 +26,8 @@ pkg_check_modules(AVUTIL REQUIRED libavutil)
 pkg_check_modules(X264 REQUIRED x264)
 pkg_check_modules(ALSA REQUIRED alsa)
 pkg_check_modules(V4L2 REQUIRED libv4l2)
+pkg_check_modules(SWSCALE REQUIRED libswscale)
+pkg_check_modules(SWRESAMPLE REQUIRED libswresample)
 
 set(ELEMENT_INCLUDE_DIRS
     ${AVFORMAT_INCLUDE_DIRS}
@@ -34,6 +36,8 @@ set(ELEMENT_INCLUDE_DIRS
     ${X264_INCLUDE_DIRS}
     ${ALSA_INCLUDE_DIRS}
     ${V4L2_INCLUDE_DIRS}
+    ${SWSCALE_INCLUDE_DIRS}
+    ${SWRESAMPLE_INCLUDE_DIRS}
 )
 
 set(ELEMENT_LIBRARIES
@@ -43,6 +47,8 @@ set(ELEMENT_LIBRARIES
     ${X264_LIBRARIES}
     ${ALSA_LIBRARIES}
     ${V4L2_LIBRARIES}
+    ${SWSCALE_LIBRARIES}
+    ${SWRESAMPLE_LIBRARIES}
 )
 
 # ── Include directories ──────────────────────────────────────────────────
@@ -101,6 +107,8 @@ set(ELEMENT_SOURCES
     src/file_sink.c
     src/alsa_source.c
     src/aac_encoder.c
+    src/video_scaler.c
+    src/audio_resampler.c
 )
 
 # ── Dynamic Plugins ──────────────────────────────────────────────────────
@@ -128,7 +136,15 @@ add_library(zst_mp4muxer SHARED src/mp4_muxer.c)
 target_compile_definitions(zst_mp4muxer PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_mp4muxer PRIVATE zstreamer ${AVFORMAT_LIBRARIES} ${AVCODEC_LIBRARIES} ${AVUTIL_LIBRARIES})
 
-set(PLUGIN_TARGETS zst_filesink zst_v4l2source zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer)
+add_library(zst_videoscaler SHARED src/video_scaler.c)
+target_compile_definitions(zst_videoscaler PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_videoscaler PRIVATE zstreamer ${SWSCALE_LIBRARIES} ${AVUTIL_LIBRARIES})
+
+add_library(zst_audioresampler SHARED src/audio_resampler.c)
+target_compile_definitions(zst_audioresampler PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_audioresampler PRIVATE zstreamer ${SWRESAMPLE_LIBRARIES} ${AVUTIL_LIBRARIES})
+
+set(PLUGIN_TARGETS zst_filesink zst_v4l2source zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler)
 foreach(plugin ${PLUGIN_TARGETS})
     target_include_directories(${plugin} PRIVATE ${ZSTREAMER_INCLUDE_DIR} PRIVATE ${ELEMENT_INCLUDE_DIRS})
     set_target_properties(${plugin} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
@@ -140,12 +156,16 @@ if(BUILD_TESTS)
     # -- unit / smoke test for core infrastructure --
     add_executable(test_core
         tests/test_core.c
+        src/video_scaler.c
+        src/audio_resampler.c
     )
     target_include_directories(test_core
         PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+        PRIVATE ${ELEMENT_INCLUDE_DIRS}
     )
     target_link_libraries(test_core
         PRIVATE zstreamer
+        PRIVATE ${SWSCALE_LIBRARIES} ${SWRESAMPLE_LIBRARIES} ${AVUTIL_LIBRARIES}
     )
 
     # -- full pipeline example --

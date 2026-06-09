@@ -20,6 +20,9 @@
 #include "zst_bus.h"
 #include "zst_plugin.h"
 
+zst_element_t* zst_video_scaler_create(int target_width, int target_height, const char* target_pixel_format);
+zst_element_t* zst_audio_resampler_create(int target_sample_rate, int target_channels, const char* target_format);
+
 static int g_tests_run   = 0;
 static int g_tests_passed = 0;
 
@@ -1105,6 +1108,16 @@ test_element_factory_refcounting(void)
     assert(mp4muxer->plugin != NULL);
     assert(strcmp(mp4muxer->ops->name, "mp4mux") == 0);
     
+    zst_element_t* videoscaler = zst_element_factory_make("videoscaler");
+    assert(videoscaler != NULL);
+    assert(videoscaler->plugin != NULL);
+    assert(strcmp(videoscaler->ops->name, "videoscaler") == 0);
+
+    zst_element_t* audioresampler = zst_element_factory_make("audioresampler");
+    assert(audioresampler != NULL);
+    assert(audioresampler->plugin != NULL);
+    assert(strcmp(audioresampler->ops->name, "audioresampler") == 0);
+
     zst_plugin_t* filesink_plugin = filesink->plugin;
     assert(filesink_plugin->refcount == 2);
     
@@ -1116,9 +1129,186 @@ test_element_factory_refcounting(void)
     zst_element_destroy(h264encoder);
     zst_element_destroy(aacencoder);
     zst_element_destroy(mp4muxer);
+    zst_element_destroy(videoscaler);
+    zst_element_destroy(audioresampler);
     
     zst_plugin_registry_deinit();
     
+    PASS();
+}
+
+static void
+scaler_test_free(zst_buffer_t* buf)
+{
+    if (buf) {
+        free(buf->memory.data);
+        free(buf->payload);
+    }
+}
+
+static void
+resampler_test_free(zst_buffer_t* buf)
+{
+    if (buf) {
+        free(buf->memory.data);
+        free(buf->payload);
+    }
+}
+
+static void
+test_video_scaler(void)
+{
+    TEST("video scaler (Phase 4g) basic scaling and fallback");
+
+    /* 1. Create video scaler element */
+    zst_element_t* scaler = zst_video_scaler_create(320, 240, "YUV420P");
+    assert(scaler != NULL);
+    assert(strcmp(scaler->ops->name, "videoscaler") == 0);
+
+    /* 2. Open it */
+    assert(zst_element_set_state(scaler, ZST_STATE_READY) == ZST_OK);
+
+    /* 3. Create an input buffer (YUV420P, 640x480) */
+    zst_buffer_t* in_buf = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
+    assert(in_buf != NULL);
+
+    size_t in_y_size = 640 * 480;
+    size_t in_uv_size = in_y_size / 4;
+    size_t in_total_size = in_y_size + 2 * in_uv_size;
+    uint8_t* in_data = malloc(in_total_size);
+    assert(in_data != NULL);
+    memset(in_data, 128, in_total_size);
+
+    in_buf->memory.type = ZST_MEMORY_CPU;
+    in_buf->memory.data = in_data;
+    in_buf->memory.size = in_total_size;
+
+    zst_video_frame_t* in_frame = calloc(1, sizeof(*in_frame));
+    assert(in_frame != NULL);
+    in_frame->width = 640;
+    in_frame->height = 480;
+    in_frame->format = 0; /* YUV420P */
+    in_frame->plane[0] = in_data;
+    in_frame->plane[1] = in_data + in_y_size;
+    in_frame->plane[2] = in_data + in_y_size + in_uv_size;
+    in_frame->stride[0] = 640;
+    in_frame->stride[1] = 320;
+    in_frame->stride[2] = 320;
+    in_buf->payload = in_frame;
+
+    in_buf->destroy = scaler_test_free;
+
+    /* Set some caps on sink pad representing input */
+    zst_caps_t* sink_caps = zst_caps_create();
+    zst_caps_append(sink_caps, zst_caps_struct_create_video("video/x-raw", 640, 480, 30.0, "YUV420P"));
+    zst_pad_t* sink_pad = zst_element_get_pad(scaler, "sink");
+    assert(zst_pad_set_caps(sink_pad, sink_caps) == ZST_OK);
+    zst_caps_destroy(sink_caps);
+
+    /* Set some caps on src pad representing target/negotiated output */
+    zst_caps_t* src_caps = zst_caps_create();
+    zst_caps_append(src_caps, zst_caps_struct_create_video("video/x-raw", 320, 240, 30.0, "YUV420P"));
+    zst_pad_t* src_pad = zst_element_get_pad(scaler, "src");
+    assert(zst_pad_set_caps(src_pad, src_caps) == ZST_OK);
+    zst_caps_destroy(src_caps);
+
+    /* 4. Process the buffer */
+    zst_buffer_t* out_buf = NULL;
+    zst_result_t res = scaler->ops->process(scaler, in_buf, &out_buf);
+    assert(res == ZST_OK);
+    assert(out_buf != NULL);
+
+    /* Verify scaled output dimensions */
+    zst_video_frame_t* out_frame = out_buf->payload;
+    assert(out_frame != NULL);
+    assert(out_frame->width == 320);
+    assert(out_frame->height == 240);
+    assert(out_frame->format == 0); /* YUV420P */
+
+    zst_buffer_unref(out_buf);
+    zst_buffer_unref(in_buf);
+
+    /* 5. Clean up */
+    assert(zst_element_set_state(scaler, ZST_STATE_NULL) == ZST_OK);
+    zst_element_destroy(scaler);
+
+    PASS();
+}
+
+static void
+test_audio_resampler(void)
+{
+    TEST("audio resampler (Phase 4h) basic resampling and fallback");
+
+    /* 1. Create resampler element: 48000Hz stereo -> 44100Hz stereo */
+    zst_element_t* resampler = zst_audio_resampler_create(44100, 2, "S16LE");
+    assert(resampler != NULL);
+    assert(strcmp(resampler->ops->name, "audioresampler") == 0);
+
+    /* 2. Open it */
+    assert(zst_element_set_state(resampler, ZST_STATE_READY) == ZST_OK);
+
+    /* 3. Create input buffer: 48000Hz stereo, 480 samples, interleaved S16 */
+    zst_buffer_t* in_buf = zst_buffer_create(ZST_BUFFER_AUDIO_FRAME);
+    assert(in_buf != NULL);
+
+    int in_samples = 480;
+    int in_channels = 2;
+    size_t in_size = in_samples * in_channels * sizeof(int16_t);
+    int16_t* in_data = malloc(in_size);
+    assert(in_data != NULL);
+    memset(in_data, 0, in_size);
+
+    in_buf->memory.type = ZST_MEMORY_CPU;
+    in_buf->memory.data = in_data;
+    in_buf->memory.size = in_size;
+
+    zst_audio_frame_t* in_frame = calloc(1, sizeof(*in_frame));
+    assert(in_frame != NULL);
+    in_frame->sample_rate = 48000;
+    in_frame->channels = 2;
+    in_frame->format = 0; /* S16LE */
+    in_frame->nb_samples = in_samples;
+    in_frame->data = in_data;
+    in_buf->payload = in_frame;
+
+    in_buf->destroy = resampler_test_free;
+
+    /* Set caps on sink pad representing input */
+    zst_caps_t* sink_caps = zst_caps_create();
+    zst_caps_append(sink_caps, zst_caps_struct_create_audio("audio/x-raw", 2, 48000, "S16LE"));
+    zst_pad_t* sink_pad = zst_element_get_pad(resampler, "sink");
+    assert(zst_pad_set_caps(sink_pad, sink_caps) == ZST_OK);
+    zst_caps_destroy(sink_caps);
+
+    /* Set caps on src pad representing output */
+    zst_caps_t* src_caps = zst_caps_create();
+    zst_caps_append(src_caps, zst_caps_struct_create_audio("audio/x-raw", 2, 44100, "S16LE"));
+    zst_pad_t* src_pad = zst_element_get_pad(resampler, "src");
+    assert(zst_pad_set_caps(src_pad, src_caps) == ZST_OK);
+    zst_caps_destroy(src_caps);
+
+    /* 4. Process buffer */
+    zst_buffer_t* out_buf = NULL;
+    zst_result_t res = resampler->ops->process(resampler, in_buf, &out_buf);
+    assert(res == ZST_OK);
+    assert(out_buf != NULL);
+
+    /* Verify output samples */
+    zst_audio_frame_t* out_frame = out_buf->payload;
+    assert(out_frame != NULL);
+    assert(out_frame->sample_rate == 44100);
+    assert(out_frame->channels == 2);
+    /* Expect roughly 441 samples, or slightly fewer due to resampler filter delay (e.g. 425) */
+    assert(out_frame->nb_samples >= 420 && out_frame->nb_samples <= 450);
+
+    zst_buffer_unref(out_buf);
+    zst_buffer_unref(in_buf);
+
+    /* 5. Clean up */
+    assert(zst_element_set_state(resampler, ZST_STATE_NULL) == ZST_OK);
+    zst_element_destroy(resampler);
+
     PASS();
 }
 
@@ -1188,6 +1378,11 @@ int main(void)
     printf("[dynamic plugins]\n");
     test_plugin_registry_basic();
     test_element_factory_refcounting();
+
+    /* ── Conversion Elements (Phase 4g/4h) ── */
+    printf("[conversion elements]\n");
+    test_video_scaler();
+    test_audio_resampler();
 
     /* ── Summary ── */
     printf("\n──────────────────────────────────────────────────\n");

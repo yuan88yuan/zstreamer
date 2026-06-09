@@ -63,10 +63,10 @@ v4l2src → queue → h264enc → queue → mp4mux → queue → filesink
 
 ---
 
-## Phase 4 — Real Element Implementations  (✅ 6 done, 📝 2 planned)
+## Phase 4 — Real Element Implementations  (✅ done)
 
-Six elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.
-Two more are planned to handle format conversion (scaling, resampling) — essential once caps negotiation (Phase 5) requires automatic conversion between mismatched formats.
+Eight elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.
+Two more handle format conversion (scaling, resampling) — essential once caps negotiation (Phase 5) requires automatic conversion between mismatched formats.
 
 ### 4a — V4L2 Source  (✅ done)
 - [x] Open `/dev/video0` with O_RDWR | O_NONBLOCK
@@ -123,33 +123,33 @@ Two more are planned to handle format conversion (scaling, resampling) — essen
 
 **Dependencies:** `libavcodec-dev` (in Docker)
 
-### 4g — Video Scaler  (📝 planned)
+### 4g — Video Scaler  (✅ done)
 
 A conversion element that scales video frames and converts pixel formats. Deployed
 when a source's output caps (e.g. 1080p NV12) don't match the next element's input
 caps (e.g. 720p I420).
 
-- [ ] **Interface**: single sink pad, single src pad — accepts raw video, outputs raw video
-- [ ] **Backend**: `libswscale` from FFmpeg (`sws_getContext` / `sws_scale`)
-- [ ] **Auto-configuration**: on first frame, allocate the SWS context based on input resolution/format and configured output resolution/format
-- [ ] Configurable target: `width`, `height`, `pixel_format` — or passthrough if formats match
-- [ ] **Synthetic fallback**: naive nearest-neighbour scaling if `libswscale` unavailable
-- [ ] EOS passthrough
+- [x] **Interface**: single sink pad, single src pad — accepts raw video, outputs raw video
+- [x] **Backend**: `libswscale` from FFmpeg (`sws_getContext` / `sws_scale`)
+- [x] **Auto-configuration**: on first frame, allocate the SWS context based on input resolution/format and configured output resolution/format
+- [x] Configurable target: `width`, `height`, `pixel_format` — or passthrough if formats match
+- [x] **Synthetic fallback**: naive nearest-neighbour scaling if `libswscale` unavailable
+- [x] EOS passthrough
 
 **Dependencies:** `libswscale-dev` (in Docker)
 
-### 4h — Audio Resampler  (📝 planned)
+### 4h — Audio Resampler  (✅ done)
 
 Converts audio sample rate and format. Needed when source sample rate (e.g. ALSA
 at 48000Hz) differs from what the encoder expects (e.g. AAC at 44100Hz), or when
 format mismatches (S16LE ↔ F32LE).
 
-- [ ] **Interface**: single sink pad, single src pad — accepts raw audio, outputs raw audio
-- [ ] **Backend**: `libswresample` from FFmpeg (`swr_alloc_set_opts` / `swr_convert`)
-- [ ] **Auto-configuration**: on first frame, allocate SWR context from input/output params
-- [ ] Configurable: `sample_rate`, `sample_format`, `channels` — passthrough if matching
-- [ ] **Synthetic fallback**: linear interpolation resampling if `libswresample` unavailable
-- [ ] EOS passthrough
+- [x] **Interface**: single sink pad, single src pad — accepts raw audio, outputs raw audio
+- [x] **Backend**: `libswresample` from FFmpeg (`swr_alloc_set_opts` / `swr_convert`)
+- [x] **Auto-configuration**: on first frame, allocate SWR context from input/output params
+- [x] Configurable: `sample_rate`, `sample_format`, `channels` — passthrough if matching
+- [x] **Synthetic fallback**: linear interpolation resampling if `libswresample` unavailable
+- [x] EOS passthrough
 
 **Dependencies:** `libswresample-dev` (in Docker)
 
