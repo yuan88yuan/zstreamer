@@ -287,7 +287,8 @@ An async notification channel (`zst_bus_t`) that decouples error/state/EOS from 
 - [x] `zst_clock_t` interface: `get_time`, `wait`
 - [x] System clock wrapping `CLOCK_MONOTONIC`
 - [x] Pipeline-level master clock selection
-- [ ] Clock slaving for A/V sync
+- [ ] Clock slaving for A/V sync — see [`wiki/clock-slaving.md`](clock-slaving.md)
+  for detailed design and task breakdown
 
 ### 8c — Other Advanced Features
 - [ ] Element bin (composite sub-pipeline)
