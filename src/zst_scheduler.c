@@ -10,6 +10,7 @@
 #include "zst_element.h"
 #include "zst_buffer.h"
 #include "zst_bus.h"
+#include "zst_clock.h"
 #include <stdlib.h>
 #include <time.h>
 #include <pthread.h>
@@ -124,8 +125,12 @@ worker_loop(void* arg)
         }
 
         if (!activity) {
-            struct timespec ts = { .tv_sec = 0, .tv_nsec = 1000000 }; /* 1 ms */
-            nanosleep(&ts, NULL);
+            if (sched->pipeline && sched->pipeline->clock) {
+                zst_clock_wait(sched->pipeline->clock, 1000000ULL);
+            } else {
+                struct timespec ts = { .tv_sec = 0, .tv_nsec = 1000000 }; /* 1 ms */
+                nanosleep(&ts, NULL);
+            }
         }
     }
 
