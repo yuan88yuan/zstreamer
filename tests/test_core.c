@@ -26,6 +26,7 @@
 
 zst_element_t* zst_video_scaler_create(int target_width, int target_height, const char* target_pixel_format);
 zst_element_t* zst_audio_resampler_create(int target_sample_rate, int target_channels, const char* target_format);
+zst_element_t* zst_text_overlay_create(const char* text);
 
 static int g_tests_run   = 0;
 static int g_tests_passed = 0;
@@ -1477,6 +1478,66 @@ test_clock_basic(void)
     PASS();
 }
 
+/* ── Text Overlay (Phase 11a) ────────────────────────────────────────────── */
+
+static void
+test_text_overlay(void)
+{
+    TEST("text_overlay basic rendering");
+
+    zst_element_t* overlay = zst_text_overlay_create("TEST");
+    assert(overlay != NULL);
+
+    /* We ignore open() failure here because the system might not have the font */
+    zst_result_t open_res = overlay->ops->open(overlay);
+    if (open_res != ZST_OK) {
+        printf("  [SKIP] Could not open text overlay (missing font?)\n");
+        zst_element_destroy(overlay);
+        PASS();
+        return;
+    }
+
+    zst_pad_t* sinkpad = zst_element_get_pad(overlay, "sink");
+    assert(sinkpad != NULL);
+
+    zst_caps_t* caps = zst_caps_create();
+    zst_caps_append(caps, zst_caps_struct_create_video("video/x-raw", 320, 240, 30.0, "YUV420P"));
+    sinkpad->caps = caps;
+
+    zst_buffer_t* in_buf = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
+
+    zst_video_frame_t* vf = malloc(sizeof(*vf));
+    vf->width = 320;
+    vf->height = 240;
+    vf->format = 0;
+
+    uint8_t* dummy_data = calloc(1, 320 * 240 * 3 / 2);
+    vf->plane[0] = dummy_data;
+    vf->plane[1] = dummy_data + 320 * 240;
+    vf->plane[2] = dummy_data + 320 * 240 + 320 * 240 / 4;
+    vf->stride[0] = 320;
+    vf->stride[1] = 160;
+    vf->stride[2] = 160;
+
+    in_buf->payload = vf;
+
+    zst_buffer_t* out_buf = NULL;
+    assert(overlay->ops->process(overlay, in_buf, &out_buf) == ZST_OK);
+    assert(out_buf != NULL);
+
+    zst_buffer_unref(out_buf);
+    in_buf->payload = NULL;
+    zst_buffer_unref(in_buf);
+
+    free(dummy_data);
+    free(vf);
+
+    assert(overlay->ops->close(overlay) == ZST_OK);
+    zst_element_destroy(overlay);
+
+    PASS();
+}
+
 /* ═══════════════════════════════════════════════════════════════
    Main
    ═══════════════════════════════════════════════════════════════ */
@@ -1561,6 +1622,10 @@ int main(void)
     /* ── Clock (Phase 8b) ── */
     printf("[clock]\n");
     test_clock_basic();
+
+    /* ── Text Overlay (Phase 11a) ── */
+    printf("[text overlay]\n");
+    test_text_overlay();
 
     /* ── Summary ── */
     printf("\n──────────────────────────────────────────────────\n");

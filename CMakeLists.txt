@@ -28,6 +28,7 @@ pkg_check_modules(ALSA REQUIRED alsa)
 pkg_check_modules(V4L2 REQUIRED libv4l2)
 pkg_check_modules(SWSCALE REQUIRED libswscale)
 pkg_check_modules(SWRESAMPLE REQUIRED libswresample)
+pkg_check_modules(FREETYPE REQUIRED freetype2)
 
 set(ELEMENT_INCLUDE_DIRS
     ${AVFORMAT_INCLUDE_DIRS}
@@ -38,6 +39,7 @@ set(ELEMENT_INCLUDE_DIRS
     ${V4L2_INCLUDE_DIRS}
     ${SWSCALE_INCLUDE_DIRS}
     ${SWRESAMPLE_INCLUDE_DIRS}
+    ${FREETYPE_INCLUDE_DIRS}
 )
 
 set(ELEMENT_LIBRARIES
@@ -49,6 +51,7 @@ set(ELEMENT_LIBRARIES
     ${V4L2_LIBRARIES}
     ${SWSCALE_LIBRARIES}
     ${SWRESAMPLE_LIBRARIES}
+    ${FREETYPE_LIBRARIES}
 )
 
 # ── Include directories ──────────────────────────────────────────────────
@@ -115,6 +118,7 @@ set(ELEMENT_SOURCES
     src/aac_encoder.c
     src/video_scaler.c
     src/audio_resampler.c
+    src/text_overlay.c
 )
 
 # ── Dynamic Plugins ──────────────────────────────────────────────────────
@@ -150,7 +154,11 @@ add_library(zst_audioresampler SHARED src/audio_resampler.c)
 target_compile_definitions(zst_audioresampler PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_audioresampler PRIVATE zstreamer ${SWRESAMPLE_LIBRARIES} ${AVUTIL_LIBRARIES})
 
-set(PLUGIN_TARGETS zst_filesink zst_v4l2source zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler)
+add_library(zst_textoverlay SHARED src/text_overlay.c)
+target_compile_definitions(zst_textoverlay PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_textoverlay PRIVATE zstreamer ${FREETYPE_LIBRARIES})
+
+set(PLUGIN_TARGETS zst_filesink zst_v4l2source zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay)
 foreach(plugin ${PLUGIN_TARGETS})
     target_include_directories(${plugin} PRIVATE ${ZSTREAMER_INCLUDE_DIR} PRIVATE ${ELEMENT_INCLUDE_DIRS})
     set_target_properties(${plugin} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
@@ -164,6 +172,7 @@ if(BUILD_TESTS)
         tests/test_core.c
         src/video_scaler.c
         src/audio_resampler.c
+        src/text_overlay.c
     )
     target_include_directories(test_core
         PRIVATE ${ZSTREAMER_INCLUDE_DIR}
@@ -171,7 +180,7 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_core
         PRIVATE zstreamer
-        PRIVATE ${SWSCALE_LIBRARIES} ${SWRESAMPLE_LIBRARIES} ${AVUTIL_LIBRARIES}
+        PRIVATE ${SWSCALE_LIBRARIES} ${SWRESAMPLE_LIBRARIES} ${AVUTIL_LIBRARIES} ${FREETYPE_LIBRARIES}
     )
 
     # -- full pipeline example --
