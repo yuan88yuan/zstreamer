@@ -48,6 +48,9 @@ uint32_t mm_queue_size(
 void mm_queue_flush(
     mm_queue_t* q);
 
+mm_element_t* mm_queue_element_create(
+    const mm_queue_config_t* cfg);
+
 #ifdef __cplusplus
 }
 #endif

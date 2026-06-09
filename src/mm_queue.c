@@ -79,6 +79,38 @@ timespec_from_ms(struct timespec* ts, uint32_t timeout_ms)
     }
 }
 
+static mm_time_t
+mm_queue_get_duration_locked(mm_queue_t* q)
+{
+    if (!q->head || !q->tail) return 0;
+    if (q->tail->buf->pts >= q->head->buf->pts && q->head->buf->pts != 0) {
+        return q->tail->buf->pts - q->head->buf->pts;
+    }
+    /* Fallback: sum of durations */
+    mm_time_t sum = 0;
+    mm_queue_node_t* n = q->head;
+    while (n) {
+        sum += n->buf->duration;
+        n = n->next;
+    }
+    return sum;
+}
+
+static int
+mm_queue_is_full_locked(mm_queue_t* q)
+{
+    if (q->cfg.max_buffers > 0 && q->count >= q->cfg.max_buffers) {
+        return 1;
+    }
+    if (q->cfg.max_bytes > 0 && q->bytes >= q->cfg.max_bytes) {
+        return 1;
+    }
+    if (q->cfg.max_duration > 0 && mm_queue_get_duration_locked(q) >= q->cfg.max_duration) {
+        return 1;
+    }
+    return 0;
+}
+
 mm_result_t
 mm_queue_push(mm_queue_t* q, mm_buffer_t* buf, uint32_t timeout_ms)
 {
@@ -86,13 +118,23 @@ mm_queue_push(mm_queue_t* q, mm_buffer_t* buf, uint32_t timeout_ms)
 
     pthread_mutex_lock(&q->lock);
 
+    /* If async mode and full, drop the buffer */
+    if (q->cfg.mode == MM_QUEUE_ASYNC && mm_queue_is_full_locked(q)) {
+        pthread_mutex_unlock(&q->lock);
+        return MM_ERROR;
+    }
+
     /* Wait until there is room */
-    if (q->cfg.mode == MM_QUEUE_SYNC && q->cfg.max_buffers > 0) {
+    if (q->cfg.mode == MM_QUEUE_SYNC) {
         struct timespec ts;
         int use_timeout = (timeout_ms != UINT32_MAX);
 
-        while (q->count >= q->cfg.max_buffers) {
-            if (use_timeout && timeout_ms > 0) {
+        while (mm_queue_is_full_locked(q)) {
+            if (use_timeout) {
+                if (timeout_ms == 0) {
+                    pthread_mutex_unlock(&q->lock);
+                    return MM_TIMEOUT;
+                }
                 timespec_from_ms(&ts, timeout_ms);
                 int ret = pthread_cond_timedwait(&q->not_full, &q->lock, &ts);
                 if (ret == ETIMEDOUT) {
@@ -120,6 +162,7 @@ mm_queue_push(mm_queue_t* q, mm_buffer_t* buf, uint32_t timeout_ms)
         q->head = node;
     q->tail = node;
     q->count++;
+    q->bytes += buf->memory.size;
 
     pthread_cond_signal(&q->not_empty);
     pthread_mutex_unlock(&q->lock);
@@ -136,7 +179,11 @@ mm_queue_pop(mm_queue_t* q, mm_buffer_t** out, uint32_t timeout_ms)
     int use_timeout = (timeout_ms != UINT32_MAX);
 
     while (!q->head) {
-        if (use_timeout && timeout_ms > 0) {
+        if (use_timeout) {
+            if (timeout_ms == 0) {
+                pthread_mutex_unlock(&q->lock);
+                return MM_TIMEOUT;
+            }
             struct timespec ts;
             timespec_from_ms(&ts, timeout_ms);
             int ret = pthread_cond_timedwait(&q->not_empty, &q->lock, &ts);
@@ -154,6 +201,9 @@ mm_queue_pop(mm_queue_t* q, mm_buffer_t** out, uint32_t timeout_ms)
     q->head = node->next;
     if (!q->head) q->tail = NULL;
     q->count--;
+    if (node->buf) {
+        q->bytes -= node->buf->memory.size;
+    }
 
     *out = node->buf;
     free(node);
@@ -191,6 +241,7 @@ mm_queue_flush(mm_queue_t* q)
     q->head  = NULL;
     q->tail  = NULL;
     q->count = 0;
+    q->bytes = 0;
 
     pthread_cond_broadcast(&q->not_full);
     pthread_mutex_unlock(&q->lock);

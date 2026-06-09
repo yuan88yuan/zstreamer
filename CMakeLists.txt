@@ -31,6 +31,7 @@ set(CORE_SOURCES
     src/mm_element.c
     src/mm_pipeline.c
     src/mm_queue.c
+    src/mm_queue_element.c
     src/mm_scheduler.c
 )
 

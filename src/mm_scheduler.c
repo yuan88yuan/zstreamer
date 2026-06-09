@@ -113,38 +113,6 @@ worker_loop(void* arg)
                         }
                         el->state = MM_STATE_READY;
                     }
-                } else {
-                    // Intermediate / Sink element: check sink pads
-                    for (uint32_t j = 0; j < el->nb_sink_pads; j++) {
-                        mm_pad_t* pad = el->sink_pads[j];
-                        mm_queue_t* q = pad->priv;
-                        if (q && mm_queue_size(q) > 0) {
-                            mm_buffer_t* buf = NULL;
-                            mm_result_t ret = mm_queue_pop(q, &buf, 0);
-                            if (ret == MM_OK && buf) {
-                                activity = 1;
-                                if (buf->flags & MM_BUFFER_FLAG_EOS) {
-                                    // Propagate EOS downstream
-                                    if (el->nb_src_pads > 0) {
-                                        mm_pad_push(el->src_pads[0], buf);
-                                    }
-                                    el->state = MM_STATE_READY;
-                                } else {
-                                    mm_buffer_t* out_buf = NULL;
-                                    ret = el->ops->process(el, buf, &out_buf);
-                                    if (ret == MM_OK && out_buf) {
-                                        if (el->nb_src_pads > 0) {
-                                            mm_pad_push(el->src_pads[0], out_buf);
-                                            if (out_buf != buf) {
-                                                mm_buffer_unref(out_buf);
-                                            }
-                                        }
-                                    }
-                                }
-                                mm_buffer_unref(buf);
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -159,14 +127,6 @@ worker_loop(void* arg)
     return NULL;
 }
 
-static mm_result_t
-queue_sink_pad_push(mm_pad_t* pad, mm_buffer_t* buf)
-{
-    mm_queue_t* q = pad->priv;
-    if (!q) return MM_ERROR;
-    return mm_queue_push(q, buf, 1000);
-}
-
 mm_result_t
 mm_scheduler_run(mm_scheduler_t* sched)
 {
@@ -178,26 +138,6 @@ mm_scheduler_run(mm_scheduler_t* sched)
 
     if (sched->pipeline) {
         mm_pipeline_topological_sort(sched->pipeline);
-    }
-
-    if (sched->config.mode == MM_SCHEDULER_MULTI_THREAD && sched->pipeline) {
-        for (uint32_t i = 0; i < sched->pipeline->nb_elements; i++) {
-            mm_element_t* el = sched->pipeline->elements[i];
-            for (uint32_t j = 0; j < el->nb_sink_pads; j++) {
-                mm_pad_t* pad = el->sink_pads[j];
-                if (pad->peer) {
-                    mm_queue_config_t q_cfg = {
-                        .mode = MM_QUEUE_SYNC,
-                        .max_buffers = 10,
-                        .max_bytes = 0,
-                        .max_duration = 0
-                    };
-                    mm_queue_t* q = mm_queue_create(&q_cfg);
-                    pad->priv = q;
-                    pad->push = queue_sink_pad_push;
-                }
-            }
-        }
     }
 
     p->running = 1;
@@ -240,21 +180,6 @@ mm_scheduler_stop(mm_scheduler_t* sched)
         free(p->threads);
         p->threads    = NULL;
         p->nb_threads = 0;
-    }
-
-    if (sched->config.mode == MM_SCHEDULER_MULTI_THREAD && sched->pipeline) {
-        for (uint32_t i = 0; i < sched->pipeline->nb_elements; i++) {
-            mm_element_t* el = sched->pipeline->elements[i];
-            for (uint32_t j = 0; j < el->nb_sink_pads; j++) {
-                mm_pad_t* pad = el->sink_pads[j];
-                if (pad->priv) {
-                    mm_queue_t* q = pad->priv;
-                    mm_queue_destroy(q);
-                    pad->priv = NULL;
-                    mm_pad_reset_callbacks(pad);
-                }
-            }
-        }
     }
 
     return MM_OK;

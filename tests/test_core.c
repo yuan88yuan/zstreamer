@@ -492,6 +492,79 @@ test_scheduler_single_threaded(void)
 }
 
 static void
+test_queue_config_limits(void)
+{
+    TEST("queue config limits (bytes, duration, async mode)");
+
+    /* Test 1: Max bytes in SYNC mode blocks/times out */
+    mm_queue_config_t cfg_bytes = {
+        .mode = MM_QUEUE_SYNC,
+        .max_bytes = 100,
+    };
+    mm_queue_t* q1 = mm_queue_create(&cfg_bytes);
+    mm_buffer_t* b1 = mm_buffer_create(MM_BUFFER_USER);
+    b1->memory.size = 60;
+    assert(mm_queue_push(q1, b1, 10) == MM_OK);
+    
+    mm_buffer_t* b2 = mm_buffer_create(MM_BUFFER_USER);
+    b2->memory.size = 50; // Total is now 110, queue is now full
+    assert(mm_queue_push(q1, b2, 10) == MM_OK);
+
+    mm_buffer_t* b3 = mm_buffer_create(MM_BUFFER_USER);
+    b3->memory.size = 10; // Queue is already full (110 >= 100), this must time out
+    assert(mm_queue_push(q1, b3, 10) == MM_TIMEOUT);
+
+    mm_queue_destroy(q1);
+    mm_buffer_unref(b1);
+    mm_buffer_unref(b2);
+    mm_buffer_unref(b3);
+
+    /* Test 2: Max duration in SYNC mode blocks/times out */
+    mm_queue_config_t cfg_dur = {
+        .mode = MM_QUEUE_SYNC,
+        .max_duration = 1000,
+    };
+    mm_queue_t* q2 = mm_queue_create(&cfg_dur);
+    mm_buffer_t* bd1 = mm_buffer_create(MM_BUFFER_USER);
+    bd1->pts = 10000;
+    bd1->duration = 0;
+    assert(mm_queue_push(q2, bd1, 10) == MM_OK);
+
+    mm_buffer_t* bd2 = mm_buffer_create(MM_BUFFER_USER);
+    bd2->pts = 11500; // Duration is 1500 (>= 1000), queue is now full
+    bd2->duration = 0;
+    assert(mm_queue_push(q2, bd2, 10) == MM_OK);
+
+    mm_buffer_t* bd3 = mm_buffer_create(MM_BUFFER_USER);
+    bd3->pts = 12000; // Queue is already full (1500 >= 1000), this must time out
+    bd3->duration = 0;
+    assert(mm_queue_push(q2, bd3, 10) == MM_TIMEOUT);
+
+    mm_queue_destroy(q2);
+    mm_buffer_unref(bd1);
+    mm_buffer_unref(bd2);
+    mm_buffer_unref(bd3);
+
+    /* Test 3: ASYNC mode drops buffers when full */
+    mm_queue_config_t cfg_async = {
+        .mode = MM_QUEUE_ASYNC,
+        .max_buffers = 1,
+    };
+    mm_queue_t* q3 = mm_queue_create(&cfg_async);
+    mm_buffer_t* ba1 = mm_buffer_create(MM_BUFFER_USER);
+    assert(mm_queue_push(q3, ba1, 10) == MM_OK);
+
+    mm_buffer_t* ba2 = mm_buffer_create(MM_BUFFER_USER);
+    assert(mm_queue_push(q3, ba2, 10) == MM_ERROR);
+
+    mm_queue_destroy(q3);
+    mm_buffer_unref(ba1);
+    mm_buffer_unref(ba2);
+
+    PASS();
+}
+
+static void
 test_scheduler_multi_threaded(void)
 {
     TEST("scheduler multi-threaded pipeline with queues");
@@ -514,6 +587,10 @@ test_scheduler_multi_threaded(void)
     mm_pad_t* src_pad = mm_pad_create("src", MM_PAD_SRC);
     mm_element_add_pad(source, src_pad);
 
+    /* Add explicit queue elements */
+    mm_element_t* q1 = mm_queue_element_create(NULL);
+    mm_element_t* q2 = mm_queue_element_create(NULL);
+
     static mm_element_ops_t transform_ops = {
         .name = "mock_transform",
         .process = mock_transform_process
@@ -534,16 +611,20 @@ test_scheduler_multi_threaded(void)
     mm_element_add_pad(sink, sink_pad);
 
     mm_pipeline_add(pipe, source);
+    mm_pipeline_add(pipe, q1);
     mm_pipeline_add(pipe, transform);
+    mm_pipeline_add(pipe, q2);
     mm_pipeline_add(pipe, sink);
 
-    mm_pad_link(src_pad, trans_sink);
-    mm_pad_link(trans_src, sink_pad);
+    mm_pad_link(src_pad, mm_element_get_pad(q1, "sink"));
+    mm_pad_link(mm_element_get_pad(q1, "src"), trans_sink);
+    mm_pad_link(trans_src, mm_element_get_pad(q2, "sink"));
+    mm_pad_link(mm_element_get_pad(q2, "src"), sink_pad);
 
     mm_pipeline_set_state(pipe, MM_STATE_PLAYING);
     mm_scheduler_run(sched);
 
-    struct timespec ts = { .tv_sec = 0, .tv_nsec = 50000000 }; /* 50 ms */
+    struct timespec ts = { .tv_sec = 0, .tv_nsec = 100000000 }; /* 100 ms to let explicit queues process */
     nanosleep(&ts, NULL);
 
     mm_pipeline_set_state(pipe, MM_STATE_NULL);
@@ -639,6 +720,7 @@ int main(void)
     test_queue_push_pop();
     test_queue_timeout();
     test_queue_flush();
+    test_queue_config_limits();
 
     /* ── Scheduler (Phase 2) ── */
     printf("[scheduler]\n");
