@@ -335,7 +335,7 @@ single sink pad (raw video in), single src pad (raw video with text out).
 - [x] `text_overlay` element with 1 sink pad (video/x-raw) + 1 src pad (video/x-raw)
 - [x] Configurable text string (via element property or secondary text sink pad)
 - [x] Backend: `libfreetype` for font rasterization (glyph bitmap generation)
-- [ ] Text layout: multi-line support with word wrapping
+- [x] Text layout: multi-line support with word wrapping
 - [ ] Configurable font family, size, colour, outline/shadow
 - [ ] Configurable position: absolute (x, y) or relative (centre, top-left, bottom-right)
 - [x] Alpha blending of text bitmap onto YUV420P / NV12 frames
@@ -359,7 +359,7 @@ single sink pad (raw video in), single src pad (raw video with text out).
 
 **Test deliverables:**
 - [x] Unit test: render text onto a known frame, verify pixels at expected positions
-- [ ] Unit test: multi-line text wrapping
+- [x] Unit test: multi-line text wrapping
 - [ ] Unit test: EOS passthrough
 - [ ] Unit test: caps negotiation
 - [ ] Unit test: property get/set for font size, colour, position
