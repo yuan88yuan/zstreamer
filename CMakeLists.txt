@@ -220,3 +220,6 @@ install(DIRECTORY include/
 if(CMAKE_COMPILER_IS_GNUCC OR CMAKE_C_COMPILER_ID MATCHES "Clang")
     add_compile_options(-Wall -Wextra -Wpedantic -Wshadow)
 endif()
+add_executable(example_text_overlay tests/example_text_overlay.c src/v4l2_source.c src/text_overlay.c src/h264_encoder.c src/file_sink.c src/zst_element.c src/zst_pad.c src/zst_caps.c src/zst_buffer.c src/zst_bus.c src/zst_plugin.c src/zst_clock.c src/zst_allocator.c)
+target_include_directories(example_text_overlay PRIVATE ${FREETYPE_INCLUDE_DIRS})
+target_link_libraries(example_text_overlay PRIVATE zstreamer ${V4L2_LIBRARIES} ${X264_LIBRARIES} ${FREETYPE_LIBRARIES})

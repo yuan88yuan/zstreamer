@@ -46,6 +46,17 @@ typedef struct {
     zst_clock_t* (*provide_clock)(
         zst_element_t* el);
 
+    zst_result_t (*set_property)(
+        zst_element_t* el,
+        const char* name,
+        const char* value);
+
+    zst_result_t (*get_property)(
+        zst_element_t* el,
+        const char* name,
+        char* value_out,
+        size_t max_len);
+
 } zst_element_ops_t;
 
 struct zst_element {
@@ -91,6 +102,17 @@ zst_result_t zst_element_add_pad(
 void zst_element_set_clock(
     zst_element_t* el,
     zst_clock_t* clock);
+
+zst_result_t zst_element_set_property(
+    zst_element_t* el,
+    const char* name,
+    const char* value);
+
+zst_result_t zst_element_get_property(
+    zst_element_t* el,
+    const char* name,
+    char* value_out,
+    size_t max_len);
 
 #ifdef __cplusplus
 }

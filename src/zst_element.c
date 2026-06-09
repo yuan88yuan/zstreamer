@@ -170,3 +170,19 @@ zst_element_set_clock(zst_element_t* el, zst_clock_t* clock)
     }
     el->clock = clock ? zst_clock_ref(clock) : NULL;
 }
+
+zst_result_t
+zst_element_set_property(zst_element_t* el, const char* name, const char* value)
+{
+    if (!el || !name || !value) return ZST_ERROR;
+    if (!el->ops->set_property) return ZST_ERROR;
+    return el->ops->set_property(el, name, value);
+}
+
+zst_result_t
+zst_element_get_property(zst_element_t* el, const char* name, char* value_out, size_t max_len)
+{
+    if (!el || !name || !value_out || max_len == 0) return ZST_ERROR;
+    if (!el->ops->get_property) return ZST_ERROR;
+    return el->ops->get_property(el, name, value_out, max_len);
+}
