@@ -1,0 +1,89 @@
+# Element Implementations — Phase 4  (✅ done)
+
+Eight elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.
+Two more handle format conversion (scaling, resampling) — essential once caps negotiation (Phase 5) requires automatic conversion between mismatched formats.
+
+### 4a — V4L2 Source  (✅ done)
+- [x] Open `/dev/video0` with O_RDWR | O_NONBLOCK
+- [x] Format negotiation: `VIDIOC_S_FMT` (YUYV, 640×480)
+- [x] MMAP buffer setup: `VIDIOC_REQBUFS` / `QUERYBUF` / `QBUF`
+- [x] `VIDIOC_STREAMON` / `VIDIOC_STREAMOFF`
+- [x] poll-based non-blocking capture with timeout
+- [x] YUYV → YUV420P colour space conversion
+- [x] **Synthetic fallback** when no camera: moving vertical bar pattern, 30 fps
+
+**Dependencies:** `libv4l-dev` (in Docker)
+
+### 4b — H.264 Encoder  (✅ done)
+- [x] x264 integration: `x264_param_default_preset("ultrafast", "zerolatency")`
+- [x] CRF rate control (23)
+- [x] Accept I420 YUV planes from `zst_video_frame_t` payload
+- [x] NAL unit concatenation into `zst_buffer` packets
+- [x] PTS passthrough
+- [x] EOS passthrough
+- [x] Lazy initialization on first frame (handles dynamic resolution)
+
+**Dependencies:** `libx264-dev` (in Docker)
+
+### 4c — MP4 Muxer  (✅ done)
+- [x] FFmpeg `libavformat` integration
+- [x] Custom AVIO write callback pushes buffers downstream (not to file)
+- [x] Video stream (H.264) + audio stream (AAC)
+- [x] Fragmented MP4: `frag_keyframe+empty_moov+default_base_moof`
+- [x] Per-stream EOS tracking: muxer waits for both video + audio EOS before propagating
+- [x] Proper `av_write_trailer()` on stop
+
+**Dependencies:** `libavformat-dev`, `libavcodec-dev`, `libavutil-dev` (in Docker)
+
+### 4d — File Sink  (✅ done)
+- [x] FILE* writer: `fopen`, `fwrite`, `fclose`
+- [x] Writes buffer memory data to file
+- [x] Proper `close` lifecycle hook
+
+### 4e — ALSA Audio Source  (✅ done)
+- [x] `snd_pcm_open("default", SND_PCM_STREAM_CAPTURE)`
+- [x] Parameter setup: S16_LE, 44100Hz, stereo, 0.5s latency
+- [x] `snd_pcm_readi()` for capture
+- [x] Underrun / xrun recovery (`-EPIPE` → `snd_pcm_prepare`)
+- [x] **Synthetic fallback**: 440Hz square wave, 44100Hz timing with nanosleep
+
+**Dependencies:** `libasound2-dev`
+
+### 4f — AAC Encoder  (✅ done)
+- [x] FFmpeg `libavcodec` AAC encoder: `avcodec_find_encoder(AV_CODEC_ID_AAC)`
+- [x] S16LE interleaved → FLTP float planar conversion
+- [x] `avcodec_send_frame()` / `avcodec_receive_packet()` API
+- [x] 128kbps bitrate
+- [x] EOS passthrough
+
+**Dependencies:** `libavcodec-dev` (in Docker)
+
+### 4g — Video Scaler  (✅ done)
+
+A conversion element that scales video frames and converts pixel formats. Deployed
+when a source's output caps (e.g. 1080p NV12) don't match the next element's input
+caps (e.g. 720p I420).
+
+- [x] **Interface**: single sink pad, single src pad — accepts raw video, outputs raw video
+- [x] **Backend**: `libswscale` from FFmpeg (`sws_getContext` / `sws_scale`)
+- [x] **Auto-configuration**: on first frame, allocate the SWS context based on input resolution/format and configured output resolution/format
+- [x] Configurable target: `width`, `height`, `pixel_format` — or passthrough if formats match
+- [x] **Synthetic fallback**: naive nearest-neighbour scaling if `libswscale` unavailable
+- [x] EOS passthrough
+
+**Dependencies:** `libswscale-dev` (in Docker)
+
+### 4h — Audio Resampler  (✅ done)
+
+Converts audio sample rate and format. Needed when source sample rate (e.g. ALSA
+at 48000Hz) differs from what the encoder expects (e.g. AAC at 44100Hz), or when
+format mismatches (S16LE ↔ F32LE).
+
+- [x] **Interface**: single sink pad, single src pad — accepts raw audio, outputs raw audio
+- [x] **Backend**: `libswresample` from FFmpeg (`swr_alloc_set_opts` / `swr_convert`)
+- [x] **Auto-configuration**: on first frame, allocate SWR context from input/output params
+- [x] Configurable: `sample_rate`, `sample_format`, `channels` — passthrough if matching
+- [x] **Synthetic fallback**: linear interpolation resampling if `libswresample` unavailable
+- [x] EOS passthrough
+
+**Dependencies:** `libswresample-dev` (in Docker)

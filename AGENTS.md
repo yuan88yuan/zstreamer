@@ -179,7 +179,12 @@ When working on this project, the most important files to read first:
 1. `include/zst_types.h` — All forward declarations and error codes
 2. `include/zst_buffer.h` — Buffer structure (used everywhere)
 3. `wiki/architecture.md` — Full architectural understanding
-4. `wiki/implementation-plan.md` — What's done and what's next
+4. `wiki/implementation-plan.md` — Top-level plan index; sub-plans:
+   - [`wiki/phase-core.md`](phase-core.md) — Phases 0–3 (scaffolding, framework, scheduler, queue)
+   - [`wiki/phase-elements.md`](phase-elements.md) — Phase 4 (8 element implementations)
+   - [`wiki/phase-infrastructure.md`](phase-infrastructure.md) — Phases 5–7 (caps, bus, plugins)
+   - [`wiki/phase-advanced.md`](phase-advanced.md) — Phase 8 (allocator, clock, advanced)
+   - [`wiki/phase-future.md`](phase-future.md) — Phases 9–11 (CI, docs, text rendering)
 5. `CMakeLists.txt` — Build targets and dependencies
 6. `src/zst_queue_element.c` — Queue element implementation
 7. `src/v4l2_source.c` — Real V4L2 capture (reference for HW element pattern)
