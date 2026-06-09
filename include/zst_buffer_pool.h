@@ -5,6 +5,7 @@
 
 #include "zst_types.h"
 #include "zst_buffer.h"
+#include "zst_caps.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -52,6 +53,8 @@ void zst_buffer_pool_destroy(
     zst_buffer_pool_t* pool);
 
 zst_buffer_pool_config_t zst_buffer_pool_get_config(zst_buffer_pool_t* pool);
+
+zst_buffer_pool_config_t zst_buffer_pool_config_from_caps(const zst_caps_t* caps);
 
 void zst_buffer_pool_prefill(zst_buffer_pool_t* pool);
 

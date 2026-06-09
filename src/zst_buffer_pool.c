@@ -5,10 +5,35 @@
 #include "zst_buffer_pool.h"
 #include "zst_allocator.h"
 #include "zst_log.h"
+#include "zst_caps.h"
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
 #include <time.h>
+
+static int get_bytes_per_pixel_num(const char* pixel_format) {
+    if (strcmp(pixel_format, "YUV420P") == 0 || strcmp(pixel_format, "NV12") == 0 || strcmp(pixel_format, "NV21") == 0) return 3;
+    if (strcmp(pixel_format, "YUYV422") == 0 || strcmp(pixel_format, "UYVY") == 0 || strcmp(pixel_format, "YUYV") == 0) return 4;
+    if (strcmp(pixel_format, "RGB24") == 0 || strcmp(pixel_format, "BGR24") == 0) return 6;
+    if (strcmp(pixel_format, "RGBA") == 0 || strcmp(pixel_format, "BGRA") == 0 || strcmp(pixel_format, "ARGB") == 0) return 8;
+    return 3;
+}
+
+static int get_bytes_per_pixel_den(const char* pixel_format) {
+    if (strcmp(pixel_format, "YUV420P") == 0 || strcmp(pixel_format, "NV12") == 0 || strcmp(pixel_format, "NV21") == 0) return 2;
+    if (strcmp(pixel_format, "YUYV422") == 0 || strcmp(pixel_format, "UYVY") == 0 || strcmp(pixel_format, "YUYV") == 0) return 2;
+    if (strcmp(pixel_format, "RGB24") == 0 || strcmp(pixel_format, "BGR24") == 0) return 2;
+    if (strcmp(pixel_format, "RGBA") == 0 || strcmp(pixel_format, "BGRA") == 0 || strcmp(pixel_format, "ARGB") == 0) return 2;
+    return 2;
+}
+
+static int get_audio_bytes_per_sample(const char* format) {
+    if (strcmp(format, "S16LE") == 0 || strcmp(format, "S16BE") == 0) return 2;
+    if (strcmp(format, "S32LE") == 0 || strcmp(format, "S32BE") == 0 || strcmp(format, "F32LE") == 0 || strcmp(format, "F32BE") == 0) return 4;
+    if (strcmp(format, "F64LE") == 0 || strcmp(format, "F64BE") == 0) return 8;
+    if (strcmp(format, "U8") == 0) return 1;
+    return 2;
+}
 
 struct zst_buffer_pool {
     zst_allocator_t* allocator;
@@ -237,6 +262,33 @@ zst_buffer_pool_config_t zst_buffer_pool_get_config(zst_buffer_pool_t* pool) {
         return empty;
     }
     return pool->config;
+}
+
+zst_buffer_pool_config_t zst_buffer_pool_config_from_caps(const zst_caps_t* caps) {
+    zst_buffer_pool_config_t config = {0};
+
+    if (!caps || !zst_caps_is_fixed(caps)) {
+        return config;
+    }
+
+    zst_caps_struct_t* s = caps->structs;
+    if (!s) return config;
+
+    config.min_buffers = 2;
+    config.max_buffers = 8;
+
+    if (s->type == ZST_CAPS_VIDEO) {
+        config.buffer_type = ZST_BUFFER_VIDEO_FRAME;
+        int num = get_bytes_per_pixel_num(s->video.pixel_format);
+        int den = get_bytes_per_pixel_den(s->video.pixel_format);
+        config.buffer_size = s->video.width * s->video.height * num / den;
+    } else if (s->type == ZST_CAPS_AUDIO) {
+        config.buffer_type = ZST_BUFFER_AUDIO_FRAME;
+        int bps = get_audio_bytes_per_sample(s->audio.format);
+        config.buffer_size = 1024 * s->audio.channels * bps;
+    }
+
+    return config;
 }
 
 void zst_buffer_pool_prefill(zst_buffer_pool_t* pool) {

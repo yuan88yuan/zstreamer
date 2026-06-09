@@ -270,7 +270,7 @@ An async notification channel (`zst_bus_t`) that decouples error/state/EOS from 
         to the upstream pool automatically
 
   **Auto-configuration from caps:**
-  - [ ] `zst_buffer_pool_config_from_caps(caps)` — derive `buffer_size` from
+  - [x] `zst_buffer_pool_config_from_caps(caps)` — derive `buffer_size` from
         resolution × pixel format (video) or sample_rate × channels × format (audio)
   - [ ] Default pool sizing: `min_buffers` = number of queue elements in pipeline + 2
         (so there's always a spare buffer circulating)
