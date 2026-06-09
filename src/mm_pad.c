@@ -84,10 +84,11 @@ mm_pad_create(const char* name, mm_pad_direction_t direction)
     mm_pad_t* pad = calloc(1, sizeof(*pad));
     if (!pad) return NULL;
 
-    pad->name      = name ? strdup(name) : NULL;
-    pad->direction = direction;
-    pad->parent    = NULL;
-    pad->caps      = NULL;
+    pad->name          = name ? strdup(name) : NULL;
+    pad->direction     = direction;
+    pad->parent        = NULL;
+    pad->caps          = NULL;
+    pad->template_caps = NULL;
     if (direction == MM_PAD_SRC) {
         pad->pull = default_src_pad_pull;
         pad->push = NULL;
@@ -111,7 +112,8 @@ mm_pad_destroy(mm_pad_t* pad)
         mm_pad_unlink(pad);
 
     free((void*)pad->name);
-    free(pad->caps);
+    mm_caps_destroy(pad->caps);
+    mm_caps_destroy(pad->template_caps);
     free(pad);
 }
 
@@ -130,6 +132,12 @@ mm_pad_link(mm_pad_t* src, mm_pad_t* sink)
     /* Refuse if either pad is already linked */
     if (src->peer || sink->peer)
         return MM_ERROR;
+
+    /* Negotiate caps first */
+    mm_result_t ret = mm_pad_negotiate(src, sink);
+    if (ret != MM_OK) {
+        return ret;
+    }
 
     src->peer = sink;
     sink->peer = src;
@@ -189,4 +197,104 @@ mm_pad_reset_callbacks(mm_pad_t* pad)
         pad->push = default_sink_pad_push;
         pad->pull = NULL;
     }
+}
+
+mm_result_t
+mm_pad_set_caps(mm_pad_t* pad, const mm_caps_t* caps)
+{
+    if (!pad) return MM_ERROR;
+    
+    if (pad->caps) {
+        mm_caps_destroy(pad->caps);
+        pad->caps = NULL;
+    }
+    
+    if (caps) {
+        pad->caps = mm_caps_copy(caps);
+        if (!pad->caps) return MM_ERROR;
+    }
+    
+    return MM_OK;
+}
+
+mm_caps_t*
+mm_pad_get_caps(mm_pad_t* pad)
+{
+    if (!pad) return NULL;
+    
+    if (pad->caps) {
+        return mm_caps_copy(pad->caps);
+    }
+    
+    mm_element_t* el = pad->parent;
+    if (el && el->ops && el->ops->get_caps) {
+        mm_caps_t* caps = el->ops->get_caps(el, pad, NULL);
+        if (caps) return caps;
+    }
+    
+    if (pad->template_caps) {
+        return mm_caps_copy(pad->template_caps);
+    }
+    
+    return NULL;
+}
+
+mm_result_t
+mm_pad_set_template_caps(mm_pad_t* pad, const mm_caps_t* caps)
+{
+    if (!pad) return MM_ERROR;
+    
+    if (pad->template_caps) {
+        mm_caps_destroy(pad->template_caps);
+        pad->template_caps = NULL;
+    }
+    
+    if (caps) {
+        pad->template_caps = mm_caps_copy(caps);
+        if (!pad->template_caps) return MM_ERROR;
+    }
+    
+    return MM_OK;
+}
+
+mm_result_t
+mm_pad_negotiate(mm_pad_t* src, mm_pad_t* sink)
+{
+    if (!src || !sink) return MM_ERROR;
+    
+    mm_caps_t* src_caps = mm_pad_get_caps(src);
+    mm_caps_t* sink_caps = mm_pad_get_caps(sink);
+    
+    if (!src_caps || !sink_caps) {
+        if (src_caps) mm_caps_destroy(src_caps);
+        if (sink_caps) mm_caps_destroy(sink_caps);
+        return MM_OK;
+    }
+    
+    mm_caps_t* intersect = mm_caps_intersect(src_caps, sink_caps);
+    mm_caps_destroy(src_caps);
+    mm_caps_destroy(sink_caps);
+    
+    if (!intersect) {
+        return MM_ERROR;
+    }
+    
+    if (!intersect->structs) {
+        mm_caps_destroy(intersect);
+        return MM_ERROR;
+    }
+    
+    mm_result_t ret = mm_caps_fixate(intersect);
+    if (ret != MM_OK) {
+        mm_caps_destroy(intersect);
+        return MM_ERROR;
+    }
+    
+    ret = mm_pad_set_caps(src, intersect);
+    if (ret == MM_OK) {
+        ret = mm_pad_set_caps(sink, intersect);
+    }
+    
+    mm_caps_destroy(intersect);
+    return ret;
 }

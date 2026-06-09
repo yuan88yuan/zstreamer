@@ -52,6 +52,7 @@ set(ZSTREAMER_INCLUDE_DIR
 
 # ── Core library sources ─────────────────────────────────────────────────
 set(CORE_SOURCES
+    src/mm_caps.c
     src/mm_buffer.c
     src/mm_pad.c
     src/mm_element.c

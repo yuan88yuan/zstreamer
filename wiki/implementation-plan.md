@@ -155,18 +155,18 @@ format mismatches (S16LE ↔ F32LE).
 
 ---
 
-## Phase 5 — Caps Negotiation  (from `wiki/future.md`)
+## Phase 5 — Caps Negotiation  (✅ done)
 
 Arguably the most important missing piece. Without caps negotiation, the pipeline can't verify or convert between formats. Elements must advertise what they produce (src caps) and what they consume (sink caps), and adjacent pads must agree before linking.
 
-- [ ] `mm_caps_t` structure: a list of structures each describing:
+- [x] `mm_caps_t` structure: a list of structures each describing:
   - `media_type` (e.g. `"video/x-raw"`, `"video/x-h264"`)
   - Video: `width`, `height`, `framerate`, `pixel_format` (NV12, YUV420P, etc.)
   - Audio: `channels`, `sample_rate`, `format` (S16LE, F32LE, etc.)
-- [ ] Caps intersection: `mm_caps_intersect(src_caps, sink_caps) → mm_caps_t*`
-- [ ] Pad caps API: `mm_pad_set_caps()`, `mm_pad_get_caps()`, `mm_pad_negotiate()`
-- [ ] Auto-negotiation at link time
-- [ ] Caps-query mechanism in element ops vtable
+- [x] Caps intersection: `mm_caps_intersect(src_caps, sink_caps) → mm_caps_t*`
+- [x] Pad caps API: `mm_pad_set_caps()`, `mm_pad_get_caps()`, `mm_pad_negotiate()`
+- [x] Auto-negotiation at link time
+- [x] Caps-query mechanism in element ops vtable
 
 **Conversion elements** (4g video-scaler, 4h audio-resampler) will be auto-inserted by the
 negotiation process when formats don't match.

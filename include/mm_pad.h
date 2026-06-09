@@ -5,6 +5,7 @@
 
 #include "mm_types.h"
 #include "mm_buffer.h"
+#include "mm_caps.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -14,12 +15,6 @@ typedef enum {
     MM_PAD_SRC,
     MM_PAD_SINK
 } mm_pad_direction_t;
-
-typedef struct {
-
-    const char* media_type;
-
-} mm_caps_t;
 
 typedef mm_result_t (*mm_pad_push_fn)(
     mm_pad_t* pad,
@@ -37,7 +32,8 @@ struct mm_pad {
 
     mm_element_t* parent;
 
-    mm_caps_t* caps;
+    mm_caps_t* caps;          /* Negotiated caps */
+    mm_caps_t* template_caps; /* Supported template caps */
 
     mm_pad_push_fn push;
     mm_pad_pull_fn pull;
@@ -71,6 +67,21 @@ mm_result_t mm_pad_pull(
 
 void mm_pad_reset_callbacks(
     mm_pad_t* pad);
+
+mm_result_t mm_pad_set_caps(
+    mm_pad_t* pad,
+    const mm_caps_t* caps);
+
+mm_caps_t* mm_pad_get_caps(
+    mm_pad_t* pad);
+
+mm_result_t mm_pad_set_template_caps(
+    mm_pad_t* pad,
+    const mm_caps_t* caps);
+
+mm_result_t mm_pad_negotiate(
+    mm_pad_t* src,
+    mm_pad_t* sink);
 
 #ifdef __cplusplus
 }

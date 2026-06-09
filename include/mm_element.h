@@ -38,6 +38,11 @@ typedef struct {
         mm_buffer_t* in,
         mm_buffer_t** out);
 
+    mm_caps_t* (*get_caps)(
+        mm_element_t* el,
+        mm_pad_t* pad,
+        const mm_caps_t* filter);
+
 } mm_element_ops_t;
 
 struct mm_element {
