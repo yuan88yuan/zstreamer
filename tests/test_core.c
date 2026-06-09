@@ -22,6 +22,7 @@
 #include "zst_plugin.h"
 #include "zst_log.h"
 #include "zst_allocator.h"
+#include "zst_buffer_pool.h"
 #include "zst_clock.h"
 
 zst_element_t* zst_video_scaler_create(int target_width, int target_height, const char* target_pixel_format);
@@ -84,6 +85,41 @@ test_buffer_null_safety(void)
     /* These should not crash */
     zst_buffer_ref(NULL);
     zst_buffer_unref(NULL);
+    PASS();
+}
+
+static void
+test_buffer_create_with_pool(void)
+{
+    TEST("buffer create with pool");
+    zst_buffer_pool_config_t cfg = {
+        .min_buffers = 1,
+        .max_buffers = 1,
+        .buffer_size = 1024,
+        .buffer_type = ZST_BUFFER_USER
+    };
+
+    zst_buffer_pool_t* pool = zst_buffer_pool_create(NULL, &cfg);
+    assert(pool != NULL);
+
+    /* Pool preallocates min_buffers, so we should be able to get 1 */
+    zst_buffer_t* buf = zst_buffer_create_with_pool(pool);
+    assert(buf != NULL);
+    assert(buf->type == ZST_BUFFER_USER);
+    assert(buf->pool == pool);
+
+    /* Pool size is max_buffers = 1, so getting another one with no timeout should return NULL since it fails to acquire */
+    zst_buffer_t* buf2 = zst_buffer_create_with_pool(pool);
+    assert(buf2 == NULL);
+
+    zst_buffer_unref(buf);
+
+    /* Now we should be able to get it again */
+    buf2 = zst_buffer_create_with_pool(pool);
+    assert(buf2 != NULL);
+    zst_buffer_unref(buf2);
+
+    zst_buffer_pool_destroy(pool);
     PASS();
 }
 
@@ -1607,6 +1643,7 @@ int main(void)
     test_buffer_create_destroy();
     test_buffer_refcount();
     test_buffer_null_safety();
+    test_buffer_create_with_pool();
 
     /* ── Pad ── */
     printf("[pad]\n");

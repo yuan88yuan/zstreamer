@@ -113,8 +113,8 @@ alsa_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     (void)in;
     alsa_source_t* s = el->priv;
     
-    zst_buffer_t* buf = NULL;
-    if (zst_buffer_pool_acquire(s->pool, &buf, 0) != ZST_OK) {
+    zst_buffer_t* buf = zst_buffer_create_with_pool(s->pool);
+    if (!buf) {
         return ZST_ERROR;
     }
 

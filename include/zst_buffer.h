@@ -91,6 +91,9 @@ zst_buffer_t* zst_buffer_create_with_allocator(
     zst_allocator_t* allocator,
     size_t size);
 
+zst_buffer_t* zst_buffer_create_with_pool(
+    struct zst_buffer_pool* pool);
+
 zst_buffer_t* zst_buffer_ref(
     zst_buffer_t* buf);
 

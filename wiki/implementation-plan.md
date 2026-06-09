@@ -253,7 +253,7 @@ An async notification channel (`zst_bus_t`) that decouples error/state/EOS from 
 
   **Integration with zst_buffer:**
   - [x] `zst_buffer_t` gets an optional `pool` back-pointer (or reuse `memory.priv`)
-  - [ ] `zst_buffer_create_with_pool(pool)` — acquire from pool instead of malloc
+  - [x] `zst_buffer_create_with_pool(pool)` — acquire from pool instead of malloc
   - [x] `zst_buffer_unref()` checks for pool back-pointer: if pool is set, call
         `pool->release(buf)` instead of `free`; otherwise normal free path
   - [x] Pool buffers skip the `destroy` callback on recycle (only called on final unref when

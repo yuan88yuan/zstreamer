@@ -338,8 +338,8 @@ scaler_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
         if (!s->pool) return ZST_ERROR;
     }
 
-    zst_buffer_t* out_buf = NULL;
-    if (zst_buffer_pool_acquire(s->pool, &out_buf, 0) != ZST_OK) {
+    zst_buffer_t* out_buf = zst_buffer_create_with_pool(s->pool);
+    if (!out_buf) {
         return ZST_ERROR;
     }
 
