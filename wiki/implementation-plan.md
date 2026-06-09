@@ -228,6 +228,61 @@ An async notification channel (`zst_bus_t`) that decouples error/state/EOS from 
 - [ ] CUDA / Vulkan device memory allocators
 - [ ] Buffer pools to eliminate per-frame allocation
 
+  **`zst_buffer_pool_t` — a recyclable pool of pre-allocated buffers**
+
+  Every source element currently calls `zst_buffer_create()` per frame (see
+  `v4l2_source.c`, `alsa_source.c`, `video_scaler.c`, etc.). A buffer pool
+  pre-allocates a set of buffers upfront and recycles them, eliminating
+  `malloc`/`free` overhead on every frame.
+
+  **Data structure and lifecycle:**
+  - [ ] `zst_buffer_pool_t` struct with a LIFO/freelist of buffers
+  - [ ] Backed by a `zst_allocator_t` — pool allocates new buffers via allocator
+  - [ ] Config: `min_buffers`, `max_buffers`, `buffer_size`, `buffer_type`
+  - [ ] Thread-safe acquire/release via `pthread_mutex` + `pthread_condvar`
+  - [ ] Watermark callbacks: low-watermark triggers pre-fill, high-watermark triggers drain
+  - [ ] `zst_buffer_pool_create(allocator, config)` / `_destroy()` / `_flush()`
+
+  **Acquire / release API:**
+  - [ ] `zst_buffer_pool_acquire(pool, timeout_ms)` — returns a buffer from the pool;
+        blocks if empty until a buffer is returned or timeout expires
+  - [ ] `zst_buffer_pool_release(pool, buf)` — returns the buffer to the pool;
+        resets refcount to 1, clears flags/metadata (but keeps underlying memory for reuse)
+  - [ ] Optional non-blocking acquire with `ZST_POOL_ACQUIRE_NONBLOCK` flag
+  - [ ] On release: if pool is at capacity, actually free the buffer instead of recycling
+
+  **Integration with zst_buffer:**
+  - [ ] `zst_buffer_t` gets an optional `pool` back-pointer (or reuse `memory.priv`)
+  - [ ] `zst_buffer_create_with_pool(pool)` — acquire from pool instead of malloc
+  - [ ] `zst_buffer_unref()` checks for pool back-pointer: if pool is set, call
+        `pool->release(buf)` instead of `free`; otherwise normal free path
+  - [ ] Pool buffers skip the `destroy` callback on recycle (only called on final unref when
+        pool itself is destroyed)
+
+  **Usage in elements (migration):**
+  - [ ] `v4l2_source`: allocate pool during `open()`, acquire per-frame in process()
+        instead of `zst_buffer_create()`; release happens automatically on `unref`
+  - [ ] `alsa_source`: same pattern for audio frames
+  - [ ] `video_scaler` / `audio_resampler`: pool for output buffers
+  - [ ] `h264_encoder` / `aac_encoder`: packet pool for encoded output
+  - [ ] `queue_element`: optionally attach pool to queue — return consumed buffers
+        to the upstream pool automatically
+
+  **Auto-configuration from caps:**
+  - [ ] `zst_buffer_pool_config_from_caps(caps)` — derive `buffer_size` from
+        resolution × pixel format (video) or sample_rate × channels × format (audio)
+  - [ ] Default pool sizing: `min_buffers` = number of queue elements in pipeline + 2
+        (so there's always a spare buffer circulating)
+
+  **Test deliverables:**
+  - [ ] Unit test: acquire/recycle loop (N buffers, M cycles, no net allocation)
+  - [ ] Unit test: acquire blocks when pool exhausted, unblocks on release
+  - [ ] Unit test: acquire with timeout returns NULL on expiry
+  - [ ] Unit test: pool-backed buffer unref returns buffer to pool
+  - [ ] Unit test: pool flush frees all cached buffers
+  - [ ] Integration test: `v4l2src → queue → filesink` with pool, verify zero
+        calls to `malloc` after warm-up phase
+
 ### 8b — Clock  (from `wiki/future.md`)  (✅ done)
 - [x] `zst_clock_t` interface: `get_time`, `wait`
 - [x] System clock wrapping `CLOCK_MONOTONIC`
