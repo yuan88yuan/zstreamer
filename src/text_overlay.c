@@ -118,48 +118,90 @@ text_overlay_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
         return ZST_OK;
     }
 
-    /* Simple text rendering loop */
-    int x = 10;
-    int y = 50; /* Baseline */
+    /* Word wrapping and text rendering loop */
+    int start_x = 10;
+    int start_y = 50; /* Baseline */
+    int x = start_x;
+    int y = start_y;
+    int line_height = s->face->size->metrics.height >> 6;
+    if (line_height == 0) line_height = s->font_size > 0 ? s->font_size * 1.2 : 50;
 
-    for (int i = 0; s->text[i] != '\0'; i++) {
-        if (FT_Load_Char(s->face, s->text[i], FT_LOAD_RENDER)) {
+    int max_x = vf->width - 10;
+
+    int i = 0;
+    while (s->text[i] != '\0') {
+        /* Check for explicit newline */
+        if (s->text[i] == '\n') {
+            x = start_x;
+            y += line_height;
+            i++;
             continue;
         }
 
-        FT_Bitmap* bmp = &s->face->glyph->bitmap;
-        int draw_x = x + s->face->glyph->bitmap_left;
-        int draw_y = y - s->face->glyph->bitmap_top;
+        /* Measure next word */
+        int word_width = 0;
+        int j = i;
+        while (s->text[j] != '\0' && s->text[j] != ' ' && s->text[j] != '\n') {
+            if (FT_Load_Char(s->face, s->text[j], FT_LOAD_DEFAULT) == 0) {
+                word_width += (s->face->glyph->advance.x >> 6);
+            }
+            j++;
+        }
 
-        for (unsigned int r = 0; r < bmp->rows; r++) {
-            for (unsigned int c = 0; c < bmp->width; c++) {
-                int px = draw_x + c;
-                int py = draw_y + r;
+        /* If word exceeds remaining width (and it's not the start of the line), wrap */
+        if (x + word_width > max_x && x > start_x) {
+            x = start_x;
+            y += line_height;
+        }
 
-                if (px >= 0 && px < (int)vf->width && py >= 0 && py < (int)vf->height) {
-                    uint8_t alpha = bmp->buffer[r * bmp->width + c];
-                    if (alpha > 0) {
-                        /* Blend onto Y plane */
-                        uint8_t* y_ptr = vf->plane[0] + py * vf->stride[0] + px;
-                        /* Simple blend: target = alpha * 255 + (1-alpha) * target */
-                        *y_ptr = (alpha * 255 + (255 - alpha) * (*y_ptr)) / 255;
+        /* Render word and spaces */
+        while (i < j || (s->text[i] == ' ' && s->text[i] != '\0')) {
+            if (s->text[i] == '\n') break;
 
-                        /* For U and V, maybe set to 128 (grey) to make text white */
-                        if (strcmp(pixel_format, "YUV420P") == 0) {
-                            uint8_t* u_ptr = vf->plane[1] + (py / 2) * vf->stride[1] + (px / 2);
-                            uint8_t* v_ptr = vf->plane[2] + (py / 2) * vf->stride[2] + (px / 2);
-                            *u_ptr = (alpha * 128 + (255 - alpha) * (*u_ptr)) / 255;
-                            *v_ptr = (alpha * 128 + (255 - alpha) * (*v_ptr)) / 255;
-                        } else if (strcmp(pixel_format, "NV12") == 0) {
-                            uint8_t* uv_ptr = vf->plane[1] + (py / 2) * vf->stride[1] + (px & ~1);
-                            uv_ptr[0] = (alpha * 128 + (255 - alpha) * uv_ptr[0]) / 255; /* U */
-                            uv_ptr[1] = (alpha * 128 + (255 - alpha) * uv_ptr[1]) / 255; /* V */
+            if (s->text[i] == ' ') {
+                if (FT_Load_Char(s->face, ' ', FT_LOAD_DEFAULT) == 0) {
+                    x += (s->face->glyph->advance.x >> 6);
+                } else {
+                    x += s->font_size / 2;
+                }
+                i++;
+                continue;
+            }
+
+            if (FT_Load_Char(s->face, s->text[i], FT_LOAD_RENDER) == 0) {
+                FT_Bitmap* bmp = &s->face->glyph->bitmap;
+                int draw_x = x + s->face->glyph->bitmap_left;
+                int draw_y = y - s->face->glyph->bitmap_top;
+
+                for (unsigned int r = 0; r < bmp->rows; r++) {
+                    for (unsigned int c = 0; c < bmp->width; c++) {
+                        int px = draw_x + c;
+                        int py = draw_y + r;
+
+                        if (px >= 0 && px < (int)vf->width && py >= 0 && py < (int)vf->height) {
+                            uint8_t alpha = bmp->buffer[r * bmp->width + c];
+                            if (alpha > 0) {
+                                uint8_t* y_ptr = vf->plane[0] + py * vf->stride[0] + px;
+                                *y_ptr = (alpha * 255 + (255 - alpha) * (*y_ptr)) / 255;
+
+                                if (strcmp(pixel_format, "YUV420P") == 0) {
+                                    uint8_t* u_ptr = vf->plane[1] + (py / 2) * vf->stride[1] + (px / 2);
+                                    uint8_t* v_ptr = vf->plane[2] + (py / 2) * vf->stride[2] + (px / 2);
+                                    *u_ptr = (alpha * 128 + (255 - alpha) * (*u_ptr)) / 255;
+                                    *v_ptr = (alpha * 128 + (255 - alpha) * (*v_ptr)) / 255;
+                                } else if (strcmp(pixel_format, "NV12") == 0) {
+                                    uint8_t* uv_ptr = vf->plane[1] + (py / 2) * vf->stride[1] + (px & ~1);
+                                    uv_ptr[0] = (alpha * 128 + (255 - alpha) * uv_ptr[0]) / 255;
+                                    uv_ptr[1] = (alpha * 128 + (255 - alpha) * uv_ptr[1]) / 255;
+                                }
+                            }
                         }
                     }
                 }
+                x += (s->face->glyph->advance.x >> 6);
             }
+            i++;
         }
-        x += (s->face->glyph->advance.x >> 6);
     }
 
     *out = out_buf;
