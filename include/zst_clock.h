@@ -21,6 +21,8 @@ struct zst_clock {
 
 zst_clock_t* zst_clock_system_create(void);
 
+zst_clock_t* zst_clock_slave_create(zst_clock_t* master, zst_clock_t* reference);
+
 zst_clock_t* zst_clock_ref(zst_clock_t* clock);
 
 void zst_clock_unref(zst_clock_t* clock);

@@ -9,6 +9,7 @@
 #include <string.h>
 #include <assert.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "zst_types.h"
 #include "zst_buffer.h"
@@ -1063,10 +1064,18 @@ test_plugin_registry_basic(void)
     zst_result_t r = zst_plugin_registry_init();
     assert(r == ZST_OK);
     
-    r = zst_plugin_registry_scan("/workspace/build/plugins");
+    const char* ppath = getenv("ZSTREAMER_TEST_PLUGIN_PATH");
+    if (!ppath) {
+        ppath = "/workspace/build/plugins";
+        /* fallback to /app/build/plugins if we are there */
+        if (access("/app/build/plugins", R_OK) == 0) {
+            ppath = "/app/build/plugins";
+        }
+    }
+    r = zst_plugin_registry_scan(ppath);
     assert(r == ZST_OK);
     
-    setenv("ZSTREAMER_PLUGIN_PATH", "/workspace/build/plugins", 1);
+    setenv("ZSTREAMER_PLUGIN_PATH", ppath, 1);
     r = zst_plugin_registry_scan_env();
     assert(r == ZST_OK);
     

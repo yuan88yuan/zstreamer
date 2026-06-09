@@ -11,6 +11,7 @@
 #include "zst_element.h"
 #include "zst_log.h"
 #include "zst_buffer.h"
+#include "zst_clock.h"
 
 typedef struct {
     snd_pcm_t*      handle;
@@ -157,19 +158,62 @@ alsa_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     }
 
     /* Set nanosecond PTS */
-    buf->pts = (s->sample_count - nb_samples) * 1000000000ULL / s->sample_rate;
+    if (el->clock) {
+        buf->pts = zst_clock_get_time(el->clock);
+    } else {
+        buf->pts = (s->sample_count - nb_samples) * 1000000000ULL / s->sample_rate;
+    }
     buf->duration = nb_samples * 1000000000ULL / s->sample_rate;
 
     *out = buf;
     return ZST_OK;
 }
 
+static zst_time_t
+alsa_clock_get_time(zst_clock_t* clock)
+{
+    alsa_source_t* s = clock->priv;
+    if (s->sample_rate == 0) return 0;
+    return s->sample_count * 1000000000ULL / s->sample_rate;
+}
+
+static void
+alsa_clock_wait(zst_clock_t* clock, zst_time_t time)
+{
+    (void)clock;
+    (void)time;
+    /* Master clock doesn't typically wait on itself in this design, it's just a time source */
+}
+
+static void
+alsa_clock_destroy(zst_clock_t* clock)
+{
+    (void)clock;
+}
+
+static zst_clock_t*
+alsa_provide_clock(zst_element_t* el)
+{
+    alsa_source_t* s = el->priv;
+    zst_clock_t* clock = calloc(1, sizeof(*clock));
+    if (!clock) return NULL;
+
+    clock->refcount = 1;
+    clock->get_time = alsa_clock_get_time;
+    clock->wait     = alsa_clock_wait;
+    clock->destroy  = alsa_clock_destroy;
+    clock->priv     = s;
+
+    return clock;
+}
+
 static zst_element_ops_t g_ops = {
-    .name    = "alsasrc",
-    .open    = alsa_open,
-    .close   = alsa_close,
-    .start   = alsa_start,
-    .process = alsa_process,
+    .name          = "alsasrc",
+    .open          = alsa_open,
+    .close         = alsa_close,
+    .start         = alsa_start,
+    .process       = alsa_process,
+    .provide_clock = alsa_provide_clock,
 };
 
 zst_element_t*

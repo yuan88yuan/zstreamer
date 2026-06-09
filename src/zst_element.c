@@ -5,6 +5,7 @@
 #include "zst_element.h"
 #include "zst_bus.h"
 #include "zst_plugin.h"
+#include "zst_clock.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -24,6 +25,7 @@ zst_element_create(const zst_element_ops_t* ops, void* priv)
     el->nb_sink_pads = 0;
     el->priv         = priv;
     el->plugin       = NULL;
+    el->clock        = NULL;
 
     return el;
 }
@@ -41,6 +43,10 @@ zst_element_destroy(zst_element_t* el)
     for (uint32_t i = 0; i < el->nb_sink_pads; i++)
         zst_pad_destroy(el->sink_pads[i]);
     free(el->sink_pads);
+
+    if (el->clock) {
+        zst_clock_unref(el->clock);
+    }
 
     free(el->priv);
     zst_plugin_t* plugin = el->plugin;
@@ -152,4 +158,15 @@ zst_element_add_pad(zst_element_t* el, zst_pad_t* pad)
     }
 
     return ZST_OK;
+}
+
+void
+zst_element_set_clock(zst_element_t* el, zst_clock_t* clock)
+{
+    if (!el) return;
+    if (el->clock == clock) return;
+    if (el->clock) {
+        zst_clock_unref(el->clock);
+    }
+    el->clock = clock ? zst_clock_ref(clock) : NULL;
 }

@@ -17,6 +17,7 @@
 #include "zst_element.h"
 #include "zst_log.h"
 #include "zst_buffer.h"
+#include "zst_clock.h"
 
 static void v4l2_buf_free(zst_buffer_t* buf);
 
@@ -269,7 +270,11 @@ v4l2_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
         }
     }
 
-    buf->pts = s->frame_count * 33333333ULL; // 30 fps in nanoseconds
+    if (el->clock) {
+        buf->pts = zst_clock_get_time(el->clock);
+    } else {
+        buf->pts = s->frame_count * 33333333ULL; // 30 fps in nanoseconds
+    }
     buf->duration = 33333333ULL;
     buf->destroy = v4l2_buf_free;
     s->frame_count++;

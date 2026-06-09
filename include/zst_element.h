@@ -43,6 +43,9 @@ typedef struct {
         zst_pad_t* pad,
         const zst_caps_t* filter);
 
+    zst_clock_t* (*provide_clock)(
+        zst_element_t* el);
+
 } zst_element_ops_t;
 
 struct zst_element {
@@ -62,6 +65,8 @@ struct zst_element {
     zst_bus_t* bus;
 
     zst_plugin_t* plugin;
+
+    zst_clock_t* clock;
 };
 
 zst_element_t* zst_element_create(
@@ -82,6 +87,10 @@ zst_pad_t* zst_element_get_pad(
 zst_result_t zst_element_add_pad(
     zst_element_t* el,
     zst_pad_t* pad);
+
+void zst_element_set_clock(
+    zst_element_t* el,
+    zst_clock_t* clock);
 
 #ifdef __cplusplus
 }

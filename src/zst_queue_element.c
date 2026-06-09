@@ -6,6 +6,7 @@
 #include "zst_element.h"
 #include "zst_pad.h"
 #include "zst_buffer.h"
+#include "zst_clock.h"
 #include <stdlib.h>
 #include <pthread.h>
 
@@ -29,6 +30,19 @@ queue_el_worker(void* arg)
         /* Pop with a small timeout (50ms) to allow checking priv->running */
         zst_result_t ret = zst_queue_pop(priv->queue, &buf, 50);
         if (ret == ZST_OK && buf) {
+            /* Clock slaving: wait until PTS or drop if late */
+            if (el->clock && buf->pts > 0 && !(buf->flags & ZST_BUFFER_FLAG_EOS)) {
+                zst_time_t current = zst_clock_get_time(el->clock);
+                /* If it's too early, wait until PTS */
+                if (buf->pts > current + 5000000ULL) { /* 5ms early threshold */
+                    zst_clock_wait(el->clock, buf->pts - current);
+                } else if (buf->pts < current - 100000000ULL) { /* 100ms late threshold */
+                    /* Drop late buffer */
+                    zst_buffer_unref(buf);
+                    continue;
+                }
+            }
+
             zst_pad_push(priv->srcpad, buf);
             zst_buffer_unref(buf);
         }
