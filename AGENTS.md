@@ -27,11 +27,15 @@ It provides a **GStreamer-like** pipeline architecture: elements connected via p
 │   ├── zst_queue.h     ← Thread-safe bounded buffer queue
 │   ├── zst_scheduler.h ← Single / multi-thread pipeline driver
 │   ├── zst_plugin.h    ← Dynamic plugin loading (dlopen)
+│   ├── zst_bus.h       ← Async event bus for error/EOS/state notifications
+│   ├── zst_caps.h      ← Caps negotiation (media type, resolution, format)
 │   └── zst_log.h       ← Lightweight logging system
 ├── src/               ← Core library + element implementations
 │   ├── zst_buffer.c
-│   ├── zst_pad.c
+│   ├── zst_bus.c
+│   ├── zst_caps.c
 │   ├── zst_element.c
+│   ├── zst_pad.c
 │   ├── zst_pipeline.c
 │   ├── zst_queue.c
 │   ├── zst_queue_element.c ← First-class queue element
@@ -43,9 +47,11 @@ It provides a **GStreamer-like** pipeline architecture: elements connected via p
 │   ├── mp4_muxer.c    ← FFmpeg/libavformat MP4 muxer (real libavformat)
 │   ├── file_sink.c    ← FILE* writer
 │   ├── alsa_source.c  ← ALSA audio capture (real ALSA + mock fallback)
-│   └── aac_encoder.c  ← FFmpeg AAC audio encoder (real libavcodec)
+│   ├── aac_encoder.c  ← FFmpeg AAC audio encoder (real libavcodec)
+│   ├── video_scaler.c ← libswscale video format/resolution conversion
+│   └── audio_resampler.c ← libswresample audio sample rate/format conversion
 ├── tests/
-│   ├── test_core.c    ← 19 unit tests: all core + scheduler + queue elements
+│   ├── test_core.c    ← 35 unit tests: core + scheduler + queue + caps + bus + plugins + log + scaler + resampler
 │   └── example_record.c ← Full pipeline demo with queue elements
 └── wiki/
     ├── architecture.md        ← Detailed design doc
@@ -117,9 +123,12 @@ The Dockerfile has two build targets:
 | **zst_queue**      | Thread-safe bounded queue (mutex + condvar)           |
 | **zst_queue_element** | Queue as a first-class element with worker thread   |
 | **zst_scheduler**    | Drives pipeline: single-thread inline or multi-thread pool |
+| **zst_caps**     | Caps negotiation — media type, resolution, format intersection |
+| **zst_bus**      | Async event bus for error/EOS/state/warning notifications |
 | **zst_plugin**   | `dlopen()`-based dynamic element loading              |
-| **video_scaler** (planned) | Pixel format + resolution conversion via `libswscale`  |
-| **audio_resampler** (planned) | Sample rate + format conversion via `libswresample` |
+| **zst_log**      | Lightweight logging system with compile-time levels   |
+| **video_scaler** | Pixel format + resolution conversion via `libswscale`  |
+| **audio_resampler** | Sample rate + format conversion via `libswresample` |
 
 ### State Machine
 
@@ -141,12 +150,12 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | Core Framework              | ✅ All 8 core modules implemented|
 | Scheduler Integration       | ✅ Topological sort, push/pull, EOS, state hardening |
 | Queue Element               | ✅ First-class queue with worker thread |
-| Real Element Implementations| ✅ All 6 elements: V4L2, x264, MP4(mux), file, ALSA, AAC |
-| Video Scaler / Audio Resampler | 📝 Planned (Phase 4g/4h)       |
-| Unit Tests                  | ✅ 31 tests, all passing         |
+| Real Element Implementations| ✅ All 8 elements: V4L2, x264, MP4(mux), file, ALSA, AAC, video_scaler, audio_resampler |
 | Caps Negotiation            | ✅ Done                          |
 | Event Bus                   | ✅ Done                          |
 | Dynamic Plugins             | ✅ Done                          |
+| Logging System              | ✅ Done                          |
+| Unit Tests                  | ✅ 35 tests, all passing         |
 | Allocator API               | 📝 Future                        |
 | Clock / A/V Sync            | 📝 Future                        |
 | CI Pipeline                 | 📝 Future                        |
