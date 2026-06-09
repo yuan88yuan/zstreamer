@@ -1566,6 +1566,29 @@ test_clock_basic(void)
     PASS();
 }
 
+static void
+test_clock_slaving(void)
+{
+    TEST("clock slaving time advance");
+
+    zst_clock_t* sys_clock = zst_clock_system_create();
+    zst_clock_t* master_clock = zst_clock_system_create();
+    zst_clock_t* slave = zst_clock_slave_create(master_clock, sys_clock);
+    assert(slave != NULL);
+
+    zst_time_t t1 = zst_clock_get_time(slave);
+    zst_clock_wait(slave, 50000000); // 50 ms
+    zst_time_t t2 = zst_clock_get_time(slave);
+
+    assert(t2 > t1);
+
+    zst_clock_unref(slave);
+    zst_clock_unref(master_clock);
+    zst_clock_unref(sys_clock);
+
+    PASS();
+}
+
 /* ── Text Overlay (Phase 11a) ────────────────────────────────────────────── */
 
 static void
@@ -1767,6 +1790,7 @@ int main(void)
     /* ── Clock (Phase 8b) ── */
     printf("[clock]\n");
     test_clock_basic();
+    test_clock_slaving();
 
     /* ── Text Overlay (Phase 11a) ── */
     printf("[text overlay]\n");
