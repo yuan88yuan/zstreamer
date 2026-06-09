@@ -1,6 +1,7 @@
-# Element Implementations — Phase 4  (✅ done)
+# Element Implementations — Phase 4  (✅ 4a-4h, 📝 4i-4k)
 
 Eight elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.
+Three more (file source, network source, network sink) are planned for stream ingestion and distribution.
 Two more handle format conversion (scaling, resampling) — essential once caps negotiation (Phase 5) requires automatic conversion between mismatched formats.
 
 ### 4a — V4L2 Source  (✅ done)
@@ -87,3 +88,44 @@ format mismatches (S16LE ↔ F32LE).
 - [x] EOS passthrough
 
 **Dependencies:** `libswresample-dev` (in Docker)
+
+---
+
+### 4i — File Source  (📝 Planned)
+
+Reads raw or containerised media data from a local file and pushes it into the pipeline as a sequence of buffers. Analogous to GStreamer's `filesrc`.
+
+- [ ] `file_source` element with 1 src pad — configurable `path` property
+- [ ] Open file with `fopen`/`open` (O_RDONLY) on state transition to READY
+- [ ] Read chunks into `zst_buffer` pool, push to src pad
+- [ ] Send `EOS` when `feof()` / `read()` returns 0
+- [ ] Configurable `chunk_size` and `loop` (restart from beginning on EOF)
+- [ ] Support for `offset` / `length` to read a subset of the file
+- [ ] Caps negotiation: advertise `text/plain`, `video/x-h264`, `audio/aac`, etc. based on file extension or probe
+
+### 4j — Network Source  (📝 Planned)
+
+Receives media data over TCP, Unix sockets, or higher-level streaming protocols (SRT, RTMP) and feeds buffers into the pipeline.
+
+- [ ] `net_source` element with 1+ src pads
+- [ ] TCP client mode: connect to remote host:port, read stream into buffers
+- [ ] TCP server mode: accept incoming connections, read from first connected client
+- [ ] Unix socket support for local IPC
+- [ ] Configurable `host`, `port`, `protocol` (tcp-client, tcp-server, unix)
+- [ ] Reconnection with exponential back-off on connection loss
+- [ ] Buffer size / read timeout configuration
+- [ ] EOS on clean disconnect; error recovery on unexpected disconnect
+- [ ] Caps negotiation based on stream content type
+
+### 4k — Network Sink  (📝 Planned)
+
+Sends pipeline output data over TCP, Unix sockets, or streaming protocols. Enables live streaming to ingest endpoints (RTMP servers, SRT targets) or local IPC consumption.
+
+- [ ] `net_sink` element with 1 sink pad
+- [ ] TCP client mode: connect to remote host:port and write buffers
+- [ ] TCP server mode: listen, accept, and stream to connected clients
+- [ ] Unix socket support for local IPC
+- [ ] Configurable `host`, `port`, `protocol` (tcp-client, tcp-server, unix)
+- [ ] Reconnection with exponential back-off on connection loss
+- [ ] Write timeout and buffer drain on disconnect
+- [ ] EOS passthrough: flush remaining data before closing connection
