@@ -14,10 +14,10 @@
 #include <sys/mman.h>
 #include <linux/videodev2.h>
 
-#include "mm_element.h"
-#include "mm_buffer.h"
+#include "zst_element.h"
+#include "zst_buffer.h"
 
-static void v4l2_buf_free(mm_buffer_t* buf);
+static void v4l2_buf_free(zst_buffer_t* buf);
 
 typedef struct {
     int fd;
@@ -54,8 +54,8 @@ yuyv_to_yuv420p(uint32_t width, uint32_t height, const uint8_t* yuyv, uint8_t* y
     }
 }
 
-static mm_result_t
-v4l2_open(mm_element_t* el)
+static zst_result_t
+v4l2_open(zst_element_t* el)
 {
     v4l2_source_t* s = el->priv;
     s->width = 640;
@@ -66,7 +66,7 @@ v4l2_open(mm_element_t* el)
     if (s->fd < 0) {
         printf("[v4l2src] Failed to open /dev/video0. Falling back to synthetic source.\n");
         s->is_mock = 1;
-        return MM_OK;
+        return ZST_OK;
     }
 
     /* Configure format YUYV */
@@ -81,7 +81,7 @@ v4l2_open(mm_element_t* el)
         close(s->fd);
         s->fd = -1;
         s->is_mock = 1;
-        return MM_OK;
+        return ZST_OK;
     }
 
     /* Request buffers */
@@ -94,7 +94,7 @@ v4l2_open(mm_element_t* el)
         close(s->fd);
         s->fd = -1;
         s->is_mock = 1;
-        return MM_OK;
+        return ZST_OK;
     }
 
     s->buffers = calloc(req.count, sizeof(*s->buffers));
@@ -130,7 +130,7 @@ v4l2_open(mm_element_t* el)
     }
 
     s->is_mock = 0;
-    return MM_OK;
+    return ZST_OK;
 
 error:
     if (s->buffers) {
@@ -145,11 +145,11 @@ error:
     close(s->fd);
     s->fd = -1;
     s->is_mock = 1;
-    return MM_OK;
+    return ZST_OK;
 }
 
-static mm_result_t
-v4l2_close(mm_element_t* el)
+static zst_result_t
+v4l2_close(zst_element_t* el)
 {
     v4l2_source_t* s = el->priv;
     if (!s->is_mock && s->fd >= 0) {
@@ -163,58 +163,58 @@ v4l2_close(mm_element_t* el)
         close(s->fd);
         s->fd = -1;
     }
-    return MM_OK;
+    return ZST_OK;
 }
 
-static mm_result_t
-v4l2_start(mm_element_t* el)
+static zst_result_t
+v4l2_start(zst_element_t* el)
 {
     v4l2_source_t* s = el->priv;
     if (!s->is_mock && s->fd >= 0) {
         enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         if (ioctl(s->fd, VIDIOC_STREAMON, &type) < 0) {
             printf("[v4l2src] VIDIOC_STREAMON failed.\n");
-            return MM_ERROR;
+            return ZST_ERROR;
         }
     }
-    return MM_OK;
+    return ZST_OK;
 }
 
-static mm_result_t
-v4l2_stop(mm_element_t* el)
+static zst_result_t
+v4l2_stop(zst_element_t* el)
 {
     v4l2_source_t* s = el->priv;
     if (!s->is_mock && s->fd >= 0) {
         enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         ioctl(s->fd, VIDIOC_STREAMOFF, &type);
     }
-    return MM_OK;
+    return ZST_OK;
 }
 
-static mm_result_t
-v4l2_process(mm_element_t* el, mm_buffer_t* in, mm_buffer_t** out)
+static zst_result_t
+v4l2_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
 {
     (void)in;
     v4l2_source_t* s = el->priv;
-    mm_buffer_t* buf = mm_buffer_create(MM_BUFFER_VIDEO_FRAME);
-    if (!buf) return MM_ERROR;
+    zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
+    if (!buf) return ZST_ERROR;
 
     size_t yuv_size = s->width * s->height * 3 / 2;
     uint8_t* raw_data = malloc(yuv_size);
     if (!raw_data) {
-        mm_buffer_unref(buf);
-        return MM_ERROR;
+        zst_buffer_unref(buf);
+        return ZST_ERROR;
     }
 
-    buf->memory.type = MM_MEMORY_CPU;
+    buf->memory.type = ZST_MEMORY_CPU;
     buf->memory.data = raw_data;
     buf->memory.size = yuv_size;
 
-    mm_video_frame_t* frame = calloc(1, sizeof(*frame));
+    zst_video_frame_t* frame = calloc(1, sizeof(*frame));
     if (!frame) {
         free(raw_data);
-        mm_buffer_unref(buf);
-        return MM_ERROR;
+        zst_buffer_unref(buf);
+        return ZST_ERROR;
     }
     frame->width = s->width;
     frame->height = s->height;
@@ -274,11 +274,11 @@ v4l2_process(mm_element_t* el, mm_buffer_t* in, mm_buffer_t** out)
     s->frame_count++;
 
     *out = buf;
-    return MM_OK;
+    return ZST_OK;
 }
 
 static void
-v4l2_buf_free(mm_buffer_t* buf)
+v4l2_buf_free(zst_buffer_t* buf)
 {
     if (buf) {
         if (buf->memory.data) {
@@ -292,7 +292,7 @@ v4l2_buf_free(mm_buffer_t* buf)
     }
 }
 
-static mm_element_ops_t g_ops = {
+static zst_element_ops_t g_ops = {
     .name    = "v4l2src",
     .open    = v4l2_open,
     .close   = v4l2_close,
@@ -301,37 +301,37 @@ static mm_element_ops_t g_ops = {
     .process = v4l2_process,
 };
 
-mm_element_t*
-mm_v4l2_source_create(void)
+zst_element_t*
+zst_v4l2_source_create(void)
 {
-    mm_element_t* el;
+    zst_element_t* el;
     v4l2_source_t* priv;
-    mm_pad_t* src;
+    zst_pad_t* src;
 
     priv = calloc(1, sizeof(*priv));
     priv->fd = -1;
 
-    el = mm_element_create(&g_ops, priv);
-    src = mm_pad_create("src", MM_PAD_SRC);
-    mm_element_add_pad(el, src);
+    el = zst_element_create(&g_ops, priv);
+    src = zst_pad_create("src", ZST_PAD_SRC);
+    zst_element_add_pad(el, src);
 
     return el;
 }
 
 #ifdef BUILDING_PLUGIN
-#include "mm_plugin.h"
+#include "zst_plugin.h"
 #include <string.h>
 
-static mm_element_t*
+static zst_element_t*
 plugin_create_element(const char* name)
 {
     if (strcmp(name, "v4l2src") == 0) {
-        return mm_v4l2_source_create();
+        return zst_v4l2_source_create();
     }
     return NULL;
 }
 
-static mm_plugin_t g_plugin = {
+static zst_plugin_t g_plugin = {
     .desc = {
         .name = "v4l2source_plugin",
         .author = "Antigravity",
@@ -342,11 +342,11 @@ static mm_plugin_t g_plugin = {
     .create_element = plugin_create_element
 };
 
-MM_PLUGIN_EXPORT
-mm_plugin_t*
-mm_get_plugin(void)
+ZST_PLUGIN_EXPORT
+zst_plugin_t*
+zst_get_plugin(void)
 {
-    mm_plugin_t* p = malloc(sizeof(*p));
+    zst_plugin_t* p = malloc(sizeof(*p));
     if (p) {
         *p = g_plugin;
     }

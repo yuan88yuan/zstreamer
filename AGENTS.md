@@ -19,23 +19,23 @@ It provides a **GStreamer-like** pipeline architecture: elements connected via p
 ├── .dockerignore
 ├── .gitignore
 ├── include/           ← Public API headers
-│   ├── mm_types.h     ← Base types, result codes, struct forward decls
-│   ├── mm_buffer.h    ← Reference-counted buffer + typed memory
-│   ├── mm_pad.h       ← SRC/SINK connection pads
-│   ├── mm_element.h   ← Element ops vtable + state machine
-│   ├── mm_pipeline.h  ← Element container with state propagation
-│   ├── mm_queue.h     ← Thread-safe bounded buffer queue
-│   ├── mm_scheduler.h ← Single / multi-thread pipeline driver
-│   └── mm_plugin.h    ← Dynamic plugin loading (dlopen)
+│   ├── zst_types.h     ← Base types, result codes, struct forward decls
+│   ├── zst_buffer.h    ← Reference-counted buffer + typed memory
+│   ├── zst_pad.h       ← SRC/SINK connection pads
+│   ├── zst_element.h   ← Element ops vtable + state machine
+│   ├── zst_pipeline.h  ← Element container with state propagation
+│   ├── zst_queue.h     ← Thread-safe bounded buffer queue
+│   ├── zst_scheduler.h ← Single / multi-thread pipeline driver
+│   └── zst_plugin.h    ← Dynamic plugin loading (dlopen)
 ├── src/               ← Core library + element implementations
-│   ├── mm_buffer.c
-│   ├── mm_pad.c
-│   ├── mm_element.c
-│   ├── mm_pipeline.c
-│   ├── mm_queue.c
-│   ├── mm_queue_element.c ← First-class queue element
-│   ├── mm_scheduler.c
-│   ├── mm_plugin.c
+│   ├── zst_buffer.c
+│   ├── zst_pad.c
+│   ├── zst_element.c
+│   ├── zst_pipeline.c
+│   ├── zst_queue.c
+│   ├── zst_queue_element.c ← First-class queue element
+│   ├── zst_scheduler.c
+│   ├── zst_plugin.c
 │   ├── v4l2_source.c  ← V4L2 camera capture (real V4L2 + mock fallback)
 │   ├── h264_encoder.c ← x264 H.264 encoder (real x264)
 │   ├── mp4_muxer.c    ← FFmpeg/libavformat MP4 muxer (real libavformat)
@@ -108,26 +108,26 @@ The Dockerfile has two build targets:
 
 | Component      | Role                                                  |
 |----------------|-------------------------------------------------------|
-| **mm_pipeline**| Container of elements; propagates state to all        |
-| **mm_element** | Processing node with src/sink pads + ops vtable       |
-| **mm_pad**     | Connection point; linked peer-to-peer between elements|
-| **mm_buffer**  | Ref-counted data carrier with typed memory + timestamps|
-| **mm_queue**      | Thread-safe bounded queue (mutex + condvar)           |
-| **mm_queue_element** | Queue as a first-class element with worker thread   |
-| **mm_scheduler**    | Drives pipeline: single-thread inline or multi-thread pool |
-| **mm_plugin**   | `dlopen()`-based dynamic element loading              |
+| **zst_pipeline**| Container of elements; propagates state to all        |
+| **zst_element** | Processing node with src/sink pads + ops vtable       |
+| **zst_pad**     | Connection point; linked peer-to-peer between elements|
+| **zst_buffer**  | Ref-counted data carrier with typed memory + timestamps|
+| **zst_queue**      | Thread-safe bounded queue (mutex + condvar)           |
+| **zst_queue_element** | Queue as a first-class element with worker thread   |
+| **zst_scheduler**    | Drives pipeline: single-thread inline or multi-thread pool |
+| **zst_plugin**   | `dlopen()`-based dynamic element loading              |
 | **video_scaler** (planned) | Pixel format + resolution conversion via `libswscale`  |
 | **audio_resampler** (planned) | Sample rate + format conversion via `libswresample` |
 
 ### State Machine
 
 ```
-MM_STATE_NULL  ──open──→  MM_STATE_READY  ──start──→  MM_STATE_PLAYING
+ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_STATE_PLAYING
      ↑                        │                              │
      └────────close───────────┘               stop────────────┘
 ```
 
-`MM_STATE_PAUSED` is reserved for future preroll support.
+`ZST_STATE_PAUSED` is reserved for future preroll support.
 
 ---
 
@@ -154,8 +154,8 @@ MM_STATE_NULL  ──open──→  MM_STATE_READY  ──start──→  MM_STA
 ## Coding Conventions
 
 - **Language:** C11 (`-std=c11`)
-- **Naming:** `mm_` prefix for all public symbols, `snake_case`
-- **Error handling:** Return `mm_result_t` — `MM_OK` (0) on success, negative on error
+- **Naming:** `zst_` prefix for all public symbols, `snake_case`
+- **Error handling:** Return `zst_result_t` — `ZST_OK` (0) on success, negative on error
 - **Ownership:** Buffers are ref-counted; elements own their pads; pipeline owns elements
 - **Thread safety:** Queue is MT-safe; buffer refcount is atomic; element/pipeline ops are NOT thread-safe (serialised by scheduler)
 
@@ -163,11 +163,11 @@ MM_STATE_NULL  ──open──→  MM_STATE_READY  ──start──→  MM_STA
 
 When working on this project, the most important files to read first:
 
-1. `include/mm_types.h` — All forward declarations and error codes
-2. `include/mm_buffer.h` — Buffer structure (used everywhere)
+1. `include/zst_types.h` — All forward declarations and error codes
+2. `include/zst_buffer.h` — Buffer structure (used everywhere)
 3. `wiki/architecture.md` — Full architectural understanding
 4. `wiki/implementation-plan.md` — What's done and what's next
 5. `CMakeLists.txt` — Build targets and dependencies
-6. `src/mm_queue_element.c` — Queue element implementation
+6. `src/zst_queue_element.c` — Queue element implementation
 7. `src/v4l2_source.c` — Real V4L2 capture (reference for HW element pattern)
 8. `src/h264_encoder.c` — Real x264 integration (reference for encoder pattern)

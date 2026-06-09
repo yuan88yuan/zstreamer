@@ -8,8 +8,8 @@
 #include <stdint.h>
 #include <x264.h>
 
-#include "mm_element.h"
-#include "mm_buffer.h"
+#include "zst_element.h"
+#include "zst_buffer.h"
 
 typedef struct {
     x264_t*         x264;
@@ -21,17 +21,17 @@ typedef struct {
     int             initialized;
 } h264_encoder_t;
 
-static mm_result_t
-h264_open(mm_element_t* el)
+static zst_result_t
+h264_open(zst_element_t* el)
 {
     h264_encoder_t* s = el->priv;
     s->initialized = 0;
     s->x264 = NULL;
-    return MM_OK;
+    return ZST_OK;
 }
 
-static mm_result_t
-h264_close(mm_element_t* el)
+static zst_result_t
+h264_close(zst_element_t* el)
 {
     h264_encoder_t* s = el->priv;
     if (s->x264) {
@@ -40,10 +40,10 @@ h264_close(mm_element_t* el)
         s->x264 = NULL;
     }
     s->initialized = 0;
-    return MM_OK;
+    return ZST_OK;
 }
 
-static mm_result_t
+static zst_result_t
 h264_init_encoder(h264_encoder_t* s, uint32_t width, uint32_t height)
 {
     s->width = width;
@@ -51,7 +51,7 @@ h264_init_encoder(h264_encoder_t* s, uint32_t width, uint32_t height)
 
     /* Preset ultrafast, tune zerolatency */
     if (x264_param_default_preset(&s->param, "ultrafast", "zerolatency") < 0) {
-        return MM_ERROR;
+        return ZST_ERROR;
     }
 
     s->param.i_csp = X264_CSP_I420;
@@ -67,26 +67,26 @@ h264_init_encoder(h264_encoder_t* s, uint32_t width, uint32_t height)
 
     /* Apply profile high */
     if (x264_param_apply_profile(&s->param, "high") < 0) {
-        return MM_ERROR;
+        return ZST_ERROR;
     }
 
     s->x264 = x264_encoder_open(&s->param);
     if (!s->x264) {
-        return MM_ERROR;
+        return ZST_ERROR;
     }
 
     if (x264_picture_alloc(&s->pic_in, s->param.i_csp, s->param.i_width, s->param.i_height) < 0) {
         x264_encoder_close(s->x264);
         s->x264 = NULL;
-        return MM_ERROR;
+        return ZST_ERROR;
     }
 
     s->initialized = 1;
-    return MM_OK;
+    return ZST_OK;
 }
 
 static void
-h264_buf_free(mm_buffer_t* buf)
+h264_buf_free(zst_buffer_t* buf)
 {
     if (buf && buf->memory.data) {
         free(buf->memory.data);
@@ -94,30 +94,30 @@ h264_buf_free(mm_buffer_t* buf)
     }
 }
 
-static mm_result_t
-h264_process(mm_element_t* el, mm_buffer_t* in, mm_buffer_t** out)
+static zst_result_t
+h264_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
 {
     h264_encoder_t* s = el->priv;
-    if (!in) return MM_ERROR;
+    if (!in) return ZST_ERROR;
 
     /* If we get EOS, pass it downstream */
-    if (in->flags & MM_BUFFER_FLAG_EOS) {
-        mm_buffer_t* eos_buf = mm_buffer_create(MM_BUFFER_VIDEO_PACKET);
+    if (in->flags & ZST_BUFFER_FLAG_EOS) {
+        zst_buffer_t* eos_buf = zst_buffer_create(ZST_BUFFER_VIDEO_PACKET);
         if (eos_buf) {
-            eos_buf->flags |= MM_BUFFER_FLAG_EOS;
+            eos_buf->flags |= ZST_BUFFER_FLAG_EOS;
             *out = eos_buf;
-            return MM_OK;
+            return ZST_OK;
         }
-        return MM_ERROR;
+        return ZST_ERROR;
     }
 
     /* Deduce width and height from the incoming frame payload */
-    mm_video_frame_t* frame = in->payload;
-    if (!frame) return MM_ERROR;
+    zst_video_frame_t* frame = in->payload;
+    if (!frame) return ZST_ERROR;
 
     if (!s->initialized) {
-        if (h264_init_encoder(s, frame->width, frame->height) != MM_OK) {
-            return MM_ERROR;
+        if (h264_init_encoder(s, frame->width, frame->height) != ZST_OK) {
+            return ZST_ERROR;
         }
     }
 
@@ -134,17 +134,17 @@ h264_process(mm_element_t* el, mm_buffer_t* in, mm_buffer_t** out)
     int i_nals = 0;
     int frame_size = x264_encoder_encode(s->x264, &nals, &i_nals, &s->pic_in, &s->pic_out);
     if (frame_size < 0) {
-        return MM_ERROR;
+        return ZST_ERROR;
     }
 
     if (frame_size > 0 && nals) {
-        mm_buffer_t* pkt = mm_buffer_create(MM_BUFFER_VIDEO_PACKET);
-        if (!pkt) return MM_ERROR;
+        zst_buffer_t* pkt = zst_buffer_create(ZST_BUFFER_VIDEO_PACKET);
+        if (!pkt) return ZST_ERROR;
 
         uint8_t* enc_data = malloc(frame_size);
         if (!enc_data) {
-            mm_buffer_unref(pkt);
-            return MM_ERROR;
+            zst_buffer_unref(pkt);
+            return ZST_ERROR;
         }
 
         /* Concatenate all NAL units */
@@ -154,7 +154,7 @@ h264_process(mm_element_t* el, mm_buffer_t* in, mm_buffer_t** out)
             ptr += nals[i].i_payload;
         }
 
-        pkt->memory.type = MM_MEMORY_CPU;
+        pkt->memory.type = ZST_MEMORY_CPU;
         pkt->memory.data = enc_data;
         pkt->memory.size = frame_size;
         pkt->pts = s->pic_out.i_pts;
@@ -166,50 +166,50 @@ h264_process(mm_element_t* el, mm_buffer_t* in, mm_buffer_t** out)
         *out = NULL;
     }
 
-    return MM_OK;
+    return ZST_OK;
 }
 
-static mm_element_ops_t g_ops = {
+static zst_element_ops_t g_ops = {
     .name    = "h264enc",
     .open    = h264_open,
     .close   = h264_close,
     .process = h264_process,
 };
 
-mm_element_t*
-mm_h264_encoder_create(void)
+zst_element_t*
+zst_h264_encoder_create(void)
 {
-    mm_element_t* el;
+    zst_element_t* el;
     h264_encoder_t* priv;
-    mm_pad_t* sink;
-    mm_pad_t* src;
+    zst_pad_t* sink;
+    zst_pad_t* src;
 
     priv = calloc(1, sizeof(*priv));
-    el = mm_element_create(&g_ops, priv);
+    el = zst_element_create(&g_ops, priv);
 
-    sink = mm_pad_create("sink", MM_PAD_SINK);
-    src  = mm_pad_create("src",  MM_PAD_SRC);
+    sink = zst_pad_create("sink", ZST_PAD_SINK);
+    src  = zst_pad_create("src",  ZST_PAD_SRC);
 
-    mm_element_add_pad(el, sink);
-    mm_element_add_pad(el, src);
+    zst_element_add_pad(el, sink);
+    zst_element_add_pad(el, src);
 
     return el;
 }
 
 #ifdef BUILDING_PLUGIN
-#include "mm_plugin.h"
+#include "zst_plugin.h"
 #include <string.h>
 
-static mm_element_t*
+static zst_element_t*
 plugin_create_element(const char* name)
 {
     if (strcmp(name, "h264enc") == 0) {
-        return mm_h264_encoder_create();
+        return zst_h264_encoder_create();
     }
     return NULL;
 }
 
-static mm_plugin_t g_plugin = {
+static zst_plugin_t g_plugin = {
     .desc = {
         .name = "h264encoder_plugin",
         .author = "Antigravity",
@@ -220,11 +220,11 @@ static mm_plugin_t g_plugin = {
     .create_element = plugin_create_element
 };
 
-MM_PLUGIN_EXPORT
-mm_plugin_t*
-mm_get_plugin(void)
+ZST_PLUGIN_EXPORT
+zst_plugin_t*
+zst_get_plugin(void)
 {
-    mm_plugin_t* p = malloc(sizeof(*p));
+    zst_plugin_t* p = malloc(sizeof(*p));
     if (p) {
         *p = g_plugin;
     }

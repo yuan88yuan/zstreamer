@@ -1,9 +1,9 @@
 /*=============================================================================
-    mm_caps.h — Media capabilities structure and negotiation API
+    zst_caps.h — Media capabilities structure and negotiation API
 =============================================================================*/
 #pragma once
 
-#include "mm_types.h"
+#include "zst_types.h"
 #include <stdbool.h>
 
 #ifdef __cplusplus
@@ -11,14 +11,14 @@ extern "C" {
 #endif
 
 typedef enum {
-    MM_CAPS_VIDEO,
-    MM_CAPS_AUDIO,
-    MM_CAPS_ANY
-} mm_caps_type_t;
+    ZST_CAPS_VIDEO,
+    ZST_CAPS_AUDIO,
+    ZST_CAPS_ANY
+} zst_caps_type_t;
 
-typedef struct mm_caps_struct {
+typedef struct zst_caps_struct {
     char media_type[64];
-    mm_caps_type_t type;
+    zst_caps_type_t type;
 
     // Video properties
     struct {
@@ -35,42 +35,42 @@ typedef struct mm_caps_struct {
         char format[32];       /* empty string "" means wildcard/any */
     } audio;
 
-    struct mm_caps_struct* next;
-} mm_caps_struct_t;
+    struct zst_caps_struct* next;
+} zst_caps_struct_t;
 
 typedef struct {
-    mm_caps_struct_t* structs;
-} mm_caps_t;
+    zst_caps_struct_t* structs;
+} zst_caps_t;
 
 /* Lifecycle & builders */
-mm_caps_t* mm_caps_create(void);
-void mm_caps_destroy(mm_caps_t* caps);
-mm_caps_t* mm_caps_copy(const mm_caps_t* caps);
+zst_caps_t* zst_caps_create(void);
+void zst_caps_destroy(zst_caps_t* caps);
+zst_caps_t* zst_caps_copy(const zst_caps_t* caps);
 
-mm_caps_struct_t* mm_caps_struct_create_video(
+zst_caps_struct_t* zst_caps_struct_create_video(
     const char* media_type,
     int width,
     int height,
     double framerate,
     const char* pixel_format);
 
-mm_caps_struct_t* mm_caps_struct_create_audio(
+zst_caps_struct_t* zst_caps_struct_create_audio(
     const char* media_type,
     int channels,
     int sample_rate,
     const char* format);
 
-void mm_caps_struct_free(mm_caps_struct_t* caps_struct);
-mm_caps_struct_t* mm_caps_struct_copy(const mm_caps_struct_t* caps_struct);
+void zst_caps_struct_free(zst_caps_struct_t* caps_struct);
+zst_caps_struct_t* zst_caps_struct_copy(const zst_caps_struct_t* caps_struct);
 
 /* Manipulation */
-mm_result_t mm_caps_append(mm_caps_t* caps, mm_caps_struct_t* caps_struct);
+zst_result_t zst_caps_append(zst_caps_t* caps, zst_caps_struct_t* caps_struct);
 
 /* Negotiation logic */
-mm_caps_t* mm_caps_intersect(const mm_caps_t* caps1, const mm_caps_t* caps2);
-int mm_caps_struct_is_fixed(const mm_caps_struct_t* s);
-int mm_caps_is_fixed(const mm_caps_t* caps);
-mm_result_t mm_caps_fixate(mm_caps_t* caps);
+zst_caps_t* zst_caps_intersect(const zst_caps_t* caps1, const zst_caps_t* caps2);
+int zst_caps_struct_is_fixed(const zst_caps_struct_t* s);
+int zst_caps_is_fixed(const zst_caps_t* caps);
+zst_result_t zst_caps_fixate(zst_caps_t* caps);
 
 #ifdef __cplusplus
 }

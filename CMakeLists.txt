@@ -52,19 +52,19 @@ set(ZSTREAMER_INCLUDE_DIR
 
 # ── Core library sources ─────────────────────────────────────────────────
 set(CORE_SOURCES
-    src/mm_caps.c
-    src/mm_buffer.c
-    src/mm_pad.c
-    src/mm_element.c
-    src/mm_pipeline.c
-    src/mm_queue.c
-    src/mm_queue_element.c
-    src/mm_scheduler.c
-    src/mm_bus.c
+    src/zst_caps.c
+    src/zst_buffer.c
+    src/zst_pad.c
+    src/zst_element.c
+    src/zst_pipeline.c
+    src/zst_queue.c
+    src/zst_queue_element.c
+    src/zst_scheduler.c
+    src/zst_bus.c
 )
 
 if(ENABLE_PLUGINS)
-    list(APPEND CORE_SOURCES src/mm_plugin.c)
+    list(APPEND CORE_SOURCES src/zst_plugin.c)
 endif()
 
 # ── Build the core library ───────────────────────────────────────────────
@@ -93,7 +93,7 @@ target_include_directories(zstreamer
 
 # ── Element plugins (built-in) ──────────────────────────────────────────
 # These live inside the same library for now.  In the future they can be
-# compiled as separate .so files and loaded via mm_plugin.
+# compiled as separate .so files and loaded via zst_plugin.
 set(ELEMENT_SOURCES
     src/v4l2_source.c
     src/h264_encoder.c
@@ -104,31 +104,31 @@ set(ELEMENT_SOURCES
 )
 
 # ── Dynamic Plugins ──────────────────────────────────────────────────────
-add_library(mm_filesink SHARED src/file_sink.c)
-target_compile_definitions(mm_filesink PRIVATE BUILDING_PLUGIN)
-target_link_libraries(mm_filesink PRIVATE zstreamer)
+add_library(zst_filesink SHARED src/file_sink.c)
+target_compile_definitions(zst_filesink PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_filesink PRIVATE zstreamer)
 
-add_library(mm_v4l2source SHARED src/v4l2_source.c)
-target_compile_definitions(mm_v4l2source PRIVATE BUILDING_PLUGIN)
-target_link_libraries(mm_v4l2source PRIVATE zstreamer ${V4L2_LIBRARIES})
+add_library(zst_v4l2source SHARED src/v4l2_source.c)
+target_compile_definitions(zst_v4l2source PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_v4l2source PRIVATE zstreamer ${V4L2_LIBRARIES})
 
-add_library(mm_alsasource SHARED src/alsa_source.c)
-target_compile_definitions(mm_alsasource PRIVATE BUILDING_PLUGIN)
-target_link_libraries(mm_alsasource PRIVATE zstreamer ${ALSA_LIBRARIES})
+add_library(zst_alsasource SHARED src/alsa_source.c)
+target_compile_definitions(zst_alsasource PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_alsasource PRIVATE zstreamer ${ALSA_LIBRARIES})
 
-add_library(mm_h264encoder SHARED src/h264_encoder.c)
-target_compile_definitions(mm_h264encoder PRIVATE BUILDING_PLUGIN)
-target_link_libraries(mm_h264encoder PRIVATE zstreamer ${X264_LIBRARIES})
+add_library(zst_h264encoder SHARED src/h264_encoder.c)
+target_compile_definitions(zst_h264encoder PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_h264encoder PRIVATE zstreamer ${X264_LIBRARIES})
 
-add_library(mm_aacencoder SHARED src/aac_encoder.c)
-target_compile_definitions(mm_aacencoder PRIVATE BUILDING_PLUGIN)
-target_link_libraries(mm_aacencoder PRIVATE zstreamer ${AVCODEC_LIBRARIES})
+add_library(zst_aacencoder SHARED src/aac_encoder.c)
+target_compile_definitions(zst_aacencoder PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_aacencoder PRIVATE zstreamer ${AVCODEC_LIBRARIES})
 
-add_library(mm_mp4muxer SHARED src/mp4_muxer.c)
-target_compile_definitions(mm_mp4muxer PRIVATE BUILDING_PLUGIN)
-target_link_libraries(mm_mp4muxer PRIVATE zstreamer ${AVFORMAT_LIBRARIES} ${AVCODEC_LIBRARIES} ${AVUTIL_LIBRARIES})
+add_library(zst_mp4muxer SHARED src/mp4_muxer.c)
+target_compile_definitions(zst_mp4muxer PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_mp4muxer PRIVATE zstreamer ${AVFORMAT_LIBRARIES} ${AVCODEC_LIBRARIES} ${AVUTIL_LIBRARIES})
 
-set(PLUGIN_TARGETS mm_filesink mm_v4l2source mm_alsasource mm_h264encoder mm_aacencoder mm_mp4muxer)
+set(PLUGIN_TARGETS zst_filesink zst_v4l2source zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer)
 foreach(plugin ${PLUGIN_TARGETS})
     target_include_directories(${plugin} PRIVATE ${ZSTREAMER_INCLUDE_DIR} PRIVATE ${ELEMENT_INCLUDE_DIRS})
     set_target_properties(${plugin} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")

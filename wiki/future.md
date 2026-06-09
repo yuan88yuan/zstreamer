@@ -3,16 +3,16 @@
 These features are still planned. See `architecture.md` (Future Direction section) for how they fit into the system architecture, and `implementation-plan.md` for the phased build order.
 
 **Implemented already:**
-- ✅ Queue Element — see `src/mm_queue_element.c`
+- ✅ Queue Element — see `src/zst_queue_element.c`
 - ✅ All element implementations (V4L2, ALSA, x264, AAC, MP4 mux, file sink)
 
 ---
 
 ## event bus
 ```
-MM_EVENT_EOS
-MM_EVENT_ERROR
-MM_EVENT_STATE_CHANGED
+ZST_EVENT_EOS
+ZST_EVENT_ERROR
+ZST_EVENT_STATE_CHANGED
 ```
 
 See: Phase 6 in implementation-plan.md

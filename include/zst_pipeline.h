@@ -1,0 +1,57 @@
+/*=============================================================================
+    zst_pipeline.h
+=============================================================================*/
+#pragma once
+
+#include "zst_types.h"
+#include "zst_element.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+struct zst_pipeline {
+
+    zst_element_t** elements;
+
+    uint32_t nb_elements;
+
+    zst_state_t state;
+
+    void* priv;
+
+    zst_bus_t* bus;
+};
+
+zst_pipeline_t* zst_pipeline_create(void);
+
+void zst_pipeline_destroy(
+    zst_pipeline_t* pipe);
+
+zst_bus_t* zst_pipeline_get_bus(
+    zst_pipeline_t* pipe);
+
+zst_result_t zst_pipeline_add(
+    zst_pipeline_t* pipe,
+    zst_element_t* el);
+
+zst_result_t zst_pipeline_remove(
+    zst_pipeline_t* pipe,
+    zst_element_t* el);
+
+zst_result_t zst_pipeline_set_state(
+    zst_pipeline_t* pipe,
+    zst_state_t state);
+
+zst_result_t zst_pipeline_start(
+    zst_pipeline_t* pipe);
+
+zst_result_t zst_pipeline_stop(
+    zst_pipeline_t* pipe);
+
+void zst_pipeline_topological_sort(
+    zst_pipeline_t* pipe);
+
+#ifdef __cplusplus
+}
+#endif

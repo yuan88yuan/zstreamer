@@ -1,25 +1,25 @@
 /*=============================================================================
-    mm_queue.c — Thread-safe bounded buffer queue (mutex + condvar)
+    zst_queue.c — Thread-safe bounded buffer queue (mutex + condvar)
 =============================================================================*/
 
 #define _POSIX_C_SOURCE 199309L  /* clock_gettime, CLOCK_REALTIME */
 
-#include "mm_queue.h"
+#include "zst_queue.h"
 #include <stdlib.h>
 #include <errno.h>
 #include <time.h>
 #include <pthread.h>
 
-typedef struct mm_queue_node {
-    struct mm_queue_node* next;
-    mm_buffer_t*          buf;
-} mm_queue_node_t;
+typedef struct zst_queue_node {
+    struct zst_queue_node* next;
+    zst_buffer_t*          buf;
+} zst_queue_node_t;
 
-struct mm_queue {
-    mm_queue_config_t cfg;
+struct zst_queue {
+    zst_queue_config_t cfg;
 
-    mm_queue_node_t* head;   /* dequeue from head */
-    mm_queue_node_t* tail;   /* enqueue at tail  */
+    zst_queue_node_t* head;   /* dequeue from head */
+    zst_queue_node_t* tail;   /* enqueue at tail  */
     uint32_t         count;
     uint64_t         bytes;
 
@@ -28,16 +28,16 @@ struct mm_queue {
     pthread_cond_t   not_empty;
 };
 
-mm_queue_t*
-mm_queue_create(const mm_queue_config_t* cfg)
+zst_queue_t*
+zst_queue_create(const zst_queue_config_t* cfg)
 {
-    mm_queue_t* q = calloc(1, sizeof(*q));
+    zst_queue_t* q = calloc(1, sizeof(*q));
     if (!q) return NULL;
 
     if (cfg) {
         q->cfg = *cfg;
     } else {
-        q->cfg.mode        = MM_QUEUE_SYNC;
+        q->cfg.mode        = ZST_QUEUE_SYNC;
         q->cfg.max_buffers = 10;
         q->cfg.max_bytes   = 0;
         q->cfg.max_duration= 0;
@@ -51,12 +51,12 @@ mm_queue_create(const mm_queue_config_t* cfg)
 }
 
 void
-mm_queue_destroy(mm_queue_t* q)
+zst_queue_destroy(zst_queue_t* q)
 {
     if (!q) return;
 
     /* Free any remaining buffers */
-    mm_queue_flush(q);
+    zst_queue_flush(q);
 
     pthread_mutex_destroy(&q->lock);
     pthread_cond_destroy(&q->not_full);
@@ -79,16 +79,16 @@ timespec_from_ms(struct timespec* ts, uint32_t timeout_ms)
     }
 }
 
-static mm_time_t
-mm_queue_get_duration_locked(mm_queue_t* q)
+static zst_time_t
+zst_queue_get_duration_locked(zst_queue_t* q)
 {
     if (!q->head || !q->tail) return 0;
     if (q->tail->buf->pts >= q->head->buf->pts && q->head->buf->pts != 0) {
         return q->tail->buf->pts - q->head->buf->pts;
     }
     /* Fallback: sum of durations */
-    mm_time_t sum = 0;
-    mm_queue_node_t* n = q->head;
+    zst_time_t sum = 0;
+    zst_queue_node_t* n = q->head;
     while (n) {
         sum += n->buf->duration;
         n = n->next;
@@ -97,7 +97,7 @@ mm_queue_get_duration_locked(mm_queue_t* q)
 }
 
 static int
-mm_queue_is_full_locked(mm_queue_t* q)
+zst_queue_is_full_locked(zst_queue_t* q)
 {
     if (q->cfg.max_buffers > 0 && q->count >= q->cfg.max_buffers) {
         return 1;
@@ -105,41 +105,41 @@ mm_queue_is_full_locked(mm_queue_t* q)
     if (q->cfg.max_bytes > 0 && q->bytes >= q->cfg.max_bytes) {
         return 1;
     }
-    if (q->cfg.max_duration > 0 && mm_queue_get_duration_locked(q) >= q->cfg.max_duration) {
+    if (q->cfg.max_duration > 0 && zst_queue_get_duration_locked(q) >= q->cfg.max_duration) {
         return 1;
     }
     return 0;
 }
 
-mm_result_t
-mm_queue_push(mm_queue_t* q, mm_buffer_t* buf, uint32_t timeout_ms)
+zst_result_t
+zst_queue_push(zst_queue_t* q, zst_buffer_t* buf, uint32_t timeout_ms)
 {
-    if (!q || !buf) return MM_ERROR;
+    if (!q || !buf) return ZST_ERROR;
 
     pthread_mutex_lock(&q->lock);
 
     /* If async mode and full, drop the buffer */
-    if (q->cfg.mode == MM_QUEUE_ASYNC && mm_queue_is_full_locked(q)) {
+    if (q->cfg.mode == ZST_QUEUE_ASYNC && zst_queue_is_full_locked(q)) {
         pthread_mutex_unlock(&q->lock);
-        return MM_ERROR;
+        return ZST_ERROR;
     }
 
     /* Wait until there is room */
-    if (q->cfg.mode == MM_QUEUE_SYNC) {
+    if (q->cfg.mode == ZST_QUEUE_SYNC) {
         struct timespec ts;
         int use_timeout = (timeout_ms != UINT32_MAX);
 
-        while (mm_queue_is_full_locked(q)) {
+        while (zst_queue_is_full_locked(q)) {
             if (use_timeout) {
                 if (timeout_ms == 0) {
                     pthread_mutex_unlock(&q->lock);
-                    return MM_TIMEOUT;
+                    return ZST_TIMEOUT;
                 }
                 timespec_from_ms(&ts, timeout_ms);
                 int ret = pthread_cond_timedwait(&q->not_full, &q->lock, &ts);
                 if (ret == ETIMEDOUT) {
                     pthread_mutex_unlock(&q->lock);
-                    return MM_TIMEOUT;
+                    return ZST_TIMEOUT;
                 }
             } else {
                 pthread_cond_wait(&q->not_full, &q->lock);
@@ -148,12 +148,12 @@ mm_queue_push(mm_queue_t* q, mm_buffer_t* buf, uint32_t timeout_ms)
     }
 
     /* Enqueue */
-    mm_queue_node_t* node = malloc(sizeof(*node));
+    zst_queue_node_t* node = malloc(sizeof(*node));
     if (!node) {
         pthread_mutex_unlock(&q->lock);
-        return MM_ERROR;
+        return ZST_ERROR;
     }
-    node->buf  = mm_buffer_ref(buf);
+    node->buf  = zst_buffer_ref(buf);
     node->next = NULL;
 
     if (q->tail)
@@ -166,13 +166,13 @@ mm_queue_push(mm_queue_t* q, mm_buffer_t* buf, uint32_t timeout_ms)
 
     pthread_cond_signal(&q->not_empty);
     pthread_mutex_unlock(&q->lock);
-    return MM_OK;
+    return ZST_OK;
 }
 
-mm_result_t
-mm_queue_pop(mm_queue_t* q, mm_buffer_t** out, uint32_t timeout_ms)
+zst_result_t
+zst_queue_pop(zst_queue_t* q, zst_buffer_t** out, uint32_t timeout_ms)
 {
-    if (!q || !out) return MM_ERROR;
+    if (!q || !out) return ZST_ERROR;
 
     pthread_mutex_lock(&q->lock);
 
@@ -182,14 +182,14 @@ mm_queue_pop(mm_queue_t* q, mm_buffer_t** out, uint32_t timeout_ms)
         if (use_timeout) {
             if (timeout_ms == 0) {
                 pthread_mutex_unlock(&q->lock);
-                return MM_TIMEOUT;
+                return ZST_TIMEOUT;
             }
             struct timespec ts;
             timespec_from_ms(&ts, timeout_ms);
             int ret = pthread_cond_timedwait(&q->not_empty, &q->lock, &ts);
             if (ret == ETIMEDOUT) {
                 pthread_mutex_unlock(&q->lock);
-                return MM_TIMEOUT;
+                return ZST_TIMEOUT;
             }
         } else {
             pthread_cond_wait(&q->not_empty, &q->lock);
@@ -197,7 +197,7 @@ mm_queue_pop(mm_queue_t* q, mm_buffer_t** out, uint32_t timeout_ms)
     }
 
     /* Dequeue */
-    mm_queue_node_t* node = q->head;
+    zst_queue_node_t* node = q->head;
     q->head = node->next;
     if (!q->head) q->tail = NULL;
     q->count--;
@@ -210,11 +210,11 @@ mm_queue_pop(mm_queue_t* q, mm_buffer_t** out, uint32_t timeout_ms)
 
     pthread_cond_signal(&q->not_full);
     pthread_mutex_unlock(&q->lock);
-    return MM_OK;
+    return ZST_OK;
 }
 
 uint32_t
-mm_queue_size(mm_queue_t* q)
+zst_queue_size(zst_queue_t* q)
 {
     if (!q) return 0;
 
@@ -225,16 +225,16 @@ mm_queue_size(mm_queue_t* q)
 }
 
 void
-mm_queue_flush(mm_queue_t* q)
+zst_queue_flush(zst_queue_t* q)
 {
     if (!q) return;
 
     pthread_mutex_lock(&q->lock);
 
-    mm_queue_node_t* node = q->head;
+    zst_queue_node_t* node = q->head;
     while (node) {
-        mm_queue_node_t* next = node->next;
-        mm_buffer_unref(node->buf);
+        zst_queue_node_t* next = node->next;
+        zst_buffer_unref(node->buf);
         free(node);
         node = next;
     }

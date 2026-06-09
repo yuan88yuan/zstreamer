@@ -1,24 +1,24 @@
 /*=============================================================================
-    mm_bus.c — Async notification channel / thread-safe event queue
+    zst_bus.c — Async notification channel / thread-safe event queue
 =============================================================================*/
 
 #define _POSIX_C_SOURCE 200809L  /* strdup, clock_gettime, CLOCK_REALTIME */
 
-#include "mm_bus.h"
+#include "zst_bus.h"
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <time.h>
 #include <pthread.h>
 
-typedef struct mm_event_node {
-    mm_event_t*           event;
-    struct mm_event_node* next;
-} mm_event_node_t;
+typedef struct zst_event_node {
+    zst_event_t*           event;
+    struct zst_event_node* next;
+} zst_event_node_t;
 
-struct mm_bus {
-    mm_event_node_t* head;
-    mm_event_node_t* tail;
+struct zst_bus {
+    zst_event_node_t* head;
+    zst_event_node_t* tail;
     uint32_t         count;
 
     pthread_mutex_t  lock;
@@ -28,7 +28,7 @@ struct mm_bus {
 
     pthread_t        thread;
     int              has_thread;
-    mm_bus_handler_t handler;
+    zst_bus_handler_t handler;
     void*            user_data;
 };
 
@@ -50,20 +50,20 @@ timespec_from_ms(struct timespec* ts, uint32_t timeout_ms)
 static void*
 bus_dispatch_loop(void* arg)
 {
-    mm_bus_t* bus = arg;
+    zst_bus_t* bus = arg;
     while (1) {
-        mm_event_t* event = NULL;
-        mm_result_t r = mm_bus_pop(bus, &event, UINT32_MAX);
-        if (r == MM_OK && event) {
+        zst_event_t* event = NULL;
+        zst_result_t r = zst_bus_pop(bus, &event, UINT32_MAX);
+        if (r == ZST_OK && event) {
             pthread_mutex_lock(&bus->lock);
-            mm_bus_handler_t handler = bus->handler;
+            zst_bus_handler_t handler = bus->handler;
             void* user_data = bus->user_data;
             pthread_mutex_unlock(&bus->lock);
 
             if (handler) {
                 handler(bus, event, user_data);
             }
-            mm_event_destroy(event);
+            zst_event_destroy(event);
         } else {
             pthread_mutex_lock(&bus->lock);
             int exit_loop = bus->flushing;
@@ -76,10 +76,10 @@ bus_dispatch_loop(void* arg)
     return NULL;
 }
 
-mm_bus_t*
-mm_bus_create(void)
+zst_bus_t*
+zst_bus_create(void)
 {
-    mm_bus_t* bus = calloc(1, sizeof(*bus));
+    zst_bus_t* bus = calloc(1, sizeof(*bus));
     if (!bus) return NULL;
 
     pthread_mutex_init(&bus->lock, NULL);
@@ -91,7 +91,7 @@ mm_bus_create(void)
 }
 
 void
-mm_bus_destroy(mm_bus_t* bus)
+zst_bus_destroy(zst_bus_t* bus)
 {
     if (!bus) return;
 
@@ -109,10 +109,10 @@ mm_bus_destroy(mm_bus_t* bus)
 
     /* Free all queued events */
     pthread_mutex_lock(&bus->lock);
-    mm_event_node_t* node = bus->head;
+    zst_event_node_t* node = bus->head;
     while (node) {
-        mm_event_node_t* next = node->next;
-        mm_event_destroy(node->event);
+        zst_event_node_t* next = node->next;
+        zst_event_destroy(node->event);
         free(node);
         node = next;
     }
@@ -123,22 +123,22 @@ mm_bus_destroy(mm_bus_t* bus)
     free(bus);
 }
 
-mm_result_t
-mm_bus_post(mm_bus_t* bus, mm_event_t* event)
+zst_result_t
+zst_bus_post(zst_bus_t* bus, zst_event_t* event)
 {
-    if (!bus || !event) return MM_ERROR;
+    if (!bus || !event) return ZST_ERROR;
 
     pthread_mutex_lock(&bus->lock);
 
     if (bus->flushing) {
         pthread_mutex_unlock(&bus->lock);
-        return MM_ERROR;
+        return ZST_ERROR;
     }
 
-    mm_event_node_t* node = malloc(sizeof(*node));
+    zst_event_node_t* node = malloc(sizeof(*node));
     if (!node) {
         pthread_mutex_unlock(&bus->lock);
-        return MM_ERROR;
+        return ZST_ERROR;
     }
     node->event = event;
     node->next = NULL;
@@ -153,13 +153,13 @@ mm_bus_post(mm_bus_t* bus, mm_event_t* event)
 
     pthread_cond_signal(&bus->cond);
     pthread_mutex_unlock(&bus->lock);
-    return MM_OK;
+    return ZST_OK;
 }
 
-mm_result_t
-mm_bus_pop(mm_bus_t* bus, mm_event_t** event, uint32_t timeout_ms)
+zst_result_t
+zst_bus_pop(zst_bus_t* bus, zst_event_t** event, uint32_t timeout_ms)
 {
-    if (!bus || !event) return MM_ERROR;
+    if (!bus || !event) return ZST_ERROR;
 
     pthread_mutex_lock(&bus->lock);
 
@@ -169,14 +169,14 @@ mm_bus_pop(mm_bus_t* bus, mm_event_t** event, uint32_t timeout_ms)
         if (use_timeout) {
             if (timeout_ms == 0) {
                 pthread_mutex_unlock(&bus->lock);
-                return MM_TIMEOUT;
+                return ZST_TIMEOUT;
             }
             struct timespec ts;
             timespec_from_ms(&ts, timeout_ms);
             int ret = pthread_cond_timedwait(&bus->cond, &bus->lock, &ts);
             if (ret == ETIMEDOUT) {
                 pthread_mutex_unlock(&bus->lock);
-                return MM_TIMEOUT;
+                return ZST_TIMEOUT;
             }
         } else {
             pthread_cond_wait(&bus->cond, &bus->lock);
@@ -185,11 +185,11 @@ mm_bus_pop(mm_bus_t* bus, mm_event_t** event, uint32_t timeout_ms)
 
     if (bus->flushing) {
         pthread_mutex_unlock(&bus->lock);
-        return MM_ERROR;
+        return ZST_ERROR;
     }
 
     /* Dequeue */
-    mm_event_node_t* node = bus->head;
+    zst_event_node_t* node = bus->head;
     bus->head = node->next;
     if (!bus->head) bus->tail = NULL;
     bus->count--;
@@ -198,13 +198,13 @@ mm_bus_pop(mm_bus_t* bus, mm_event_t** event, uint32_t timeout_ms)
     free(node);
 
     pthread_mutex_unlock(&bus->lock);
-    return MM_OK;
+    return ZST_OK;
 }
 
-mm_result_t
-mm_bus_set_handler(mm_bus_t* bus, mm_bus_handler_t handler, void* user_data)
+zst_result_t
+zst_bus_set_handler(zst_bus_t* bus, zst_bus_handler_t handler, void* user_data)
 {
-    if (!bus) return MM_ERROR;
+    if (!bus) return ZST_ERROR;
 
     pthread_mutex_lock(&bus->lock);
 
@@ -228,55 +228,55 @@ mm_bus_set_handler(mm_bus_t* bus, mm_bus_handler_t handler, void* user_data)
     if (handler) {
         if (pthread_create(&bus->thread, NULL, bus_dispatch_loop, bus) != 0) {
             pthread_mutex_unlock(&bus->lock);
-            return MM_ERROR;
+            return ZST_ERROR;
         }
         bus->has_thread = 1;
     }
 
     pthread_mutex_unlock(&bus->lock);
-    return MM_OK;
+    return ZST_OK;
 }
 
-mm_event_t*
-mm_event_new_eos(mm_element_t* src)
+zst_event_t*
+zst_event_new_eos(zst_element_t* src)
 {
-    mm_event_t* ev = calloc(1, sizeof(*ev));
+    zst_event_t* ev = calloc(1, sizeof(*ev));
     if (!ev) return NULL;
-    ev->type = MM_EVENT_EOS;
+    ev->type = ZST_EVENT_EOS;
     ev->src = src;
     return ev;
 }
 
-mm_event_t*
-mm_event_new_error(mm_element_t* src, mm_result_t result, const char* message)
+zst_event_t*
+zst_event_new_error(zst_element_t* src, zst_result_t result, const char* message)
 {
-    mm_event_t* ev = calloc(1, sizeof(*ev));
+    zst_event_t* ev = calloc(1, sizeof(*ev));
     if (!ev) return NULL;
-    ev->type = MM_EVENT_ERROR;
+    ev->type = ZST_EVENT_ERROR;
     ev->src = src;
     ev->as.error.result = result;
     ev->as.error.message = message ? strdup(message) : NULL;
     return ev;
 }
 
-mm_event_t*
-mm_event_new_state_changed(mm_element_t* src, mm_state_t old_state, mm_state_t new_state)
+zst_event_t*
+zst_event_new_state_changed(zst_element_t* src, zst_state_t old_state, zst_state_t new_state)
 {
-    mm_event_t* ev = calloc(1, sizeof(*ev));
+    zst_event_t* ev = calloc(1, sizeof(*ev));
     if (!ev) return NULL;
-    ev->type = MM_EVENT_STATE_CHANGED;
+    ev->type = ZST_EVENT_STATE_CHANGED;
     ev->src = src;
     ev->as.state_changed.old_state = old_state;
     ev->as.state_changed.new_state = new_state;
     return ev;
 }
 
-mm_event_t*
-mm_event_new_warning(mm_element_t* src, mm_result_t result, const char* message)
+zst_event_t*
+zst_event_new_warning(zst_element_t* src, zst_result_t result, const char* message)
 {
-    mm_event_t* ev = calloc(1, sizeof(*ev));
+    zst_event_t* ev = calloc(1, sizeof(*ev));
     if (!ev) return NULL;
-    ev->type = MM_EVENT_WARNING;
+    ev->type = ZST_EVENT_WARNING;
     ev->src = src;
     ev->as.warning.result = result;
     ev->as.warning.message = message ? strdup(message) : NULL;
@@ -284,12 +284,12 @@ mm_event_new_warning(mm_element_t* src, mm_result_t result, const char* message)
 }
 
 void
-mm_event_destroy(mm_event_t* event)
+zst_event_destroy(zst_event_t* event)
 {
     if (!event) return;
-    if (event->type == MM_EVENT_ERROR) {
+    if (event->type == ZST_EVENT_ERROR) {
         free(event->as.error.message);
-    } else if (event->type == MM_EVENT_WARNING) {
+    } else if (event->type == ZST_EVENT_WARNING) {
         free(event->as.warning.message);
     }
     free(event);

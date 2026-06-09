@@ -8,8 +8,8 @@
 #include <time.h>
 #include <alsa/asoundlib.h>
 
-#include "mm_element.h"
-#include "mm_buffer.h"
+#include "zst_element.h"
+#include "zst_buffer.h"
 
 typedef struct {
     snd_pcm_t*      handle;
@@ -20,7 +20,7 @@ typedef struct {
 } alsa_source_t;
 
 static void
-alsa_buf_free(mm_buffer_t* buf)
+alsa_buf_free(zst_buffer_t* buf)
 {
     if (buf) {
         if (buf->memory.data) {
@@ -34,8 +34,8 @@ alsa_buf_free(mm_buffer_t* buf)
     }
 }
 
-static mm_result_t
-alsa_open(mm_element_t* el)
+static zst_result_t
+alsa_open(zst_element_t* el)
 {
     alsa_source_t* s = el->priv;
     s->sample_rate = 44100;
@@ -48,7 +48,7 @@ alsa_open(mm_element_t* el)
         printf("[alsasrc] Failed to open default ALSA capture device: %s. Falling back to synthetic source.\n", snd_strerror(err));
         s->is_mock = 1;
         s->handle = NULL;
-        return MM_OK;
+        return ZST_OK;
     }
 
     err = snd_pcm_set_params(s->handle,
@@ -63,60 +63,60 @@ alsa_open(mm_element_t* el)
         snd_pcm_close(s->handle);
         s->handle = NULL;
         s->is_mock = 1;
-        return MM_OK;
+        return ZST_OK;
     }
 
     s->is_mock = 0;
-    return MM_OK;
+    return ZST_OK;
 }
 
-static mm_result_t
-alsa_close(mm_element_t* el)
+static zst_result_t
+alsa_close(zst_element_t* el)
 {
     alsa_source_t* s = el->priv;
     if (s->handle) {
         snd_pcm_close(s->handle);
         s->handle = NULL;
     }
-    return MM_OK;
+    return ZST_OK;
 }
 
-static mm_result_t
-alsa_start(mm_element_t* el)
+static zst_result_t
+alsa_start(zst_element_t* el)
 {
     alsa_source_t* s = el->priv;
     if (s->handle && !s->is_mock) {
         snd_pcm_prepare(s->handle);
     }
-    return MM_OK;
+    return ZST_OK;
 }
 
-static mm_result_t
-alsa_process(mm_element_t* el, mm_buffer_t* in, mm_buffer_t** out)
+static zst_result_t
+alsa_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
 {
     (void)in;
     alsa_source_t* s = el->priv;
     
-    mm_buffer_t* buf = mm_buffer_create(MM_BUFFER_AUDIO_FRAME);
-    if (!buf) return MM_ERROR;
+    zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_AUDIO_FRAME);
+    if (!buf) return ZST_ERROR;
 
     uint32_t nb_samples = 1024;
     size_t data_size = nb_samples * s->channels * sizeof(int16_t);
     uint8_t* raw_data = malloc(data_size);
     if (!raw_data) {
-        mm_buffer_unref(buf);
-        return MM_ERROR;
+        zst_buffer_unref(buf);
+        return ZST_ERROR;
     }
 
-    buf->memory.type = MM_MEMORY_CPU;
+    buf->memory.type = ZST_MEMORY_CPU;
     buf->memory.data = raw_data;
     buf->memory.size = data_size;
 
-    mm_audio_frame_t* frame = calloc(1, sizeof(*frame));
+    zst_audio_frame_t* frame = calloc(1, sizeof(*frame));
     if (!frame) {
         free(raw_data);
-        mm_buffer_unref(buf);
-        return MM_ERROR;
+        zst_buffer_unref(buf);
+        return ZST_ERROR;
     }
     frame->sample_rate = s->sample_rate;
     frame->channels = s->channels;
@@ -160,10 +160,10 @@ alsa_process(mm_element_t* el, mm_buffer_t* in, mm_buffer_t** out)
     buf->duration = nb_samples * 1000000000ULL / s->sample_rate;
 
     *out = buf;
-    return MM_OK;
+    return ZST_OK;
 }
 
-static mm_element_ops_t g_ops = {
+static zst_element_ops_t g_ops = {
     .name    = "alsasrc",
     .open    = alsa_open,
     .close   = alsa_close,
@@ -171,34 +171,34 @@ static mm_element_ops_t g_ops = {
     .process = alsa_process,
 };
 
-mm_element_t*
-mm_alsa_source_create(void)
+zst_element_t*
+zst_alsa_source_create(void)
 {
-    mm_element_t* el;
+    zst_element_t* el;
     alsa_source_t* priv;
-    mm_pad_t* src;
+    zst_pad_t* src;
 
     priv = calloc(1, sizeof(*priv));
-    el = mm_element_create(&g_ops, priv);
-    src = mm_pad_create("src", MM_PAD_SRC);
-    mm_element_add_pad(el, src);
+    el = zst_element_create(&g_ops, priv);
+    src = zst_pad_create("src", ZST_PAD_SRC);
+    zst_element_add_pad(el, src);
     return el;
 }
 
 #ifdef BUILDING_PLUGIN
-#include "mm_plugin.h"
+#include "zst_plugin.h"
 #include <string.h>
 
-static mm_element_t*
+static zst_element_t*
 plugin_create_element(const char* name)
 {
     if (strcmp(name, "alsasrc") == 0) {
-        return mm_alsa_source_create();
+        return zst_alsa_source_create();
     }
     return NULL;
 }
 
-static mm_plugin_t g_plugin = {
+static zst_plugin_t g_plugin = {
     .desc = {
         .name = "alsasource_plugin",
         .author = "Antigravity",
@@ -209,11 +209,11 @@ static mm_plugin_t g_plugin = {
     .create_element = plugin_create_element
 };
 
-MM_PLUGIN_EXPORT
-mm_plugin_t*
-mm_get_plugin(void)
+ZST_PLUGIN_EXPORT
+zst_plugin_t*
+zst_get_plugin(void)
 {
-    mm_plugin_t* p = malloc(sizeof(*p));
+    zst_plugin_t* p = malloc(sizeof(*p));
     if (p) {
         *p = g_plugin;
     }

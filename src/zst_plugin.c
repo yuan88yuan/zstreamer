@@ -1,10 +1,10 @@
 /*=============================================================================
-    mm_plugin.c — dlopen-based dynamic plugin loader and registry
+    zst_plugin.c — dlopen-based dynamic plugin loader and registry
 =============================================================================*/
 
 #define _POSIX_C_SOURCE 200809L  /* strdup */
 
-#include "mm_plugin.h"
+#include "zst_plugin.h"
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
@@ -23,14 +23,14 @@
 #  define DLCLOSE(h)   dlclose(h)
 #endif
 
-typedef struct mm_registry_entry {
-    mm_plugin_t*              plugin;
+typedef struct zst_registry_entry {
+    zst_plugin_t*              plugin;
     char*                     path;
-    struct mm_registry_entry* next;
-} mm_registry_entry_t;
+    struct zst_registry_entry* next;
+} zst_registry_entry_t;
 
 static struct {
-    mm_registry_entry_t* head;
+    zst_registry_entry_t* head;
     pthread_mutex_t      lock;
     int                  initialized;
 } g_registry = {
@@ -43,21 +43,21 @@ static struct {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
 
-mm_plugin_t*
-mm_plugin_load(const char* path)
+zst_plugin_t*
+zst_plugin_load(const char* path)
 {
     if (!path) return NULL;
 
     void* handle = DLOPEN(path);
     if (!handle) return NULL;
 
-    mm_get_plugin_fn get_plugin = (mm_get_plugin_fn)DLSYM(handle, "mm_get_plugin");
+    zst_get_plugin_fn get_plugin = (zst_get_plugin_fn)DLSYM(handle, "zst_get_plugin");
     if (!get_plugin) {
         DLCLOSE(handle);
         return NULL;
     }
 
-    mm_plugin_t* plugin = get_plugin();
+    zst_plugin_t* plugin = get_plugin();
     if (!plugin) {
         DLCLOSE(handle);
         return NULL;
@@ -76,7 +76,7 @@ mm_plugin_load(const char* path)
 #pragma GCC diagnostic pop
 
 void
-mm_plugin_unload(mm_plugin_t* plugin)
+zst_plugin_unload(zst_plugin_t* plugin)
 {
     if (!plugin) return;
 
@@ -89,8 +89,8 @@ mm_plugin_unload(mm_plugin_t* plugin)
     free(plugin);
 }
 
-mm_plugin_t*
-mm_plugin_ref(mm_plugin_t* plugin)
+zst_plugin_t*
+zst_plugin_ref(zst_plugin_t* plugin)
 {
     if (!plugin) return NULL;
     __sync_fetch_and_add(&plugin->refcount, 1);
@@ -98,40 +98,40 @@ mm_plugin_ref(mm_plugin_t* plugin)
 }
 
 void
-mm_plugin_unref(mm_plugin_t* plugin)
+zst_plugin_unref(zst_plugin_t* plugin)
 {
     if (!plugin) return;
     if (__sync_sub_and_fetch(&plugin->refcount, 1) <= 0) {
-        mm_plugin_unload(plugin);
+        zst_plugin_unload(plugin);
     }
 }
 
-mm_result_t
-mm_plugin_registry_init(void)
+zst_result_t
+zst_plugin_registry_init(void)
 {
     pthread_mutex_lock(&g_registry.lock);
     if (g_registry.initialized) {
         pthread_mutex_unlock(&g_registry.lock);
-        return MM_OK;
+        return ZST_OK;
     }
     g_registry.head = NULL;
     g_registry.initialized = 1;
     pthread_mutex_unlock(&g_registry.lock);
-    return MM_OK;
+    return ZST_OK;
 }
 
 void
-mm_plugin_registry_deinit(void)
+zst_plugin_registry_deinit(void)
 {
     pthread_mutex_lock(&g_registry.lock);
     if (!g_registry.initialized) {
         pthread_mutex_unlock(&g_registry.lock);
         return;
     }
-    mm_registry_entry_t* curr = g_registry.head;
+    zst_registry_entry_t* curr = g_registry.head;
     while (curr) {
-        mm_registry_entry_t* next = curr->next;
-        mm_plugin_unref(curr->plugin);
+        zst_registry_entry_t* next = curr->next;
+        zst_plugin_unref(curr->plugin);
         free(curr->path);
         free(curr);
         curr = next;
@@ -141,13 +141,13 @@ mm_plugin_registry_deinit(void)
     pthread_mutex_unlock(&g_registry.lock);
 }
 
-mm_result_t
-mm_plugin_registry_scan(const char* directory)
+zst_result_t
+zst_plugin_registry_scan(const char* directory)
 {
-    if (!directory) return MM_ERROR;
+    if (!directory) return ZST_ERROR;
 
     DIR* dir = opendir(directory);
-    if (!dir) return MM_ERROR;
+    if (!dir) return ZST_ERROR;
 
     struct dirent* entry;
     while ((entry = readdir(dir)) != NULL) {
@@ -158,7 +158,7 @@ mm_plugin_registry_scan(const char* directory)
 
             /* Check if already loaded in registry */
             pthread_mutex_lock(&g_registry.lock);
-            mm_registry_entry_t* curr = g_registry.head;
+            zst_registry_entry_t* curr = g_registry.head;
             int already_loaded = 0;
             while (curr) {
                 if (strcmp(curr->path, path) == 0) {
@@ -171,9 +171,9 @@ mm_plugin_registry_scan(const char* directory)
 
             if (already_loaded) continue;
 
-            mm_plugin_t* plugin = mm_plugin_load(path);
+            zst_plugin_t* plugin = zst_plugin_load(path);
             if (plugin) {
-                mm_registry_entry_t* node = malloc(sizeof(*node));
+                zst_registry_entry_t* node = malloc(sizeof(*node));
                 if (node) {
                     node->plugin = plugin;
                     node->path = strdup(path);
@@ -183,48 +183,48 @@ mm_plugin_registry_scan(const char* directory)
                     g_registry.head = node;
                     pthread_mutex_unlock(&g_registry.lock);
                 } else {
-                    mm_plugin_unref(plugin);
+                    zst_plugin_unref(plugin);
                 }
             }
         }
     }
 
     closedir(dir);
-    return MM_OK;
+    return ZST_OK;
 }
 
-mm_result_t
-mm_plugin_registry_scan_env(void)
+zst_result_t
+zst_plugin_registry_scan_env(void)
 {
     const char* env = getenv("ZSTREAMER_PLUGIN_PATH");
-    if (!env) return MM_OK;
+    if (!env) return ZST_OK;
 
     char* env_copy = strdup(env);
-    if (!env_copy) return MM_ERROR;
+    if (!env_copy) return ZST_ERROR;
 
     char* token = strtok(env_copy, ":");
     while (token) {
-        mm_plugin_registry_scan(token);
+        zst_plugin_registry_scan(token);
         token = strtok(NULL, ":");
     }
 
     free(env_copy);
-    return MM_OK;
+    return ZST_OK;
 }
 
-mm_element_t*
-mm_element_factory_make(const char* name)
+zst_element_t*
+zst_element_factory_make(const char* name)
 {
     if (!name) return NULL;
 
     pthread_mutex_lock(&g_registry.lock);
-    mm_registry_entry_t* curr = g_registry.head;
+    zst_registry_entry_t* curr = g_registry.head;
     while (curr) {
-        mm_plugin_t* plugin = curr->plugin;
+        zst_plugin_t* plugin = curr->plugin;
         if (plugin->create_element) {
-            mm_element_t* el = plugin->create_element(name);
+            zst_element_t* el = plugin->create_element(name);
             if (el) {
-                el->plugin = mm_plugin_ref(plugin);
+                el->plugin = zst_plugin_ref(plugin);
                 pthread_mutex_unlock(&g_registry.lock);
                 return el;
             }

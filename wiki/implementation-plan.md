@@ -16,26 +16,26 @@ The fundamental types and lifecycle management.
 
 | Component   | Status | Notes                                                      |
 |-------------|--------|------------------------------------------------------------|
-| mm_types    | ✅ done  | Base types, error codes, forward declarations               |
-| mm_buffer   | ✅ done  | Ref-counted buffer with typed memory; destroy callback      |
-| mm_pad      | ✅ done  | SRC/SINK pads with peer linking; default push/pull callbacks|
-| mm_element  | ✅ done  | Ops vtable, state machine (NULL/READY/PAUSED/PLAYING), pads |
-| mm_pipeline | ✅ done  | Element container, state propagation, topological sort      |
-| mm_queue    | ✅ done  | Thread-safe bounded queue, timeout, bytes/duration limits, async mode |
-| mm_scheduler| ✅ done  | Single-thread + multi-thread worker pool, EOS propagation   |
-| mm_plugin   | ✅ done  | dlopen loader, plugin entry point                           |
+| zst_types    | ✅ done  | Base types, error codes, forward declarations               |
+| zst_buffer   | ✅ done  | Ref-counted buffer with typed memory; destroy callback      |
+| zst_pad      | ✅ done  | SRC/SINK pads with peer linking; default push/pull callbacks|
+| zst_element  | ✅ done  | Ops vtable, state machine (NULL/READY/PAUSED/PLAYING), pads |
+| zst_pipeline | ✅ done  | Element container, state propagation, topological sort      |
+| zst_queue    | ✅ done  | Thread-safe bounded queue, timeout, bytes/duration limits, async mode |
+| zst_scheduler| ✅ done  | Single-thread + multi-thread worker pool, EOS propagation   |
+| zst_plugin   | ✅ done  | dlopen loader, plugin entry point                           |
 
 ---
 
 ## Phase 2 — Scheduler Integration & Pipeline Wiring  (✅ done)
 
 - [x] **Pad push/pull semantics**: default callbacks chain `process()` → push downstream
-- [x] **mm_pad_push() / mm_pad_pull()** — walk the pad graph
-- [x] **mm_pad_reset_callbacks()** — restore defaults after custom override
-- [x] **Topological sort**: `mm_pipeline_topological_sort()` to ensure correct element order
+- [x] **zst_pad_push() / zst_pad_pull()** — walk the pad graph
+- [x] **zst_pad_reset_callbacks()** — restore defaults after custom override
+- [x] **Topological sort**: `zst_pipeline_topological_sort()` to ensure correct element order
 - [x] **Scheduler worker loop**: round-robin element assignment across worker threads
 - [x] **State machine hardening**: validate transitions, handle error rollback
-- [x] **EOS signalling**: `MM_BUFFER_FLAG_EOS` propagated through pad graph
+- [x] **EOS signalling**: `ZST_BUFFER_FLAG_EOS` propagated through pad graph
 
 **Test deliverables:** ✅ 19 unit tests
 
@@ -43,7 +43,7 @@ The fundamental types and lifecycle management.
 
 ## Phase 3 — Queue Element  (✅ done)
 
-Explicit queue elements as first-class `mm_element` subclasses — like GStreamer's `queue` element. Users insert them at pipeline boundaries to control buffering and threading.
+Explicit queue elements as first-class `zst_element` subclasses — like GStreamer's `queue` element. Users insert them at pipeline boundaries to control buffering and threading.
 
 ```
 v4l2src → queue → h264enc → queue → mp4mux → queue → filesink
@@ -51,11 +51,11 @@ v4l2src → queue → h264enc → queue → mp4mux → queue → filesink
       explicit boundary  explicit boundary  explicit boundary
 ```
 
-- [x] `mm_queue_element_create()` — full `mm_element` with sink pad + src pad + worker thread
+- [x] `zst_queue_element_create()` — full `zst_element` with sink pad + src pad + worker thread
 - [x] Lifecycle hooks: `open` creates queue, `close` destroys it, `start/stop` manage thread
 - [x] EOS passthrough through the queue element
-- [x] Configurable via `mm_queue_config_t` (max buffers, bytes, duration)
-- [x] `MM_QUEUE_ASYNC` mode drops buffers when full
+- [x] Configurable via `zst_queue_config_t` (max buffers, bytes, duration)
+- [x] `ZST_QUEUE_ASYNC` mode drops buffers when full
 - [x] `example_record.c` updated with explicit queue elements
 - [x] Multi-threaded scheduler test uses queue elements
 
@@ -82,8 +82,8 @@ Two more are planned to handle format conversion (scaling, resampling) — essen
 ### 4b — H.264 Encoder  (✅ done)
 - [x] x264 integration: `x264_param_default_preset("ultrafast", "zerolatency")`
 - [x] CRF rate control (23)
-- [x] Accept I420 YUV planes from `mm_video_frame_t` payload
-- [x] NAL unit concatenation into `mm_buffer` packets
+- [x] Accept I420 YUV planes from `zst_video_frame_t` payload
+- [x] NAL unit concatenation into `zst_buffer` packets
 - [x] PTS passthrough
 - [x] EOS passthrough
 - [x] Lazy initialization on first frame (handles dynamic resolution)
@@ -159,12 +159,12 @@ format mismatches (S16LE ↔ F32LE).
 
 Arguably the most important missing piece. Without caps negotiation, the pipeline can't verify or convert between formats. Elements must advertise what they produce (src caps) and what they consume (sink caps), and adjacent pads must agree before linking.
 
-- [x] `mm_caps_t` structure: a list of structures each describing:
+- [x] `zst_caps_t` structure: a list of structures each describing:
   - `media_type` (e.g. `"video/x-raw"`, `"video/x-h264"`)
   - Video: `width`, `height`, `framerate`, `pixel_format` (NV12, YUV420P, etc.)
   - Audio: `channels`, `sample_rate`, `format` (S16LE, F32LE, etc.)
-- [x] Caps intersection: `mm_caps_intersect(src_caps, sink_caps) → mm_caps_t*`
-- [x] Pad caps API: `mm_pad_set_caps()`, `mm_pad_get_caps()`, `mm_pad_negotiate()`
+- [x] Caps intersection: `zst_caps_intersect(src_caps, sink_caps) → zst_caps_t*`
+- [x] Pad caps API: `zst_pad_set_caps()`, `zst_pad_get_caps()`, `zst_pad_negotiate()`
 - [x] Auto-negotiation at link time
 - [x] Caps-query mechanism in element ops vtable
 
@@ -177,13 +177,13 @@ negotiation process when formats don't match.
 
 ## Phase 6 — Event Bus  (✅ done)
 
-An async notification channel (`mm_bus_t`) that decouples error/state/EOS from the data path. Events: `EOS`, `ERROR`, `STATE_CHANGED`, `WARNING`.
+An async notification channel (`zst_bus_t`) that decouples error/state/EOS from the data path. Events: `EOS`, `ERROR`, `STATE_CHANGED`, `WARNING`.
 
-- [x] `mm_bus_t` — thread-safe event queue
-- [x] `mm_bus_post()` / `mm_bus_pop(timeout_ms)`
+- [x] `zst_bus_t` — thread-safe event queue
+- [x] `zst_bus_post()` / `zst_bus_pop(timeout_ms)`
 - [x] Async callback dispatch
 - [x] Wire pipeline lifecycle events
-- [x] Wire error returns → `MM_EVENT_ERROR`
+- [x] Wire error returns → `ZST_EVENT_ERROR`
 
 ---
 
@@ -198,14 +198,14 @@ An async notification channel (`mm_bus_t`) that decouples error/state/EOS from t
 ## Phase 8 — Advanced Features
 
 ### 8a — Allocator API  (from `wiki/future.md`)
-- [ ] `mm_allocator_t` interface: `alloc`, `free`, ref-counting
+- [ ] `zst_allocator_t` interface: `alloc`, `free`, ref-counting
 - [ ] Default CPU allocator (malloc/free)
 - [ ] DMABUF allocator (Linux dma-buf)
 - [ ] CUDA / Vulkan device memory allocators
 - [ ] Buffer pools to eliminate per-frame allocation
 
 ### 8b — Clock  (from `wiki/future.md`)
-- [ ] `mm_clock_t` interface: `get_time`, `wait`
+- [ ] `zst_clock_t` interface: `get_time`, `wait`
 - [ ] System clock wrapping `CLOCK_MONOTONIC`
 - [ ] Pipeline-level master clock selection
 - [ ] Clock slaving for A/V sync

@@ -5,7 +5,7 @@ It decomposes media processing into a directed graph of **elements** connected v
 
 ## Core Concepts
 
-### Buffer (`mm_buffer`)
+### Buffer (`zst_buffer`)
 The fundamental data carrier — a reference-counted blob with:
 
 | Field      | Purpose                                 |
@@ -20,12 +20,12 @@ The fundamental data carrier — a reference-counted blob with:
 
 **Lifecycle:**
 ```
-mm_buffer_create() → refcount = 1
-mm_buffer_ref()    → refcount++
-mm_buffer_unref()  → refcount--; free when 0
+zst_buffer_create() → refcount = 1
+zst_buffer_ref()    → refcount++
+zst_buffer_unref()  → refcount--; free when 0
 ```
 
-### Pad (`mm_pad`)
+### Pad (`zst_pad`)
 Connection point on an element. Two directions:
 
 - **SRC pad** — emits data (source / output)
@@ -39,7 +39,7 @@ sink_pad → peer → src_pad
 
 Each pad carries optional **caps** (media type negotiation) and **push/pull** function pointers for both task-based and pull-based data flow.
 
-### Element (`mm_element`)
+### Element (`zst_element`)
 A processing node in the pipeline. Elements implement the **ops** vtable:
 
 | Op       | Called during state transition |
@@ -62,17 +62,17 @@ NULL  ──open──→  READY  ──start──→  PLAYING
 
 `PAUSED` is reserved but not yet wired — elements can optionally implement it for preroll.
 
-### Pipeline (`mm_pipeline`)
-An ordered container of elements. Its primary job is **state propagation** — calling `mm_element_set_state()` on every element in sequence.
+### Pipeline (`zst_pipeline`)
+An ordered container of elements. Its primary job is **state propagation** — calling `zst_element_set_state()` on every element in sequence.
 
 ```
-pipe = mm_pipeline_create()
-mm_pipeline_add(pipe, src)
-mm_pipeline_add(pipe, encoder)
-mm_pipeline_set_state(pipe, MM_STATE_PLAYING)
+pipe = zst_pipeline_create()
+zst_pipeline_add(pipe, src)
+zst_pipeline_add(pipe, encoder)
+zst_pipeline_set_state(pipe, ZST_STATE_PLAYING)
 ```
 
-### Queue (`mm_queue`)
+### Queue (`zst_queue`)
 Thread-safe blocking queue between processing stages.
 
 - **SYNC mode**: bounded with back-pressure (push blocks when full)
@@ -83,12 +83,12 @@ Thread-safe blocking queue between processing stages.
 
 Implemented with `pthread_mutex` + `pthread_condvar`.
 
-### Queue Element (`mm_queue_element`)
-A first-class `mm_element` subclass wrapping `mm_queue_t`. Unlike internal queues, the queue element is explicitly placed in the pipeline by the user. Each queue element has:
+### Queue Element (`zst_queue_element`)
+A first-class `zst_element` subclass wrapping `zst_queue_t`. Unlike internal queues, the queue element is explicitly placed in the pipeline by the user. Each queue element has:
 
 - One **sink pad** — receives buffers into the queue
 - One **src pad** — pushes dequeued buffers downstream
-- A **worker thread** that pops from the queue and pushes via `mm_pad_push()`
+- A **worker thread** that pops from the queue and pushes via `zst_pad_push()`
 
 ```
 v4l2src → queue → h264enc → queue → mp4mux → queue → filesink
@@ -96,7 +96,7 @@ v4l2src → queue → h264enc → queue → mp4mux → queue → filesink
 
 Every queue element is a threading boundary: upstream runs in its thread, downstream runs in the queue's thread.
 
-### Scheduler (`mm_scheduler`)
+### Scheduler (`zst_scheduler`)
 Drives the pipeline's execution model.
 
 | Mode            | Behaviour                            |
@@ -121,10 +121,10 @@ All six pipeline elements are fully implemented with real hardware/codec integra
 | Video Scaler    | `libswscale`       | 📝 Planned — scaling + pixel format conversion |
 | Audio Resampler | `libswresample`    | 📝 Planned — sample rate + format conversion |
 
-### Plugin (`mm_plugin`)
+### Plugin (`zst_plugin`)
 Dynamic element loading via `dlopen()`:
 
-- Each `.so` exports `mm_get_plugin()`
+- Each `.so` exports `zst_get_plugin()`
 - Plugin descriptor carries name, author, version
 - Element factory function creates named elements
 
@@ -160,20 +160,20 @@ The following features are planned but not yet implemented. See `wiki/future.md`
 
 ### Event Bus
 
-An async notification channel (`mm_bus_t`) decoupled from the data path. Elements and the pipeline post events (`EOS`, `ERROR`, `STATE_CHANGED`) to the bus; applications listen via `mm_bus_pop()` or a callback.
+An async notification channel (`zst_bus_t`) decoupled from the data path. Elements and the pipeline post events (`EOS`, `ERROR`, `STATE_CHANGED`) to the bus; applications listen via `zst_bus_pop()` or a callback.
 
 ### Caps Negotiation
 
-Currently pads have a placeholder `mm_caps_t` with only `media_type`. The full system will add:
+Currently pads have a placeholder `zst_caps_t` with only `media_type`. The full system will add:
 - Rich caps with dimensions, format, framerate, channels, sample rate
-- `mm_caps_intersect()` to find compatible formats
+- `zst_caps_intersect()` to find compatible formats
 - Auto-negotiation at link time
 - Video scaler (`libswscale`) and audio resampler (`libswresample`) auto-inserted
   when formats don't match — see Phase 4g/4h in `implementation-plan.md`
 
 ### Allocator API
 
-`mm_allocator_t` interface for custom memory backends:
+`zst_allocator_t` interface for custom memory backends:
 - Default CPU allocator (malloc/free)
 - DMABUF (Linux dma-buf for zero-copy between HW blocks)
 - CUDA / Vulkan device memory
@@ -181,8 +181,8 @@ Currently pads have a placeholder `mm_caps_t` with only `media_type`. The full s
 
 ### Clock
 
-`mm_clock_t` master clock wrapping `CLOCK_MONOTONIC`, with:
-- `mm_clock_get_time()` / `mm_clock_wait()`
+`zst_clock_t` master clock wrapping `CLOCK_MONOTONIC`, with:
+- `zst_clock_get_time()` / `zst_clock_wait()`
 - Pipeline-level clock selection
 - Clock slaving for A/V sync
 - Jitter measurement

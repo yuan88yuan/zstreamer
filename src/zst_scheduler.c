@@ -1,15 +1,15 @@
 /*=============================================================================
-    mm_scheduler.c — Drives pipeline execution (single / multi-threaded)
+    zst_scheduler.c — Drives pipeline execution (single / multi-threaded)
 =============================================================================*/
 
 #define _POSIX_C_SOURCE 199309L  /* nanosleep */
 
-#include "mm_scheduler.h"
-#include "mm_queue.h"
-#include "mm_pad.h"
-#include "mm_element.h"
-#include "mm_buffer.h"
-#include "mm_bus.h"
+#include "zst_scheduler.h"
+#include "zst_queue.h"
+#include "zst_pad.h"
+#include "zst_element.h"
+#include "zst_buffer.h"
+#include "zst_bus.h"
 #include <stdlib.h>
 #include <time.h>
 #include <pthread.h>
@@ -22,20 +22,20 @@ typedef struct {
 } sched_priv_t;
 
 typedef struct worker_context {
-    mm_scheduler_t* sched;
+    zst_scheduler_t* sched;
     int             worker_id;
 } worker_ctx_t;
 
-mm_scheduler_t*
-mm_scheduler_create(const mm_scheduler_config_t* cfg)
+zst_scheduler_t*
+zst_scheduler_create(const zst_scheduler_config_t* cfg)
 {
-    mm_scheduler_t* sched = calloc(1, sizeof(*sched));
+    zst_scheduler_t* sched = calloc(1, sizeof(*sched));
     if (!sched) return NULL;
 
     if (cfg)
         sched->config = *cfg;
     else {
-        sched->config.mode           = MM_SCHEDULER_SINGLE_THREAD;
+        sched->config.mode           = ZST_SCHEDULER_SINGLE_THREAD;
         sched->config.worker_threads = 1;
     }
 
@@ -52,26 +52,26 @@ mm_scheduler_create(const mm_scheduler_config_t* cfg)
 }
 
 void
-mm_scheduler_destroy(mm_scheduler_t* sched)
+zst_scheduler_destroy(zst_scheduler_t* sched)
 {
     if (!sched) return;
 
     sched_priv_t* p = sched->priv;
     if (p) {
         if (p->running)
-            mm_scheduler_stop(sched);
+            zst_scheduler_stop(sched);
         free(p->threads);
         free(p);
     }
     free(sched);
 }
 
-mm_result_t
-mm_scheduler_attach(mm_scheduler_t* sched, mm_pipeline_t* pipe)
+zst_result_t
+zst_scheduler_attach(zst_scheduler_t* sched, zst_pipeline_t* pipe)
 {
-    if (!sched || !pipe) return MM_ERROR;
+    if (!sched || !pipe) return ZST_ERROR;
     sched->pipeline = pipe;
-    return MM_OK;
+    return ZST_OK;
 }
 
 /* ── Worker thread (handles both single and multi-threaded mode) ─────────── */
@@ -79,44 +79,44 @@ static void*
 worker_loop(void* arg)
 {
     worker_ctx_t* ctx = arg;
-    mm_scheduler_t* sched = ctx->sched;
+    zst_scheduler_t* sched = ctx->sched;
     sched_priv_t* p   = sched->priv;
     uint32_t worker_id = ctx->worker_id;
     uint32_t nb_threads = p->nb_threads;
 
     while (p->running) {
         int activity = 0;
-        mm_pipeline_t* pipe = sched->pipeline;
+        zst_pipeline_t* pipe = sched->pipeline;
         if (pipe) {
             for (uint32_t i = worker_id; i < pipe->nb_elements; i += nb_threads) {
-                mm_element_t* el = pipe->elements[i];
-                if (el->state != MM_STATE_PLAYING) continue;
+                zst_element_t* el = pipe->elements[i];
+                if (el->state != ZST_STATE_PLAYING) continue;
 
                 if (el->nb_sink_pads == 0) {
                     // Source element: process (produce)
-                    mm_buffer_t* out_buf = NULL;
-                    mm_result_t ret = el->ops->process(el, NULL, &out_buf);
-                    if (ret == MM_OK && out_buf) {
+                    zst_buffer_t* out_buf = NULL;
+                    zst_result_t ret = el->ops->process(el, NULL, &out_buf);
+                    if (ret == ZST_OK && out_buf) {
                         activity = 1;
                         if (el->nb_src_pads > 0) {
-                            mm_pad_push(el->src_pads[0], out_buf);
-                            mm_buffer_unref(out_buf);
+                            zst_pad_push(el->src_pads[0], out_buf);
+                            zst_buffer_unref(out_buf);
                         }
-                    } else if (ret == MM_EOF) {
+                    } else if (ret == ZST_EOF) {
                         // Propagate EOS
-                        mm_buffer_t* eos_buf = mm_buffer_create(MM_BUFFER_USER);
+                        zst_buffer_t* eos_buf = zst_buffer_create(ZST_BUFFER_USER);
                         if (eos_buf) {
-                            eos_buf->flags |= MM_BUFFER_FLAG_EOS;
+                            eos_buf->flags |= ZST_BUFFER_FLAG_EOS;
                             if (el->nb_src_pads > 0) {
-                                mm_pad_push(el->src_pads[0], eos_buf);
+                                zst_pad_push(el->src_pads[0], eos_buf);
                             }
-                            mm_buffer_unref(eos_buf);
+                            zst_buffer_unref(eos_buf);
                         }
-                        el->state = MM_STATE_READY;
-                    } else if (ret != MM_TIMEOUT && ret != MM_AGAIN) {
+                        el->state = ZST_STATE_READY;
+                    } else if (ret != ZST_TIMEOUT && ret != ZST_AGAIN) {
                         if (el->bus) {
-                            mm_event_t* err_ev = mm_event_new_error(el, ret, "Source process failed");
-                            mm_bus_post(el->bus, err_ev);
+                            zst_event_t* err_ev = zst_event_new_error(el, ret, "Source process failed");
+                            zst_bus_post(el->bus, err_ev);
                         }
                     }
                 }
@@ -133,23 +133,23 @@ worker_loop(void* arg)
     return NULL;
 }
 
-mm_result_t
-mm_scheduler_run(mm_scheduler_t* sched)
+zst_result_t
+zst_scheduler_run(zst_scheduler_t* sched)
 {
-    if (!sched) return MM_ERROR;
+    if (!sched) return ZST_ERROR;
 
     sched_priv_t* p = sched->priv;
-    if (!p) return MM_ERROR;
-    if (p->running) return MM_OK;
+    if (!p) return ZST_ERROR;
+    if (p->running) return ZST_OK;
 
     if (sched->pipeline) {
-        mm_pipeline_topological_sort(sched->pipeline);
+        zst_pipeline_topological_sort(sched->pipeline);
     }
 
     p->running = 1;
 
     uint32_t n = 1;
-    if (sched->config.mode == MM_SCHEDULER_MULTI_THREAD) {
+    if (sched->config.mode == ZST_SCHEDULER_MULTI_THREAD) {
         n = sched->config.worker_threads < 1 ? 1 : sched->config.worker_threads;
     }
 
@@ -165,17 +165,17 @@ mm_scheduler_run(mm_scheduler_t* sched)
         pthread_create(&p->threads[i], NULL, worker_loop, ctx);
     }
 
-    return MM_OK;
+    return ZST_OK;
 }
 
-mm_result_t
-mm_scheduler_stop(mm_scheduler_t* sched)
+zst_result_t
+zst_scheduler_stop(zst_scheduler_t* sched)
 {
-    if (!sched) return MM_ERROR;
+    if (!sched) return ZST_ERROR;
 
     sched_priv_t* p = sched->priv;
-    if (!p) return MM_ERROR;
-    if (!p->running) return MM_OK;
+    if (!p) return ZST_ERROR;
+    if (!p->running) return ZST_OK;
 
     p->running = 0;
 
@@ -188,5 +188,5 @@ mm_scheduler_stop(mm_scheduler_t* sched)
         p->nb_threads = 0;
     }
 
-    return MM_OK;
+    return ZST_OK;
 }

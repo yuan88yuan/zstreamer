@@ -1,15 +1,15 @@
 /*=============================================================================
-    mm_buffer.c — Reference-counted buffer with typed memory payload
+    zst_buffer.c — Reference-counted buffer with typed memory payload
 =============================================================================*/
 
-#include "mm_buffer.h"
+#include "zst_buffer.h"
 #include <stdlib.h>
 #include <string.h>
 
-mm_buffer_t*
-mm_buffer_create(uint32_t type)
+zst_buffer_t*
+zst_buffer_create(uint32_t type)
 {
-    mm_buffer_t* buf = calloc(1, sizeof(*buf));
+    zst_buffer_t* buf = calloc(1, sizeof(*buf));
     if (!buf) return NULL;
 
     buf->type      = type;
@@ -27,8 +27,8 @@ mm_buffer_create(uint32_t type)
     return buf;
 }
 
-mm_buffer_t*
-mm_buffer_ref(mm_buffer_t* buf)
+zst_buffer_t*
+zst_buffer_ref(zst_buffer_t* buf)
 {
     if (!buf) return NULL;
 
@@ -37,7 +37,7 @@ mm_buffer_ref(mm_buffer_t* buf)
 }
 
 void
-mm_buffer_unref(mm_buffer_t* buf)
+zst_buffer_unref(zst_buffer_t* buf)
 {
     if (!buf) return;
 
