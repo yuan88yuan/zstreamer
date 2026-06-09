@@ -154,35 +154,35 @@ thread for pushing downstream, decoupling producers from consumers.
 
 ---
 
-## Future Direction
+## Recently Implemented
 
-The following features are planned but not yet implemented. See `wiki/future.md` and `wiki/implementation-plan.md` for details.
+The following features were previously planned and have been implemented. See `wiki/implementation-plan.md` for details.
 
-### Event Bus
+### Event Bus  (✅ done — Phase 6)
 
 An async notification channel (`zst_bus_t`) decoupled from the data path. Elements and the pipeline post events (`EOS`, `ERROR`, `STATE_CHANGED`) to the bus; applications listen via `zst_bus_pop()` or a callback.
 
-### Caps Negotiation
+### Caps Negotiation  (✅ done — Phase 5)
 
-Currently pads have a placeholder `zst_caps_t` with only `media_type`. The full system will add:
-- Rich caps with dimensions, format, framerate, channels, sample rate
+Pads now carry rich caps with dimensions, format, framerate, channels, sample rate.
 - `zst_caps_intersect()` to find compatible formats
 - Auto-negotiation at link time
-- Video scaler (`libswscale`) and audio resampler (`libswresample`) auto-inserted
-  when formats don't match — see Phase 4g/4h in `implementation-plan.md`
+- Video scaler (`libswscale`) and audio resampler (`libswresample`) are available
+  for format conversion — see Phase 4g/4h in `implementation-plan.md`
 
-### Allocator API
+### Allocator API  (✅ done — Phase 8a)
 
 `zst_allocator_t` interface for custom memory backends:
-- Default CPU allocator (malloc/free)
-- DMABUF (Linux dma-buf for zero-copy between HW blocks)
-- CUDA / Vulkan device memory
-- Buffer pools to eliminate per-frame allocation
+- [x] Default CPU allocator (malloc/free) with refcounting
+- [x] Integrated with `zst_buffer_create_with_allocator()`
+- [ ] DMABUF (Linux dma-buf for zero-copy between HW blocks) — future
+- [ ] CUDA / Vulkan device memory — future
+- [ ] Buffer pools to eliminate per-frame allocation — future
 
-### Clock
+### Clock  (✅ done — Phase 8b)
 
 `zst_clock_t` master clock wrapping `CLOCK_MONOTONIC`, with:
-- `zst_clock_get_time()` / `zst_clock_wait()`
-- Pipeline-level clock selection
-- Clock slaving for A/V sync
-- Jitter measurement
+- [x] `zst_clock_get_time()` / `zst_clock_wait()`
+- [x] Pipeline-level clock selection (`zst_pipeline_set_clock`)
+- [ ] Clock slaving for A/V sync — future
+- [ ] Jitter measurement — future

@@ -221,17 +221,17 @@ An async notification channel (`zst_bus_t`) that decouples error/state/EOS from 
 
 ## Phase 8 — Advanced Features
 
-### 8a — Allocator API  (from `wiki/future.md`)
-- [ ] `zst_allocator_t` interface: `alloc`, `free`, ref-counting
-- [ ] Default CPU allocator (malloc/free)
+### 8a — Allocator API  (from `wiki/future.md`)  (✅ done)
+- [x] `zst_allocator_t` interface: `alloc`, `free`, ref-counting
+- [x] Default CPU allocator (malloc/free)
 - [ ] DMABUF allocator (Linux dma-buf)
 - [ ] CUDA / Vulkan device memory allocators
 - [ ] Buffer pools to eliminate per-frame allocation
 
-### 8b — Clock  (from `wiki/future.md`)
-- [ ] `zst_clock_t` interface: `get_time`, `wait`
-- [ ] System clock wrapping `CLOCK_MONOTONIC`
-- [ ] Pipeline-level master clock selection
+### 8b — Clock  (from `wiki/future.md`)  (✅ done)
+- [x] `zst_clock_t` interface: `get_time`, `wait`
+- [x] System clock wrapping `CLOCK_MONOTONIC`
+- [x] Pipeline-level master clock selection
 - [ ] Clock slaving for A/V sync
 
 ### 8c — Other Advanced Features
