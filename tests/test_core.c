@@ -16,7 +16,15 @@
 #include "mm_pipeline.h"
 #include "mm_queue.h"
 
+static int g_tests_run   = 0;
 static int g_tests_passed = 0;
+
+#define TEST(name)                                              \
+    do {                                                        \
+        g_tests_run++;                                          \
+        printf("  TEST: %-50s ... ", name);                     \
+        fflush(stdout);                                         \
+    } while (0)
 
 #define PASS()                                                  \
     do {                                                        \
@@ -30,6 +38,7 @@ static int g_tests_passed = 0;
 static void
 test_buffer_create_destroy(void)
 {
+    TEST("buffer create / destroy");
     mm_buffer_t* buf = mm_buffer_create(MM_BUFFER_VIDEO_FRAME);
     assert(buf != NULL);
     assert(buf->type == MM_BUFFER_VIDEO_FRAME);
@@ -42,6 +51,7 @@ test_buffer_create_destroy(void)
 static void
 test_buffer_refcount(void)
 {
+    TEST("buffer refcount");
     mm_buffer_t* buf = mm_buffer_create(MM_BUFFER_AUDIO_FRAME);
     assert(buf != NULL);
 
@@ -58,6 +68,7 @@ test_buffer_refcount(void)
 static void
 test_buffer_null_safety(void)
 {
+    TEST("buffer null safety");
     /* These should not crash */
     mm_buffer_ref(NULL);
     mm_buffer_unref(NULL);
@@ -70,6 +81,7 @@ test_buffer_null_safety(void)
 static void
 test_pad_create_destroy(void)
 {
+    TEST("pad create / destroy");
     mm_pad_t* src = mm_pad_create("src", MM_PAD_SRC);
     assert(src != NULL);
     assert(strcmp(src->name, "src") == 0);
@@ -87,6 +99,7 @@ test_pad_create_destroy(void)
 static void
 test_pad_link_unlink(void)
 {
+    TEST("pad link / unlink");
     mm_pad_t* src  = mm_pad_create("src",  MM_PAD_SRC);
     mm_pad_t* sink = mm_pad_create("sink", MM_PAD_SINK);
 
@@ -113,6 +126,7 @@ test_pad_link_unlink(void)
 static void
 test_pad_invalid_link(void)
 {
+    TEST("pad invalid link");
     mm_pad_t* src  = mm_pad_create("src",  MM_PAD_SRC);
     mm_pad_t* src2 = mm_pad_create("src2", MM_PAD_SRC);
 
@@ -139,6 +153,7 @@ static mm_element_ops_t g_dummy_ops = {
 static void
 test_element_create_destroy(void)
 {
+    TEST("element create / destroy");
     mm_element_t* el = mm_element_create(&g_dummy_ops, NULL);
     assert(el != NULL);
     assert(el->state == MM_STATE_NULL);
@@ -151,6 +166,7 @@ test_element_create_destroy(void)
 static void
 test_element_state_transition(void)
 {
+    TEST("element state transition");
     mm_element_t* el = mm_element_create(&g_dummy_ops, NULL);
     mm_result_t r;
 
@@ -173,6 +189,7 @@ test_element_state_transition(void)
 static void
 test_element_pads(void)
 {
+    TEST("element pads");
     mm_element_t* el  = mm_element_create(&g_dummy_ops, NULL);
     mm_pad_t*     src = mm_pad_create("src", MM_PAD_SRC);
     mm_pad_t*     snk = mm_pad_create("sink", MM_PAD_SINK);
@@ -198,6 +215,7 @@ test_element_pads(void)
 static void
 test_pipeline_create_destroy(void)
 {
+    TEST("pipeline create / destroy");
     mm_pipeline_t* pipe = mm_pipeline_create();
     assert(pipe != NULL);
     mm_pipeline_destroy(pipe);
@@ -207,6 +225,7 @@ test_pipeline_create_destroy(void)
 static void
 test_pipeline_add_remove(void)
 {
+    TEST("pipeline add / remove");
     mm_pipeline_t* pipe = mm_pipeline_create();
     mm_element_t*  el   = mm_element_create(&g_dummy_ops, NULL);
 
@@ -224,6 +243,7 @@ test_pipeline_add_remove(void)
 static void
 test_pipeline_state_propagation(void)
 {
+    TEST("pipeline state propagation");
     mm_pipeline_t* pipe = mm_pipeline_create();
     mm_element_t*  el   = mm_element_create(&g_dummy_ops, NULL);
 
@@ -245,6 +265,7 @@ test_pipeline_state_propagation(void)
 static void
 test_queue_push_pop(void)
 {
+    TEST("queue push / pop");
     mm_queue_config_t cfg = {
         .mode        = MM_QUEUE_SYNC,
         .max_buffers = 5,
@@ -283,6 +304,7 @@ test_queue_push_pop(void)
 static void
 test_queue_timeout(void)
 {
+    TEST("queue timeout");
     mm_queue_config_t cfg = {
         .mode        = MM_QUEUE_SYNC,
         .max_buffers = 1,
@@ -302,6 +324,7 @@ test_queue_timeout(void)
 static void
 test_queue_flush(void)
 {
+    TEST("queue flush");
     mm_queue_config_t cfg = {
         .mode        = MM_QUEUE_SYNC,
         .max_buffers = 5,
@@ -363,8 +386,8 @@ int main(void)
 
     /* ── Summary ── */
     printf("\n──────────────────────────────────────────────────\n");
-    printf("  %d / %d tests passed\n", g_tests_passed, g_tests_passed);
+    printf("  %d / %d tests passed\n", g_tests_passed, g_tests_run);
     printf("──────────────────────────────────────────────────\n\n");
 
-    return 0;
+    return (g_tests_passed == g_tests_run) ? 0 : 1;
 }
