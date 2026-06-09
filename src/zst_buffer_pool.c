@@ -123,7 +123,17 @@ zst_buffer_pool_acquire(zst_buffer_pool_t* pool, zst_buffer_t** out_buf, int tim
     buf->refcount = 1; // It's going to be used
     *out_buf = buf;
 
+    int trigger_low = 0;
+    if (pool->config.watermark_cb && pool->count == pool->config.low_watermark) {
+        trigger_low = 1;
+    }
+
     pthread_mutex_unlock(&pool->lock);
+
+    if (trigger_low) {
+        pool->config.watermark_cb(pool, ZST_POOL_WATERMARK_LOW, pool->config.watermark_user_data);
+    }
+
     return ZST_OK;
 }
 
@@ -143,7 +153,17 @@ zst_buffer_pool_release(zst_buffer_pool_t* pool, zst_buffer_t* buf)
     if (pool->active && pool->count < pool->config.max_buffers) {
         pool->buffers[pool->count++] = buf;
         pthread_cond_signal(&pool->cond);
+
+        int trigger_high = 0;
+        if (pool->config.watermark_cb && pool->count == pool->config.high_watermark) {
+            trigger_high = 1;
+        }
+
         pthread_mutex_unlock(&pool->lock);
+
+        if (trigger_high) {
+            pool->config.watermark_cb(pool, ZST_POOL_WATERMARK_HIGH, pool->config.watermark_user_data);
+        }
     } else {
         pthread_mutex_unlock(&pool->lock);
 
@@ -212,4 +232,56 @@ zst_buffer_pool_config_t zst_buffer_pool_get_config(zst_buffer_pool_t* pool) {
         return empty;
     }
     return pool->config;
+}
+
+void zst_buffer_pool_prefill(zst_buffer_pool_t* pool) {
+    if (!pool) return;
+
+    pthread_mutex_lock(&pool->lock);
+
+    if (!pool->active) {
+        pthread_mutex_unlock(&pool->lock);
+        return;
+    }
+
+    while (pool->total_allocated < pool->config.max_buffers) {
+        zst_buffer_t* buf = zst_buffer_create_with_allocator(
+            pool->config.buffer_type, pool->allocator, pool->config.buffer_size);
+        if (buf) {
+            buf->pool = pool;
+            pool->buffers[pool->count++] = buf;
+            pool->total_allocated++;
+        } else {
+            break;
+        }
+    }
+
+    pthread_cond_broadcast(&pool->cond);
+    pthread_mutex_unlock(&pool->lock);
+}
+
+void zst_buffer_pool_drain(zst_buffer_pool_t* pool) {
+    if (!pool) return;
+
+    pthread_mutex_lock(&pool->lock);
+
+    if (!pool->active) {
+        pthread_mutex_unlock(&pool->lock);
+        return;
+    }
+
+    uint32_t target_allocated = pool->config.min_buffers;
+
+    while (pool->count > 0 && pool->total_allocated > target_allocated) {
+        zst_buffer_t* buf = pool->buffers[--pool->count];
+        buf->pool = NULL;
+        if (buf->memory.release && buf->memory.priv)
+            buf->memory.release(buf->memory.priv);
+        if (buf->destroy)
+            buf->destroy(buf);
+        free(buf);
+        pool->total_allocated--;
+    }
+
+    pthread_mutex_unlock(&pool->lock);
 }

@@ -240,7 +240,7 @@ An async notification channel (`zst_bus_t`) that decouples error/state/EOS from 
   - [x] Backed by a `zst_allocator_t` — pool allocates new buffers via allocator
   - [x] Config: `min_buffers`, `max_buffers`, `buffer_size`, `buffer_type`
   - [x] Thread-safe acquire/release via `pthread_mutex` + `pthread_condvar`
-  - [ ] Watermark callbacks: low-watermark triggers pre-fill, high-watermark triggers drain
+  - [x] Watermark callbacks: low-watermark triggers pre-fill, high-watermark triggers drain
   - [x] `zst_buffer_pool_create(allocator, config)` / `_destroy()` / `_flush()`
 
   **Acquire / release API:**
