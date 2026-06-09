@@ -51,6 +51,10 @@ void zst_queue_flush(
 zst_element_t* zst_queue_element_create(
     const zst_queue_config_t* cfg);
 
+zst_result_t zst_queue_element_set_pool(
+    zst_element_t* el,
+    struct zst_buffer_pool* pool);
+
 #ifdef __cplusplus
 }
 #endif
