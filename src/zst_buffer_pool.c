@@ -71,7 +71,7 @@ zst_buffer_pool_create(zst_allocator_t* allocator, zst_buffer_pool_config_t* con
 }
 
 zst_result_t
-zst_buffer_pool_acquire(zst_buffer_pool_t* pool, zst_buffer_t** out_buf, int timeout_ms)
+zst_buffer_pool_acquire(zst_buffer_pool_t* pool, zst_buffer_t** out_buf, int timeout_ms, uint32_t flags)
 {
     if (!pool || !out_buf) return ZST_ERROR;
 
@@ -89,6 +89,11 @@ zst_buffer_pool_acquire(zst_buffer_pool_t* pool, zst_buffer_t** out_buf, int tim
                 pthread_mutex_unlock(&pool->lock);
                 return ZST_OK;
             }
+        }
+
+        if (flags & ZST_POOL_ACQUIRE_NONBLOCK) {
+            pthread_mutex_unlock(&pool->lock);
+            return ZST_TIMEOUT;
         }
 
         if (timeout_ms < 0) {

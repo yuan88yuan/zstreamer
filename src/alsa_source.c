@@ -114,7 +114,7 @@ alsa_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     alsa_source_t* s = el->priv;
     
     zst_buffer_t* buf = NULL;
-    if (zst_buffer_pool_acquire(s->pool, &buf, 0) != ZST_OK) {
+    if (zst_buffer_pool_acquire(s->pool, &buf, 0, 0) != ZST_OK) {
         return ZST_ERROR;
     }
 

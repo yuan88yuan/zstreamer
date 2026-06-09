@@ -248,7 +248,7 @@ An async notification channel (`zst_bus_t`) that decouples error/state/EOS from 
         blocks if empty until a buffer is returned or timeout expires
   - [x] `zst_buffer_pool_release(pool, buf)` — returns the buffer to the pool;
         resets refcount to 1, clears flags/metadata (but keeps underlying memory for reuse)
-  - [ ] Optional non-blocking acquire with `ZST_POOL_ACQUIRE_NONBLOCK` flag
+  - [x] Optional non-blocking acquire with `ZST_POOL_ACQUIRE_NONBLOCK` flag
   - [x] On release: if pool is at capacity, actually free the buffer instead of recycling
 
   **Integration with zst_buffer:**
