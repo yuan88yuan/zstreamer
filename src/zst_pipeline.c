@@ -60,6 +60,11 @@ zst_pipeline_set_clock(zst_pipeline_t* pipe, zst_clock_t* clock)
         zst_clock_unref(pipe->clock);
     }
     pipe->clock = clock ? zst_clock_ref(clock) : NULL;
+
+    /* Propagate to all elements */
+    for (uint32_t i = 0; i < pipe->nb_elements; i++) {
+        zst_element_set_clock(pipe->elements[i], pipe->clock);
+    }
 }
 
 zst_clock_t*
@@ -80,6 +85,7 @@ zst_pipeline_add(zst_pipeline_t* pipe, zst_element_t* el)
     els[pipe->nb_elements++] = el;
     pipe->elements = els;
     el->bus = pipe->bus;
+    zst_element_set_clock(el, pipe->clock);
     return ZST_OK;
 }
 
@@ -114,6 +120,34 @@ zst_pipeline_set_state(zst_pipeline_t* pipe, zst_state_t state)
 
     zst_state_t old_state = pipe->state;
     if (old_state == state) return ZST_OK;
+
+    /* Transition to PLAYING: Auto-select clock if none exists */
+    if (old_state < ZST_STATE_PLAYING && state == ZST_STATE_PLAYING && !pipe->clock) {
+        zst_clock_t* master_clock = NULL;
+        for (uint32_t i = 0; i < pipe->nb_elements; i++) {
+            zst_element_t* el = pipe->elements[i];
+            if (el->ops && el->ops->provide_clock) {
+                master_clock = el->ops->provide_clock(el);
+                if (master_clock) break;
+            }
+        }
+
+        zst_clock_t* sys_clock = zst_clock_system_create();
+        if (master_clock && sys_clock) {
+            zst_clock_t* slave = zst_clock_slave_create(master_clock, sys_clock);
+            if (slave) {
+                zst_pipeline_set_clock(pipe, slave);
+                zst_clock_unref(slave);
+            } else {
+                zst_pipeline_set_clock(pipe, sys_clock);
+            }
+        } else if (sys_clock) {
+            zst_pipeline_set_clock(pipe, sys_clock);
+        }
+
+        if (master_clock) zst_clock_unref(master_clock);
+        if (sys_clock) zst_clock_unref(sys_clock);
+    }
 
     /* Propagate state to all elements */
     for (uint32_t i = 0; i < pipe->nb_elements; i++) {
