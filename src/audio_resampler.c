@@ -13,6 +13,7 @@
 #include "zst_element.h"
 #include "zst_pad.h"
 #include "zst_buffer.h"
+#include "zst_buffer_pool.h"
 
 typedef struct {
     int target_sample_rate;
@@ -30,6 +31,8 @@ typedef struct {
     int current_out_rate;
     int current_out_channels;
     enum AVSampleFormat current_out_format;
+
+    zst_buffer_pool_t* pool;
 } audio_resampler_t;
 
 typedef struct {
@@ -108,6 +111,10 @@ resampler_close(zst_element_t* el)
     if (s->swr_ctx) {
         swr_free(&s->swr_ctx);
         s->swr_ctx = NULL;
+    }
+    if (s->pool) {
+        zst_buffer_pool_destroy(s->pool);
+        s->pool = NULL;
     }
     return ZST_OK;
 }
@@ -195,9 +202,6 @@ resampler_scaled_buf_free(zst_buffer_t* buf)
     if (buf) {
         resampler_buf_priv_t* priv = buf->metadata;
         if (priv) {
-            if (priv->sample_buf) {
-                av_freep(&priv->sample_buf);
-            }
             if (priv->plane_pointers) {
                 av_free(priv->plane_pointers);
             }
@@ -340,9 +344,64 @@ resampler_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
         );
     }
 
-    /* Allocate output buffer */
-    uint8_t** out_data_planes = NULL;
+    /* Buffer pool logic for output */
     int out_linesize = 0;
+    int out_size = av_samples_get_buffer_size(&out_linesize, out_channels, out_samples, out_sample_fmt, 1);
+    if (out_size < 0) return ZST_ERROR;
+
+    int needs_new_pool = 1;
+    if (s->pool) {
+        zst_buffer_pool_config_t cfg = zst_buffer_pool_get_config(s->pool);
+        if (cfg.buffer_size == (size_t)out_size) {
+            needs_new_pool = 0;
+        } else {
+            zst_buffer_pool_destroy(s->pool);
+            s->pool = NULL;
+        }
+    }
+
+    if (needs_new_pool) {
+        zst_buffer_pool_config_t pool_cfg = {
+            .min_buffers = 2,
+            .max_buffers = 8,
+            .buffer_size = out_size,
+            .buffer_type = ZST_BUFFER_AUDIO_FRAME
+        };
+        s->pool = zst_buffer_pool_create(NULL, &pool_cfg);
+        if (!s->pool) return ZST_ERROR;
+    }
+
+    zst_buffer_t* out_buf = NULL;
+    if (zst_buffer_pool_acquire(s->pool, &out_buf, 0) != ZST_OK) {
+        return ZST_ERROR;
+    }
+
+    uint8_t* out_data = out_buf->memory.data;
+
+    zst_audio_frame_t* out_frame = out_buf->payload;
+    resampler_buf_priv_t* buf_priv = out_buf->metadata;
+
+    if (!out_frame) {
+        out_frame = calloc(1, sizeof(*out_frame));
+        if (!out_frame) {
+            zst_buffer_unref(out_buf);
+            return ZST_ERROR;
+        }
+        out_buf->payload = out_frame;
+    }
+
+    if (!buf_priv) {
+        buf_priv = calloc(1, sizeof(*buf_priv));
+        if (!buf_priv) {
+            zst_buffer_unref(out_buf);
+            return ZST_ERROR;
+        }
+        out_buf->metadata = buf_priv;
+        out_buf->destroy = resampler_scaled_buf_free;
+    }
+
+    /* We need an array of pointers for the planes */
+    uint8_t** out_data_planes = NULL;
     int alloc_ret = av_samples_alloc_array_and_samples(
         &out_data_planes,
         &out_linesize,
@@ -351,7 +410,14 @@ resampler_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
         out_sample_fmt,
         0
     );
-    if (alloc_ret < 0) return ZST_ERROR;
+    if (alloc_ret >= 0) {
+        /* We want to use our pooled memory instead of the allocated memory */
+        av_freep(&out_data_planes[0]);
+        av_samples_fill_arrays(out_data_planes, &out_linesize, out_data, out_channels, out_samples, out_sample_fmt, 1);
+    } else {
+        zst_buffer_unref(out_buf);
+        return ZST_ERROR;
+    }
 
     int converted_samples = 0;
 
@@ -371,8 +437,8 @@ resampler_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
             in_frame->nb_samples
         );
         if (converted_samples < 0) {
-            av_freep(&out_data_planes[0]);
             av_free(out_data_planes);
+            zst_buffer_unref(out_buf);
             return ZST_ERROR;
         }
     } else {
@@ -390,55 +456,28 @@ resampler_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
         }
     }
 
-    zst_audio_frame_t* out_frame = calloc(1, sizeof(*out_frame));
-    if (!out_frame) {
-        av_freep(&out_data_planes[0]);
-        av_free(out_data_planes);
-        return ZST_ERROR;
-    }
-
     out_frame->sample_rate = out_rate;
     out_frame->channels = out_channels;
     out_frame->format = out_sample_fmt;
     out_frame->nb_samples = converted_samples;
-    if (av_sample_fmt_is_planar(out_sample_fmt)) {
-        out_frame->data = out_data_planes;
-    } else {
-        out_frame->data = out_data_planes[0];
-    }
 
-    int out_size = av_samples_get_buffer_size(NULL, out_channels, converted_samples, out_sample_fmt, 1);
-    if (out_size < 0) out_size = out_linesize;
-
-    resampler_buf_priv_t* buf_priv = calloc(1, sizeof(*buf_priv));
-    if (!buf_priv) {
-        free(out_frame);
-        av_freep(&out_data_planes[0]);
-        av_free(out_data_planes);
-        return ZST_ERROR;
+    /* Free any previous plane pointers in the pooled buffer if present */
+    if (buf_priv->plane_pointers) {
+        av_free(buf_priv->plane_pointers);
     }
-    buf_priv->sample_buf = out_data_planes[0];
+    buf_priv->sample_buf = NULL; // Memory managed by pool
     buf_priv->plane_pointers = out_data_planes;
 
-    zst_buffer_t* out_buf = zst_buffer_create(ZST_BUFFER_AUDIO_FRAME);
-    if (!out_buf) {
-        free(buf_priv);
-        free(out_frame);
-        av_freep(&out_data_planes[0]);
-        av_free(out_data_planes);
-        return ZST_ERROR;
+    if (av_sample_fmt_is_planar(out_sample_fmt)) {
+        out_frame->data = buf_priv->plane_pointers;
+    } else {
+        out_frame->data = buf_priv->plane_pointers[0];
     }
 
-    out_buf->memory.type = ZST_MEMORY_CPU;
-    out_buf->memory.data = out_data_planes[0];
-    out_buf->memory.size = out_size;
     out_buf->pts = in->pts;
     out_buf->dts = in->dts;
     out_buf->duration = av_rescale_rnd(converted_samples, 1000000000ULL, out_rate, AV_ROUND_UP);
     out_buf->flags = in->flags;
-    out_buf->payload = out_frame;
-    out_buf->metadata = buf_priv;
-    out_buf->destroy = resampler_scaled_buf_free;
 
     *out = out_buf;
     return ZST_OK;
