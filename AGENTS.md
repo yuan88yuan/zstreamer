@@ -156,9 +156,9 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | Dynamic Plugins             | ✅ Done                          |
 | Logging System              | ✅ Done                          |
 | Unit Tests                  | ✅ 35 tests, all passing         |
-| Allocator API               | ✅ Done (CPU allocator + buffer integration) |
+| Allocator API               | ✅ Done (CPU allocator + buffer integration + buffer pools) |
 | Clock                       | ✅ Done (system clock + pipeline integration) |
-| Text Rendering              | 📝 Planned (Phase 11)            |
+| Text Rendering              | ✅ Partially implemented (Phase 11a) |
 | A/V Sync (clock slaving)    | 📝 Future                        |
 | CI Pipeline                 | 📝 Future                        |
 

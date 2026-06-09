@@ -236,34 +236,35 @@ An async notification channel (`zst_bus_t`) that decouples error/state/EOS from 
   `malloc`/`free` overhead on every frame.
 
   **Data structure and lifecycle:**
-  - [ ] `zst_buffer_pool_t` struct with a LIFO/freelist of buffers
-  - [ ] Backed by a `zst_allocator_t` — pool allocates new buffers via allocator
-  - [ ] Config: `min_buffers`, `max_buffers`, `buffer_size`, `buffer_type`
-  - [ ] Thread-safe acquire/release via `pthread_mutex` + `pthread_condvar`
+  - [x] `zst_buffer_pool_t` struct with a LIFO/freelist of buffers
+  - [x] Backed by a `zst_allocator_t` — pool allocates new buffers via allocator
+  - [x] Config: `min_buffers`, `max_buffers`, `buffer_size`, `buffer_type`
+  - [x] Thread-safe acquire/release via `pthread_mutex` + `pthread_condvar`
   - [ ] Watermark callbacks: low-watermark triggers pre-fill, high-watermark triggers drain
-  - [ ] `zst_buffer_pool_create(allocator, config)` / `_destroy()` / `_flush()`
+  - [x] `zst_buffer_pool_create(allocator, config)` / `_destroy()` / `_flush()`
 
   **Acquire / release API:**
-  - [ ] `zst_buffer_pool_acquire(pool, timeout_ms)` — returns a buffer from the pool;
+  - [x] `zst_buffer_pool_acquire(pool, timeout_ms)` — returns a buffer from the pool;
         blocks if empty until a buffer is returned or timeout expires
-  - [ ] `zst_buffer_pool_release(pool, buf)` — returns the buffer to the pool;
+  - [x] `zst_buffer_pool_release(pool, buf)` — returns the buffer to the pool;
         resets refcount to 1, clears flags/metadata (but keeps underlying memory for reuse)
   - [ ] Optional non-blocking acquire with `ZST_POOL_ACQUIRE_NONBLOCK` flag
-  - [ ] On release: if pool is at capacity, actually free the buffer instead of recycling
+  - [x] On release: if pool is at capacity, actually free the buffer instead of recycling
 
   **Integration with zst_buffer:**
-  - [ ] `zst_buffer_t` gets an optional `pool` back-pointer (or reuse `memory.priv`)
+  - [x] `zst_buffer_t` gets an optional `pool` back-pointer (or reuse `memory.priv`)
   - [ ] `zst_buffer_create_with_pool(pool)` — acquire from pool instead of malloc
-  - [ ] `zst_buffer_unref()` checks for pool back-pointer: if pool is set, call
+  - [x] `zst_buffer_unref()` checks for pool back-pointer: if pool is set, call
         `pool->release(buf)` instead of `free`; otherwise normal free path
-  - [ ] Pool buffers skip the `destroy` callback on recycle (only called on final unref when
+  - [x] Pool buffers skip the `destroy` callback on recycle (only called on final unref when
         pool itself is destroyed)
 
   **Usage in elements (migration):**
-  - [ ] `v4l2_source`: allocate pool during `open()`, acquire per-frame in process()
+  - [x] `v4l2_source`: allocate pool during `open()`, acquire per-frame in process()
         instead of `zst_buffer_create()`; release happens automatically on `unref`
-  - [ ] `alsa_source`: same pattern for audio frames
-  - [ ] `video_scaler` / `audio_resampler`: pool for output buffers
+  - [x] `alsa_source`: same pattern for audio frames
+  - [x] `video_scaler`: pool for output buffers
+  - [ ] `audio_resampler`: pool for output buffers
   - [ ] `h264_encoder` / `aac_encoder`: packet pool for encoded output
   - [ ] `queue_element`: optionally attach pool to queue — return consumed buffers
         to the upstream pool automatically
@@ -331,16 +332,16 @@ single sink pad (raw video in), single src pad (raw video with text out).
 
 ### 11a — Text Overlay Element
 
-- [ ] `text_overlay` element with 1 sink pad (video/x-raw) + 1 src pad (video/x-raw)
-- [ ] Configurable text string (via element property or secondary text sink pad)
-- [ ] Backend: `libfreetype` for font rasterization (glyph bitmap generation)
+- [x] `text_overlay` element with 1 sink pad (video/x-raw) + 1 src pad (video/x-raw)
+- [x] Configurable text string (via element property or secondary text sink pad)
+- [x] Backend: `libfreetype` for font rasterization (glyph bitmap generation)
 - [ ] Text layout: multi-line support with word wrapping
 - [ ] Configurable font family, size, colour, outline/shadow
 - [ ] Configurable position: absolute (x, y) or relative (centre, top-left, bottom-right)
-- [ ] Alpha blending of text bitmap onto YUV420P / NV12 frames
-- [ ] PTS passthrough (text overlay preserves video timestamps)
-- [ ] EOS passthrough
-- [ ] Caps negotiation: accept/caps on sink pad, same caps on src pad (passthrough)
+- [x] Alpha blending of text bitmap onto YUV420P / NV12 frames
+- [x] PTS passthrough (text overlay preserves video timestamps)
+- [x] EOS passthrough
+- [x] Caps negotiation: accept/caps on sink pad, same caps on src pad (passthrough)
 
 **Dependencies:** `libfreetype-dev` (added to Dockerfile)
 
@@ -357,7 +358,7 @@ single sink pad (raw video in), single src pad (raw video with text out).
 - [ ] Support ASS/SSA format parsing (advanced styling)
 
 **Test deliverables:**
-- [ ] Unit test: render text onto a known frame, verify pixels at expected positions
+- [x] Unit test: render text onto a known frame, verify pixels at expected positions
 - [ ] Unit test: multi-line text wrapping
 - [ ] Unit test: EOS passthrough
 - [ ] Unit test: caps negotiation
