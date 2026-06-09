@@ -19,6 +19,32 @@ if(ENABLE_PLUGINS)
     endif()
 endif()
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(AVFORMAT REQUIRED libavformat)
+pkg_check_modules(AVCODEC REQUIRED libavcodec)
+pkg_check_modules(AVUTIL REQUIRED libavutil)
+pkg_check_modules(X264 REQUIRED x264)
+pkg_check_modules(ALSA REQUIRED alsa)
+pkg_check_modules(V4L2 REQUIRED libv4l2)
+
+set(ELEMENT_INCLUDE_DIRS
+    ${AVFORMAT_INCLUDE_DIRS}
+    ${AVCODEC_INCLUDE_DIRS}
+    ${AVUTIL_INCLUDE_DIRS}
+    ${X264_INCLUDE_DIRS}
+    ${ALSA_INCLUDE_DIRS}
+    ${V4L2_INCLUDE_DIRS}
+)
+
+set(ELEMENT_LIBRARIES
+    ${AVFORMAT_LIBRARIES}
+    ${AVCODEC_LIBRARIES}
+    ${AVUTIL_LIBRARIES}
+    ${X264_LIBRARIES}
+    ${ALSA_LIBRARIES}
+    ${V4L2_LIBRARIES}
+)
+
 # ── Include directories ──────────────────────────────────────────────────
 set(ZSTREAMER_INCLUDE_DIR
     ${CMAKE_SOURCE_DIR}/include
@@ -95,9 +121,11 @@ if(BUILD_TESTS)
     )
     target_include_directories(example_record
         PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+        PRIVATE ${ELEMENT_INCLUDE_DIRS}
     )
     target_link_libraries(example_record
         PRIVATE zstreamer
+        PRIVATE ${ELEMENT_LIBRARIES}
     )
 
     # Register with CTest

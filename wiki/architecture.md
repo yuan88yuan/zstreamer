@@ -76,11 +76,25 @@ mm_pipeline_set_state(pipe, MM_STATE_PLAYING)
 Thread-safe blocking queue between processing stages.
 
 - **SYNC mode**: bounded with back-pressure (push blocks when full)
+- **ASYNC mode**: drops buffers when full (best-effort)
 - Configurable limits: max buffers, max bytes, max duration
-- Timeout-aware `push` / `pop`
+- Timeout-aware `push` / `pop` (including `timeout_ms=0` for try-lock)
 - `flush` for cleanup on state transitions
 
 Implemented with `pthread_mutex` + `pthread_condvar`.
+
+### Queue Element (`mm_queue_element`)
+A first-class `mm_element` subclass wrapping `mm_queue_t`. Unlike internal queues, the queue element is explicitly placed in the pipeline by the user. Each queue element has:
+
+- One **sink pad** — receives buffers into the queue
+- One **src pad** — pushes dequeued buffers downstream
+- A **worker thread** that pops from the queue and pushes via `mm_pad_push()`
+
+```
+v4l2src → queue → h264enc → queue → mp4mux → queue → filesink
+```
+
+Every queue element is a threading boundary: upstream runs in its thread, downstream runs in the queue's thread.
 
 ### Scheduler (`mm_scheduler`)
 Drives the pipeline's execution model.
@@ -92,6 +106,19 @@ Drives the pipeline's execution model.
 
 In multi-thread mode each worker pops from its input queue, calls `process()`, and pushes to the next stage — a classic **pipeline parallelism** pattern.
 
+### Element Implementations
+
+All six pipeline elements are fully implemented with real hardware/codec integration:
+
+| Element     | Library        | Status |
+|-------------|----------------|--------|
+| V4L2 Source | `libv4l2`      | ✅ Real device + synthetic mock fallback |
+| ALSA Source | `libasound`    | ✅ Real device + synthetic mock fallback |
+| H.264 Encoder | `libx264`    | ✅ ultrafast preset, CRF rate control |
+| AAC Encoder | `libavcodec`   | ✅ FFmpeg AAC, S16→FLTP conversion |
+| MP4 Muxer   | `libavformat`  | ✅ Fragmented MP4, custom AVIO, EOS tracking |
+| File Sink   | stdio `FILE*`  | ✅ fwrite of buffer data |
+
 ### Plugin (`mm_plugin`)
 Dynamic element loading via `dlopen()`:
 
@@ -102,18 +129,18 @@ Dynamic element loading via `dlopen()`:
 ## Pipeline Data Flow
 
 ```
-┌──────────┐    ┌──────────┐    ┌──────────┐
-│ v4l2src  │───→│ h264enc  │───→│ mp4mux   │──┐
-└──────────┘    └──────────┘    └──────────┘  │
-                                              │  ┌──────────┐
-┌──────────┐    ┌──────────┐    ┌──────────┐  ├─→│ filesink  │
-│ alsasrc  │───→│ aacenc   │───→│ mp4mux   │──┘  └──────────┘
-└──────────┘    └──────────┘    └──────────┘
-     ↑               ↑                ↑
-   [queue]         [queue]          [queue]
+┌──────────┐    ┌───────────┐    ┌──────────┐    ┌───────────┐    ┌──────────┐    ┌───────────┐    ┌──────────┐
+│ v4l2src  │───→│ queue_el  │───→│ h264enc  │───→│ queue_el  │───→│ mp4mux   │───→│ queue_el  │───→│ filesink │
+└──────────┘    └───────────┘    └──────────┘    └───────────┘    └──────────┘    └───────────┘    └──────────┘
+
+┌──────────┐    ┌───────────┐    ┌──────────┐    ┌───────────┐      ┆
+│ alsasrc  │───→│ queue_el  │───→│ aacenc   │───→│ queue_el  │──────┘
+└──────────┘    └───────────┘    └──────────┘    └───────────┘
 ```
 
-Queues decouple producers from consumers, allowing each stage to run on its own thread.
+Explicit queue elements define threading boundaries. The scheduler assigns
+one thread per source element; queue elements each have their own worker
+thread for pushing downstream, decoupling producers from consumers.
 
 ## Design Principles
 
@@ -127,17 +154,7 @@ Queues decouple producers from consumers, allowing each stage to run on its own 
 
 ## Future Direction
 
-The following features are planned but not yet implemented. They will extend the architecture described above. See `wiki/future.md` and `wiki/implementation-plan.md` for full details.
-
-### Queue Element
-
-Currently queues are internal objects (`mm_queue_t`) auto-inserted by the scheduler. A **queue element** (`mm_element` subclass with one sink pad + one src pad, backed by `mm_queue_t`) will make queues first-class pipeline citizens.
-
-```
-v4l2src → queue → h264enc → queue → mp4mux → queue → filesink
-```
-
-Users place them explicitly, which means every queue boundary is an intentional thread switch. The scheduler no longer injects queues automatically.
+The following features are planned but not yet implemented. See `wiki/future.md` and `wiki/implementation-plan.md` for details.
 
 ### Event Bus
 

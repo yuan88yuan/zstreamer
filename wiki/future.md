@@ -1,18 +1,10 @@
 # Future
 
-These features are planned. See `architecture.md` (Future Direction section) for how they fit into the system architecture, and `implementation-plan.md` for the phased build order.
+These features are still planned. See `architecture.md` (Future Direction section) for how they fit into the system architecture, and `implementation-plan.md` for the phased build order.
 
----
-
-## queue element
-不是只有 queue object。
-而是：
-```queue element```
-像 GStreamer 那樣。
-
-這會完全改變 threading model。
-
-See: Phase 3 in implementation-plan.md
+**Implemented already:**
+- ✅ Queue Element — see `src/mm_queue_element.c`
+- ✅ All element implementations (V4L2, ALSA, x264, AAC, MP4 mux, file sink)
 
 ---
 

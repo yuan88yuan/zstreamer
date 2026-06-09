@@ -2,6 +2,7 @@
 #include <stdlib.h>
 
 #include "mm_element.h"
+#include "mm_buffer.h"
 
 typedef struct {
 
@@ -25,16 +26,36 @@ file_open(mm_element_t* el)
 }
 
 static mm_result_t
+file_close(mm_element_t* el)
+{
+    file_sink_t* s = el->priv;
+
+    if (s->fp) {
+        fclose(s->fp);
+        s->fp = NULL;
+    }
+
+    return MM_OK;
+}
+
+static mm_result_t
 file_process(
     mm_element_t* el,
     mm_buffer_t* in,
     mm_buffer_t** out)
 {
     file_sink_t* s = el->priv;
+    (void)out;
 
-    /*
-        write muxed data
-    */
+    if (!s->fp || !in)
+        return MM_ERROR;
+
+    if (in->memory.data && in->memory.size > 0) {
+        size_t written = fwrite(in->memory.data, 1, in->memory.size, s->fp);
+        if (written != in->memory.size) {
+            return MM_ERROR;
+        }
+    }
 
     return MM_OK;
 }
@@ -44,6 +65,8 @@ static mm_element_ops_t g_ops = {
     .name = "filesink",
 
     .open = file_open,
+    
+    .close = file_close,
 
     .process = file_process,
 };

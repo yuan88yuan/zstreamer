@@ -30,6 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libavformat-dev \
     libavcodec-dev \
     libavutil-dev \
+    libasound2-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Debugging / profiling tools ─────────────────────────────────────────

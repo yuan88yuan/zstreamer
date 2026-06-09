@@ -12,101 +12,115 @@
 
 ## Phase 1 — Core Framework  (✅ done)
 
-The fundamental types and lifecycle management. Everything after this can be tested with unit tests.
+The fundamental types and lifecycle management.
 
 | Component   | Status | Notes                                                      |
 |-------------|--------|------------------------------------------------------------|
 | mm_types    | ✅ done  | Base types, error codes, forward declarations               |
 | mm_buffer   | ✅ done  | Ref-counted buffer with typed memory; destroy callback      |
-| mm_pad      | ✅ done  | SRC/SINK pads with peer linking; caps stub                  |
+| mm_pad      | ✅ done  | SRC/SINK pads with peer linking; default push/pull callbacks|
 | mm_element  | ✅ done  | Ops vtable, state machine (NULL/READY/PAUSED/PLAYING), pads |
-| mm_pipeline | ✅ done  | Element container, state propagation                        |
-| mm_queue    | ✅ done  | Thread-safe bounded queue (mutex + condvar), timeout push/pop |
-| mm_scheduler| ✅ done  | Single-thread + multi-thread worker pool                    |
+| mm_pipeline | ✅ done  | Element container, state propagation, topological sort      |
+| mm_queue    | ✅ done  | Thread-safe bounded queue, timeout, bytes/duration limits, async mode |
+| mm_scheduler| ✅ done  | Single-thread + multi-thread worker pool, EOS propagation   |
 | mm_plugin   | ✅ done  | dlopen loader, plugin entry point                           |
-| test_core   | ✅ done  | 15 unit tests covering all core components                  |
-
-**Current build status:** `cmake .. && make && ctest` — all tests pass.
 
 ---
 
-## Phase 2 — Scheduler Integration & Pipeline Wiring (✅ done)
+## Phase 2 — Scheduler Integration & Pipeline Wiring  (✅ done)
 
-Connect the dots between the scheduler and the element graph with an internal queueing model (queues auto-inserted by the scheduler).
-
-- [x] **Pad push/pull semantics**: wire element `process()` into pad push/pull callbacks
-- [x] **Scheduler element iteration**: walk the pipeline in topological order, assign element chains to worker threads
-- [x] **Queue auto-insertion**: automatically insert queues between linked elements when multi-thread scheduler is used
+- [x] **Pad push/pull semantics**: default callbacks chain `process()` → push downstream
+- [x] **mm_pad_push() / mm_pad_pull()** — walk the pad graph
+- [x] **mm_pad_reset_callbacks()** — restore defaults after custom override
+- [x] **Topological sort**: `mm_pipeline_topological_sort()` to ensure correct element order
+- [x] **Scheduler worker loop**: round-robin element assignment across worker threads
 - [x] **State machine hardening**: validate transitions, handle error rollback
-- [x] **EOS signalling**: propagate end-of-stream through the pipeline
+- [x] **EOS signalling**: `MM_BUFFER_FLAG_EOS` propagated through pad graph
 
-**Test deliverables:**
-- [x] Simple pipeline with 2–3 mock elements feeding buffers end-to-end
-- [x] Multi-thread stress test with queue back-pressure
+**Test deliverables:** ✅ 19 unit tests
 
 ---
 
-## Phase 3 — Queue Element  (from `wiki/future.md`)
+## Phase 3 — Queue Element  (✅ done)
 
-Refactor from internal/invisible queues to **first-class queue elements** — like GStreamer's `queue` element. This changes the threading model: users explicitly insert queue elements at pipeline boundaries.
+Explicit queue elements as first-class `mm_element` subclasses — like GStreamer's `queue` element. Users insert them at pipeline boundaries to control buffering and threading.
 
 ```
 v4l2src → queue → h264enc → queue → mp4mux → queue → filesink
-          ^^^^^              ^^^^^            ^^^^^
+          ^^^^^            ^^^^^            ^^^^^
       explicit boundary  explicit boundary  explicit boundary
 ```
 
-- [ ] Implement `mm_queue_element` — a full `mm_element` with one sink pad + one src pad, backed by a `mm_queue_t` internally
-- [ ] Remove scheduler auto-queue-insertion; users own their threading boundaries
-- [ ] Queue element lifetime hooks: `open` initialises the queue, `close` flushes it, `start/stop` manage the worker thread
-- [ ] Propagate EOS through the queue element (flush on EOS)
-- [ ] Configurable via `mm_queue_config_t` (max buffers, bytes, duration)
-- [ ] **Non-blocking mode**: `MM_QUEUE_ASYNC` drops buffers instead of blocking when full
+- [x] `mm_queue_element_create()` — full `mm_element` with sink pad + src pad + worker thread
+- [x] Lifecycle hooks: `open` creates queue, `close` destroys it, `start/stop` manage thread
+- [x] EOS passthrough through the queue element
+- [x] Configurable via `mm_queue_config_t` (max buffers, bytes, duration)
+- [x] `MM_QUEUE_ASYNC` mode drops buffers when full
+- [x] `example_record.c` updated with explicit queue elements
+- [x] Multi-threaded scheduler test uses queue elements
 
-**Why this matters:** The queue element is the foundation of the threading model. Every queue boundary is a potential thread switch. Explicit queues give users control over buffering, back-pressure, and thread placement.
+**Test deliverables:** ✅ Multi-threaded pipeline test with queue elements
 
 ---
 
-## Phase 4 — Real Element Implementations
+## Phase 4 — Real Element Implementations  (✅ done)
 
-Replace stubs with working hardware/codec integration.
+All six elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.
 
-### 4a — V4L2 Source
-- [ ] Open video device (`/dev/video0`)
-- [ ] Enumerate formats and resolutions
-- [ ] `VIDIOC_STREAMON` / `VIDIOC_STREAMOFF`
-- [ ] Capture frames into mm_buffer
-- [ ] Handle non-blocking I/O (poll + epoll)
+### 4a — V4L2 Source  (✅ done)
+- [x] Open `/dev/video0` with O_RDWR | O_NONBLOCK
+- [x] Format negotiation: `VIDIOC_S_FMT` (YUYV, 640×480)
+- [x] MMAP buffer setup: `VIDIOC_REQBUFS` / `QUERYBUF` / `QBUF`
+- [x] `VIDIOC_STREAMON` / `VIDIOC_STREAMOFF`
+- [x] poll-based non-blocking capture with timeout
+- [x] YUYV → YUV420P colour space conversion
+- [x] **Synthetic fallback** when no camera: moving vertical bar pattern, 30 fps
 
-**Dependencies:** `libv4l2` (in Docker)
+**Dependencies:** `libv4l-dev` (in Docker)
 
-### 4b — H.264 Encoder
-- [ ] Integrate x264 library
-- [ ] Accept raw NV12/YUV420P frames
-- [ ] Emit H.264 annex‑B packets as mm_buffer
-- [ ] Rate control (CBR, CRF)
+### 4b — H.264 Encoder  (✅ done)
+- [x] x264 integration: `x264_param_default_preset("ultrafast", "zerolatency")`
+- [x] CRF rate control (23)
+- [x] Accept I420 YUV planes from `mm_video_frame_t` payload
+- [x] NAL unit concatenation into `mm_buffer` packets
+- [x] PTS passthrough
+- [x] EOS passthrough
+- [x] Lazy initialization on first frame (handles dynamic resolution)
 
-**Dependencies:** `libx264-dev`
+**Dependencies:** `libx264-dev` (in Docker)
 
-### 4c — MP4 Muxer
-- [ ] Use FFmpeg `libavformat` / `libavcodec`
-- [ ] Write MP4 with proper moov box (moov at end or faststart)
-- [ ] Handle video + audio interleaving
+### 4c — MP4 Muxer  (✅ done)
+- [x] FFmpeg `libavformat` integration
+- [x] Custom AVIO write callback pushes buffers downstream (not to file)
+- [x] Video stream (H.264) + audio stream (AAC)
+- [x] Fragmented MP4: `frag_keyframe+empty_moov+default_base_moof`
+- [x] Per-stream EOS tracking: muxer waits for both video + audio EOS before propagating
+- [x] Proper `av_write_trailer()` on stop
 
-**Dependencies:** `libavformat-dev`, `libavcodec-dev`, `libavutil-dev`
+**Dependencies:** `libavformat-dev`, `libavcodec-dev`, `libavutil-dev` (in Docker)
 
-### 4d — File Sink
-- [ ] Debugged — basic FILE* write already in place
-- [ ] Add fwrite of buffer data
+### 4d — File Sink  (✅ done)
+- [x] FILE* writer: `fopen`, `fwrite`, `fclose`
+- [x] Writes buffer memory data to file
+- [x] Proper `close` lifecycle hook
 
-### 4e — Audio Source (ALSA)
-- [ ] Capture from `hw:0` via `libasound`
+### 4e — ALSA Audio Source  (✅ done)
+- [x] `snd_pcm_open("default", SND_PCM_STREAM_CAPTURE)`
+- [x] Parameter setup: S16_LE, 44100Hz, stereo, 0.5s latency
+- [x] `snd_pcm_readi()` for capture
+- [x] Underrun / xrun recovery (`-EPIPE` → `snd_pcm_prepare`)
+- [x] **Synthetic fallback**: 440Hz square wave, 44100Hz timing with nanosleep
 
 **Dependencies:** `libasound2-dev`
 
-### 4f — AAC Encoder
-- [ ] Integrate FDK-AAC or FFmpeg AAC encoder
-- [ ] Accept PCM frames, emit ADTS/LATM packets
+### 4f — AAC Encoder  (✅ done)
+- [x] FFmpeg `libavcodec` AAC encoder: `avcodec_find_encoder(AV_CODEC_ID_AAC)`
+- [x] S16LE interleaved → FLTP float planar conversion
+- [x] `avcodec_send_frame()` / `avcodec_receive_packet()` API
+- [x] 128kbps bitrate
+- [x] EOS passthrough
+
+**Dependencies:** `libavcodec-dev` (in Docker)
 
 ---
 
@@ -114,113 +128,72 @@ Replace stubs with working hardware/codec integration.
 
 Arguably the most important missing piece. Without caps negotiation, the pipeline can't verify or convert between formats. Elements must advertise what they produce (src caps) and what they consume (sink caps), and adjacent pads must agree before linking.
 
-- [ ] **`mm_caps_t` structure**: a list of structures each describing:
+- [ ] `mm_caps_t` structure: a list of structures each describing:
   - `media_type` (e.g. `"video/x-raw"`, `"video/x-h264"`)
   - Video: `width`, `height`, `framerate`, `pixel_format` (NV12, YUV420P, etc.)
   - Audio: `channels`, `sample_rate`, `format` (S16LE, F32LE, etc.)
-- [ ] **Caps intersection**: `mm_caps_intersect(src_caps, sink_caps) → mm_caps_t*` — find the highest-priority overlapping format
-- [ ] **Pad caps API**: `mm_pad_set_caps()`, `mm_pad_get_caps()`, `mm_pad_negotiate()`
-- [ ] **Auto-negotiation at link time**: when `mm_pad_link()` is called, automatically negotiate compatible caps
-- [ ] **Caps-query mechanism**: element ops vtable gains `get_caps(pad, direction)` so sources can report what they produce, sinks what they accept
-- [ ] **Conversion elements**: implement format converters (e.g. NV12 ↔ YUV420P, S16LE ↔ F32LE, 48000 ↔ 44100 sample rate) as built-in helper elements or auto-inserted converters
+- [ ] Caps intersection: `mm_caps_intersect(src_caps, sink_caps) → mm_caps_t*`
+- [ ] Pad caps API: `mm_pad_set_caps()`, `mm_pad_get_caps()`, `mm_pad_negotiate()`
+- [ ] Auto-negotiation at link time
+- [ ] Caps-query mechanism in element ops vtable
+- [ ] Conversion elements (NV12 ↔ YUV420P, S16LE ↔ F32LE, 48000 ↔ 44100)
 
-**Why this matters:** Without caps, a user can link a V4L2 source producing NV12 to an encoder expecting YUV420P and get silent garbage. Caps negotiation makes the pipeline self-describing and safe.
+**Why this matters:** Without caps, linking NV12→YUV420P gives silent garbage.
 
 ---
 
 ## Phase 6 — Event Bus  (from `wiki/future.md`)
 
-An async notification system that decouples error/state/EOS signalling from the data path.
+An async notification channel (`mm_bus_t`) that decouples error/state/EOS from the data path. Events: `EOS`, `ERROR`, `STATE_CHANGED`, `WARNING`.
 
-```
-Application               Event Bus
-    │                         │
-    ├── mm_bus_attach() ──────┤
-    │                         │
-    │         ┌─ Element 1 ───┤── MM_EVENT_EOS
-    │         │               │
-    │─── Pipeline ─ Element 2 ┤── MM_EVENT_ERROR
-    │         │               │
-    │         └─ Element 3 ───┤── MM_EVENT_STATE_CHANGED
-    │                         │
-    └── mm_bus_pop() ─────────┘
-```
-
-**Event types:**
-
-| Event                   | Payload                           |
-|-------------------------|-----------------------------------|
-| `MM_EVENT_EOS`          | element name                      |
-| `MM_EVENT_ERROR`        | error code + message string       |
-| `MM_EVENT_STATE_CHANGED`| old_state, new_state, element     |
-| `MM_EVENT_WARNING`      | message string                    |
-
-- [ ] `mm_bus_t` — thread-safe event queue (can reuse `mm_queue_t` internally)
-- [ ] `mm_bus_post(bus, event)` — called by elements/pipeline
-- [ ] `mm_bus_pop(bus, timeout_ms)` — called by application (sync wait)
-- [ ] `mm_bus_set_handler(bus, callback, user_data)` — async callback dispatch
-- [ ] Wire pipeline lifecycle: post `MM_EVENT_STATE_CHANGED` on every state transition
-- [ ] Wire element `process()`: if it returns `MM_EOF`, the pipeline posts `MM_EVENT_EOS`
-- [ ] Wire error returns: `MM_ERROR` → `MM_EVENT_ERROR` on the bus
-
-**Why this matters:** Currently errors and state changes are communicated through return codes that the application must poll. The event bus lets applications listen asynchronously — critical for GUI apps, reactive systems, and clean error recovery.
+- [ ] `mm_bus_t` — thread-safe event queue
+- [ ] `mm_bus_post()` / `mm_bus_pop(timeout_ms)`
+- [ ] Async callback dispatch
+- [ ] Wire pipeline lifecycle events
+- [ ] Wire error returns → `MM_EVENT_ERROR`
 
 ---
 
 ## Phase 7 — Dynamic Plugins
 
 - [ ] Build each element as a separate `.so`
-- [ ] Plugin discovery path (`ZSTREAMER_PLUGIN_PATH` env var, `/usr/lib/zstreamer/`)
+- [ ] Plugin discovery path (`ZSTREAMER_PLUGIN_PATH` env var)
 - [ ] Ref-counted plugin registry
-- [ ] Plugin versioning and compatibility checks
 
 ---
 
 ## Phase 8 — Advanced Features
 
 ### 8a — Allocator API  (from `wiki/future.md`)
-Essential for zero-copy. Buffers must be able to come from custom memory pools (GPU, DMABUF, pre-allocated DMA buffers) instead of always malloc'd CPU memory.
-
-- [ ] `mm_allocator_t` interface:
-  - `alloc(size, alignment) → mm_memory_t`
-  - `free(mm_memory_t*)`
-  - `mm_allocator_ref()` / `mm_allocator_unref()`
-- [ ] Default CPU allocator (wraps malloc/free)
-- [ ] DMABUF allocator (linux `dma-buf`)
-- [ ] CUDA allocator (cudaMalloc / cudaFree)
-- [ ] Vulkan allocator (vkAllocateMemory)
-- [ ] Integrate with `mm_buffer_create_from_allocator()` — buffer takes ownership of allocator-allocated memory
-- [ ] **Buffer pool**: pre-allocate a pool of buffers from an allocator to avoid per-frame malloc churn
+- [ ] `mm_allocator_t` interface: `alloc`, `free`, ref-counting
+- [ ] Default CPU allocator (malloc/free)
+- [ ] DMABUF allocator (Linux dma-buf)
+- [ ] CUDA / Vulkan device memory allocators
+- [ ] Buffer pools to eliminate per-frame allocation
 
 ### 8b — Clock  (from `wiki/future.md`)
-The A/V sync core. A master clock that drives playback timing.
-
-- [ ] `mm_clock_t` interface:
-  - `mm_clock_get_time(clock) → mm_time_t` (nanosecond precision)
-  - `mm_clock_wait(clock, target_time)` — block until target
-- [ ] **Default system clock**: wraps `clock_gettime(CLOCK_MONOTONIC)`
-- [ ] **Pipeline clock**: pipeline picks a master clock; all elements synchronise to it
-- [ ] **Clock slaving**: slave clock adjusts to master (like GstClock's `MM_CLOCK_OPTION_SLAVE`)
-- [ ] **Jitter measurement**: track how far off elements are from the clock
+- [ ] `mm_clock_t` interface: `get_time`, `wait`
+- [ ] System clock wrapping `CLOCK_MONOTONIC`
+- [ ] Pipeline-level master clock selection
+- [ ] Clock slaving for A/V sync
 
 ### 8c — Other Advanced Features
-- [ ] **Element bin**: composite element that contains a sub-pipeline (for reusability)
-- [ ] **Pad blocking / probes**: intercept buffers flowing through a pad for analysis, tee, or injection (like GstPad probes)
-- [ ] **Segment seeking**: timestamp-based segment clipping
+- [ ] Element bin (composite sub-pipeline)
+- [ ] Pad blocking / probes (buffer interception)
+- [ ] Segment seeking (timestamp-based clipping)
 
 ---
 
 ## Phase 9 — Testing & CI
 
-- [ ] **Docker Compose** for multi-service testing (e.g. virtual V4L2 loopback via `v4l2loopback`)
-- [ ] **CI pipeline** (GitHub Actions): build, unit test, docker build, integration test
-- [ ] **Caps negotiation fuzzing**: test all possible format combinations
-- [ ] **Event bus stress test**: thousands of events posted from multiple threads
-- [ ] **Queue element stress test**: multiple producers/consumers, verify no deadlocks
-- [ ] **Clock precision test**: measure jitter under load
-- [ ] **Static analysis**: `cppcheck`, `clang-tidy`
-- [ ] **Valgrind**: memory leak checks in CI
-- [ ] **Fuzz testing**: `mm_queue_push/pop` with random timeouts and multi-thread interleaving
+- [ ] Docker Compose for multi-service testing (e.g. v4l2loopback)
+- [ ] CI pipeline (GitHub Actions): build, unit test, docker build, integration test
+- [ ] Caps negotiation fuzzing
+- [ ] Event bus stress test
+- [ ] Queue element stress test
+- [ ] Clock precision test
+- [ ] Static analysis: `cppcheck`, `clang-tidy`
+- [ ] Valgrind memory leak checks in CI
 
 ---
 
@@ -229,9 +202,8 @@ The A/V sync core. A master clock that drives playback timing.
 - [ ] API reference docs (Doxygen)
 - [ ] Tutorial: "Recording a webcam to MP4 in 5 steps"
 - [ ] Caps negotiation deep-dive
-- [ ] Event bus patterns: error handling, async monitoring
+- [ ] Event bus patterns
 - [ ] Allocator + zero-copy guide
 - [ ] Clock and A/V sync guide
 - [ ] Queue element threading model explainer
-- [ ] Performance tuning guide
 - [ ] Plugin authoring guide

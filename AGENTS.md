@@ -33,17 +33,18 @@ It provides a **GStreamer-like** pipeline architecture: elements connected via p
 │   ├── mm_element.c
 │   ├── mm_pipeline.c
 │   ├── mm_queue.c
+│   ├── mm_queue_element.c ← First-class queue element
 │   ├── mm_scheduler.c
 │   ├── mm_plugin.c
-│   ├── v4l2_source.c  ← V4L2 camera capture (stub)
-│   ├── h264_encoder.c ← x264 H.264 encoder (stub)
-│   ├── mp4_muxer.c    ← FFmpeg/libavformat MP4 muxer (stub)
-│   ├── file_sink.c    ← FILE* writer (stub, open implemented)
-│   ├── alsa_source.c  ← ALSA audio capture (stub)
-│   └── aac_encoder.c  ← AAC audio encoder (stub)
+│   ├── v4l2_source.c  ← V4L2 camera capture (real V4L2 + mock fallback)
+│   ├── h264_encoder.c ← x264 H.264 encoder (real x264)
+│   ├── mp4_muxer.c    ← FFmpeg/libavformat MP4 muxer (real libavformat)
+│   ├── file_sink.c    ← FILE* writer
+│   ├── alsa_source.c  ← ALSA audio capture (real ALSA + mock fallback)
+│   └── aac_encoder.c  ← FFmpeg AAC audio encoder (real libavcodec)
 ├── tests/
-│   ├── test_core.c    ← 15 unit tests: buffer, pad, element, pipeline, queue
-│   └── example_record.c ← Full pipeline demo (links all elements)
+│   ├── test_core.c    ← 19 unit tests: all core + scheduler + queue elements
+│   └── example_record.c ← Full pipeline demo with queue elements
 └── wiki/
     ├── architecture.md        ← Detailed design doc
     ├── implementation-plan.md ← Step-by-step roadmap (10 phases)
@@ -111,9 +112,10 @@ The Dockerfile has two build targets:
 | **mm_element** | Processing node with src/sink pads + ops vtable       |
 | **mm_pad**     | Connection point; linked peer-to-peer between elements|
 | **mm_buffer**  | Ref-counted data carrier with typed memory + timestamps|
-| **mm_queue**   | Thread-safe bounded queue (mutex + condvar)           |
-| **mm_scheduler**| Drives pipeline: single-thread inline or multi-thread pool |
-| **mm_plugin**  | `dlopen()`-based dynamic element loading              |
+| **mm_queue**      | Thread-safe bounded queue (mutex + condvar)           |
+| **mm_queue_element** | Queue as a first-class element with worker thread   |
+| **mm_scheduler**    | Drives pipeline: single-thread inline or multi-thread pool |
+| **mm_plugin**   | `dlopen()`-based dynamic element loading              |
 
 ### State Machine
 
@@ -129,15 +131,20 @@ MM_STATE_NULL  ──open──→  MM_STATE_READY  ──start──→  MM_STA
 
 ## Current Status
 
-| Phase               | Status                           |
-|----------------------|----------------------------------|
-| Scaffolding          | ✅ CMake, Docker, git, AGENTS.md |
-| Core Framework       | ✅ All 8 core modules implemented|
-| Unit Tests           | ✅ 18 tests, all passing         |
-| Scheduler Integration| ✅ Topological sort, wiring, auto-queues, EOS |
-| Element Stubs        | 📝 Implementations needed for v4l2, x264, mp4, file |
-| Caps Negotiation     | 📝 Future                        |
-| Dynamic Plugins      | 📝 Future                        |
+| Phase                       | Status                           |
+|-----------------------------|----------------------------------|
+| Scaffolding                 | ✅ CMake, Docker, git, AGENTS.md |
+| Core Framework              | ✅ All 8 core modules implemented|
+| Scheduler Integration       | ✅ Topological sort, push/pull, EOS, state hardening |
+| Queue Element               | ✅ First-class queue with worker thread |
+| Real Element Implementations| ✅ All 6 elements: V4L2, x264, MP4(mux), file, ALSA, AAC |
+| Unit Tests                  | ✅ 19 tests, all passing         |
+| Caps Negotiation            | 📝 Future                        |
+| Event Bus                   | 📝 Future                        |
+| Dynamic Plugins             | 📝 Future                        |
+| Allocator API               | 📝 Future                        |
+| Clock / A/V Sync            | 📝 Future                        |
+| CI Pipeline                 | 📝 Future                        |
 
 ---
 
@@ -158,3 +165,6 @@ When working on this project, the most important files to read first:
 3. `wiki/architecture.md` — Full architectural understanding
 4. `wiki/implementation-plan.md` — What's done and what's next
 5. `CMakeLists.txt` — Build targets and dependencies
+6. `src/mm_queue_element.c` — Queue element implementation
+7. `src/v4l2_source.c` — Real V4L2 capture (reference for HW element pattern)
+8. `src/h264_encoder.c` — Real x264 integration (reference for encoder pattern)
