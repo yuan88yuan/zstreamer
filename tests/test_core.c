@@ -16,6 +16,7 @@
 #include "zst_pad.h"
 #include "zst_element.h"
 #include "zst_pipeline.h"
+#include "zst_buffer_pool.h"
 #include "zst_queue.h"
 #include "zst_scheduler.h"
 #include "zst_bus.h"
@@ -1482,6 +1483,57 @@ test_allocator_basic(void)
     PASS();
 }
 
+
+static void
+test_allocator_pool_nonblock(void)
+{
+    TEST("allocator pool nonblock acquire");
+
+    zst_allocator_t* alloc = zst_allocator_cpu_create();
+
+    zst_buffer_pool_config_t config = {0};
+    config.min_buffers = 2;
+    config.max_buffers = 2;
+    config.buffer_size = 1024;
+    config.buffer_type = ZST_BUFFER_USER;
+
+    zst_buffer_pool_t* pool = zst_buffer_pool_create(alloc, &config);
+    assert(pool != NULL);
+
+    zst_buffer_t* buf1 = NULL;
+    zst_buffer_t* buf2 = NULL;
+    zst_buffer_t* buf3 = NULL;
+
+    /* Acquire first buffer */
+    assert(zst_buffer_pool_acquire(pool, &buf1, 0, 0) == ZST_OK);
+    assert(buf1 != NULL);
+
+    /* Acquire second buffer */
+    assert(zst_buffer_pool_acquire(pool, &buf2, 0, 0) == ZST_OK);
+    assert(buf2 != NULL);
+
+    /* Pool is now exhausted. Blocking acquire should time out */
+    assert(zst_buffer_pool_acquire(pool, &buf3, 50, 0) == ZST_TIMEOUT);
+
+    /* Non-blocking acquire should time out immediately */
+    assert(zst_buffer_pool_acquire(pool, &buf3, -1, ZST_POOL_ACQUIRE_NONBLOCK) == ZST_TIMEOUT);
+
+    /* Release buffer 1 */
+    zst_buffer_unref(buf1);
+
+    /* Non-blocking acquire should now succeed */
+    assert(zst_buffer_pool_acquire(pool, &buf3, -1, ZST_POOL_ACQUIRE_NONBLOCK) == ZST_OK);
+    assert(buf3 != NULL);
+
+    zst_buffer_unref(buf2);
+    zst_buffer_unref(buf3);
+
+    zst_buffer_pool_destroy(pool);
+    zst_allocator_unref(alloc);
+
+    PASS();
+}
+
 static void
 test_clock_basic(void)
 {
@@ -1710,6 +1762,7 @@ int main(void)
     /* ── Allocator (Phase 8a) ── */
     printf("[allocator]\n");
     test_allocator_basic();
+    test_allocator_pool_nonblock();
 
     /* ── Clock (Phase 8b) ── */
     printf("[clock]\n");

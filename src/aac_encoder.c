@@ -157,7 +157,7 @@ aac_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     int ret = avcodec_receive_packet(s->codec_ctx, av_pkt);
     if (ret == 0) {
         zst_buffer_t* pkt = NULL;
-        if (zst_buffer_pool_acquire(s->pool, &pkt, 0) != ZST_OK) {
+        if (zst_buffer_pool_acquire(s->pool, &pkt, 0, 0) != ZST_OK) {
             av_packet_free(&av_pkt);
             return ZST_ERROR;
         }

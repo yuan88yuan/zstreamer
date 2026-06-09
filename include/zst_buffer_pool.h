@@ -32,6 +32,8 @@ typedef struct {
     void*    watermark_user_data;
 } zst_buffer_pool_config_t;
 
+#define ZST_POOL_ACQUIRE_NONBLOCK (1 << 0)
+
 zst_buffer_pool_t* zst_buffer_pool_create(
     zst_allocator_t* allocator,
     zst_buffer_pool_config_t* config);
@@ -39,7 +41,8 @@ zst_buffer_pool_t* zst_buffer_pool_create(
 zst_result_t zst_buffer_pool_acquire(
     zst_buffer_pool_t* pool,
     zst_buffer_t** out_buf,
-    int timeout_ms);
+    int timeout_ms,
+    uint32_t flags);
 
 void zst_buffer_pool_release(
     zst_buffer_pool_t* pool,

@@ -151,7 +151,7 @@ h264_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
 
     if (frame_size > 0 && nals) {
         zst_buffer_t* pkt = NULL;
-        if (zst_buffer_pool_acquire(s->pool, &pkt, 0) != ZST_OK) {
+        if (zst_buffer_pool_acquire(s->pool, &pkt, 0, 0) != ZST_OK) {
             return ZST_ERROR;
         }
 
