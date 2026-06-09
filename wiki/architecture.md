@@ -110,14 +110,16 @@ In multi-thread mode each worker pops from its input queue, calls `process()`, a
 
 All six pipeline elements are fully implemented with real hardware/codec integration:
 
-| Element     | Library        | Status |
-|-------------|----------------|--------|
-| V4L2 Source | `libv4l2`      | ✅ Real device + synthetic mock fallback |
-| ALSA Source | `libasound`    | ✅ Real device + synthetic mock fallback |
-| H.264 Encoder | `libx264`    | ✅ ultrafast preset, CRF rate control |
-| AAC Encoder | `libavcodec`   | ✅ FFmpeg AAC, S16→FLTP conversion |
-| MP4 Muxer   | `libavformat`  | ✅ Fragmented MP4, custom AVIO, EOS tracking |
-| File Sink   | stdio `FILE*`  | ✅ fwrite of buffer data |
+| Element         | Library            | Status |
+|-----------------|--------------------|--------|
+| V4L2 Source     | `libv4l2`          | ✅ Real device + synthetic mock fallback |
+| ALSA Source     | `libasound`        | ✅ Real device + synthetic mock fallback |
+| H.264 Encoder   | `libx264`          | ✅ ultrafast preset, CRF rate control |
+| AAC Encoder     | `libavcodec`       | ✅ FFmpeg AAC, S16→FLTP conversion |
+| MP4 Muxer       | `libavformat`      | ✅ Fragmented MP4, custom AVIO, EOS tracking |
+| File Sink       | stdio `FILE*`      | ✅ fwrite of buffer data |
+| Video Scaler    | `libswscale`       | 📝 Planned — scaling + pixel format conversion |
+| Audio Resampler | `libswresample`    | 📝 Planned — sample rate + format conversion |
 
 ### Plugin (`mm_plugin`)
 Dynamic element loading via `dlopen()`:
@@ -166,7 +168,8 @@ Currently pads have a placeholder `mm_caps_t` with only `media_type`. The full s
 - Rich caps with dimensions, format, framerate, channels, sample rate
 - `mm_caps_intersect()` to find compatible formats
 - Auto-negotiation at link time
-- Auto-inserted converter elements when formats don't match
+- Video scaler (`libswscale`) and audio resampler (`libswresample`) auto-inserted
+  when formats don't match — see Phase 4g/4h in `implementation-plan.md`
 
 ### Allocator API
 

@@ -30,6 +30,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libavformat-dev \
     libavcodec-dev \
     libavutil-dev \
+    libswscale-dev \
+    libswresample-dev \
     libasound2-dev \
     && rm -rf /var/lib/apt/lists/*
 

@@ -63,9 +63,10 @@ v4l2src → queue → h264enc → queue → mp4mux → queue → filesink
 
 ---
 
-## Phase 4 — Real Element Implementations  (✅ done)
+## Phase 4 — Real Element Implementations  (✅ 6 done, 📝 2 planned)
 
-All six elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.
+Six elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.
+Two more are planned to handle format conversion (scaling, resampling) — essential once caps negotiation (Phase 5) requires automatic conversion between mismatched formats.
 
 ### 4a — V4L2 Source  (✅ done)
 - [x] Open `/dev/video0` with O_RDWR | O_NONBLOCK
@@ -122,6 +123,36 @@ All six elements are fully implemented with real hardware/codec integration and 
 
 **Dependencies:** `libavcodec-dev` (in Docker)
 
+### 4g — Video Scaler  (📝 planned)
+
+A conversion element that scales video frames and converts pixel formats. Deployed
+when a source's output caps (e.g. 1080p NV12) don't match the next element's input
+caps (e.g. 720p I420).
+
+- [ ] **Interface**: single sink pad, single src pad — accepts raw video, outputs raw video
+- [ ] **Backend**: `libswscale` from FFmpeg (`sws_getContext` / `sws_scale`)
+- [ ] **Auto-configuration**: on first frame, allocate the SWS context based on input resolution/format and configured output resolution/format
+- [ ] Configurable target: `width`, `height`, `pixel_format` — or passthrough if formats match
+- [ ] **Synthetic fallback**: naive nearest-neighbour scaling if `libswscale` unavailable
+- [ ] EOS passthrough
+
+**Dependencies:** `libswscale-dev` (in Docker)
+
+### 4h — Audio Resampler  (📝 planned)
+
+Converts audio sample rate and format. Needed when source sample rate (e.g. ALSA
+at 48000Hz) differs from what the encoder expects (e.g. AAC at 44100Hz), or when
+format mismatches (S16LE ↔ F32LE).
+
+- [ ] **Interface**: single sink pad, single src pad — accepts raw audio, outputs raw audio
+- [ ] **Backend**: `libswresample` from FFmpeg (`swr_alloc_set_opts` / `swr_convert`)
+- [ ] **Auto-configuration**: on first frame, allocate SWR context from input/output params
+- [ ] Configurable: `sample_rate`, `sample_format`, `channels` — passthrough if matching
+- [ ] **Synthetic fallback**: linear interpolation resampling if `libswresample` unavailable
+- [ ] EOS passthrough
+
+**Dependencies:** `libswresample-dev` (in Docker)
+
 ---
 
 ## Phase 5 — Caps Negotiation  (from `wiki/future.md`)
@@ -136,7 +167,9 @@ Arguably the most important missing piece. Without caps negotiation, the pipelin
 - [ ] Pad caps API: `mm_pad_set_caps()`, `mm_pad_get_caps()`, `mm_pad_negotiate()`
 - [ ] Auto-negotiation at link time
 - [ ] Caps-query mechanism in element ops vtable
-- [ ] Conversion elements (NV12 ↔ YUV420P, S16LE ↔ F32LE, 48000 ↔ 44100)
+
+**Conversion elements** (4g video-scaler, 4h audio-resampler) will be auto-inserted by the
+negotiation process when formats don't match.
 
 **Why this matters:** Without caps, linking NV12→YUV420P gives silent garbage.
 

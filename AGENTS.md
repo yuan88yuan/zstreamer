@@ -116,6 +116,8 @@ The Dockerfile has two build targets:
 | **mm_queue_element** | Queue as a first-class element with worker thread   |
 | **mm_scheduler**    | Drives pipeline: single-thread inline or multi-thread pool |
 | **mm_plugin**   | `dlopen()`-based dynamic element loading              |
+| **video_scaler** (planned) | Pixel format + resolution conversion via `libswscale`  |
+| **audio_resampler** (planned) | Sample rate + format conversion via `libswresample` |
 
 ### State Machine
 
