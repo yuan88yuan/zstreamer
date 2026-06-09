@@ -1,0 +1,6 @@
+build/
+.git/
+.pi/
+*.swp
+*.swo
+.DS_Store

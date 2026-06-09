@@ -38,6 +38,10 @@ typedef mm_plugin_t* (*mm_get_plugin_fn)(void);
 #define MM_PLUGIN_EXPORT \
     __attribute__((visibility("default")))
 
+mm_plugin_t* mm_plugin_load(const char* path);
+
+void mm_plugin_unload(mm_plugin_t* plugin);
+
 MM_PLUGIN_EXPORT
 mm_plugin_t* mm_get_plugin(void);
 
