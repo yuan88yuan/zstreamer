@@ -59,6 +59,19 @@ zst_buffer_create_with_allocator(uint32_t type, zst_allocator_t* allocator, size
 }
 
 zst_buffer_t*
+zst_buffer_create_with_pool(zst_buffer_pool_t* pool)
+{
+    if (!pool) return NULL;
+
+    zst_buffer_t* buf = NULL;
+    if (zst_buffer_pool_acquire(pool, &buf, 0) != ZST_OK) {
+        return NULL;
+    }
+
+    return buf;
+}
+
+zst_buffer_t*
 zst_buffer_create(uint32_t type)
 {
     zst_buffer_t* buf = calloc(1, sizeof(*buf));
