@@ -10,6 +10,7 @@
 
 #include "zst_element.h"
 #include "zst_buffer.h"
+#include "zst_buffer_pool.h"
 
 typedef struct {
     x264_t*         x264;
@@ -19,6 +20,7 @@ typedef struct {
     uint32_t        width;
     uint32_t        height;
     int             initialized;
+    zst_buffer_pool_t* pool;
 } h264_encoder_t;
 
 static zst_result_t
@@ -27,6 +29,7 @@ h264_open(zst_element_t* el)
     h264_encoder_t* s = el->priv;
     s->initialized = 0;
     s->x264 = NULL;
+    s->pool = NULL;
     return ZST_OK;
 }
 
@@ -34,6 +37,10 @@ static zst_result_t
 h264_close(zst_element_t* el)
 {
     h264_encoder_t* s = el->priv;
+    if (s->pool) {
+        zst_buffer_pool_destroy(s->pool);
+        s->pool = NULL;
+    }
     if (s->x264) {
         x264_encoder_close(s->x264);
         x264_picture_clean(&s->pic_in);
@@ -81,17 +88,22 @@ h264_init_encoder(h264_encoder_t* s, uint32_t width, uint32_t height)
         return ZST_ERROR;
     }
 
+    zst_buffer_pool_config_t pool_cfg = {
+        .min_buffers = 2,
+        .max_buffers = 8,
+        .buffer_size = width * height * 3 / 2, // Safe upper bound for packet
+        .buffer_type = ZST_BUFFER_VIDEO_PACKET
+    };
+    s->pool = zst_buffer_pool_create(NULL, &pool_cfg);
+    if (!s->pool) {
+        x264_picture_clean(&s->pic_in);
+        x264_encoder_close(s->x264);
+        s->x264 = NULL;
+        return ZST_ERROR;
+    }
+
     s->initialized = 1;
     return ZST_OK;
-}
-
-static void
-h264_buf_free(zst_buffer_t* buf)
-{
-    if (buf && buf->memory.data) {
-        free(buf->memory.data);
-        buf->memory.data = NULL;
-    }
 }
 
 static zst_result_t
@@ -138,14 +150,12 @@ h264_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     }
 
     if (frame_size > 0 && nals) {
-        zst_buffer_t* pkt = zst_buffer_create(ZST_BUFFER_VIDEO_PACKET);
-        if (!pkt) return ZST_ERROR;
-
-        uint8_t* enc_data = malloc(frame_size);
-        if (!enc_data) {
-            zst_buffer_unref(pkt);
+        zst_buffer_t* pkt = NULL;
+        if (zst_buffer_pool_acquire(s->pool, &pkt, 0) != ZST_OK) {
             return ZST_ERROR;
         }
+
+        uint8_t* enc_data = pkt->memory.data;
 
         /* Concatenate all NAL units */
         uint8_t* ptr = enc_data;
@@ -154,12 +164,9 @@ h264_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
             ptr += nals[i].i_payload;
         }
 
-        pkt->memory.type = ZST_MEMORY_CPU;
-        pkt->memory.data = enc_data;
         pkt->memory.size = frame_size;
         pkt->pts = s->pic_out.i_pts;
         pkt->dts = s->pic_out.i_dts;
-        pkt->destroy = h264_buf_free;
 
         *out = pkt;
     } else {

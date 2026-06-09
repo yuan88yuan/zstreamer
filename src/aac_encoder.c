@@ -10,21 +10,14 @@
 
 #include "zst_element.h"
 #include "zst_buffer.h"
+#include "zst_buffer_pool.h"
 
 typedef struct {
     AVCodecContext* codec_ctx;
     AVFrame*        frame;
     int             initialized;
+    zst_buffer_pool_t* pool;
 } aac_encoder_t;
-
-static void
-aac_buf_free(zst_buffer_t* buf)
-{
-    if (buf && buf->memory.data) {
-        free(buf->memory.data);
-        buf->memory.data = NULL;
-    }
-}
 
 static zst_result_t
 aac_open(zst_element_t* el)
@@ -33,6 +26,7 @@ aac_open(zst_element_t* el)
     s->codec_ctx = NULL;
     s->frame = NULL;
     s->initialized = 0;
+    s->pool = NULL;
     return ZST_OK;
 }
 
@@ -40,6 +34,10 @@ static zst_result_t
 aac_close(zst_element_t* el)
 {
     aac_encoder_t* s = el->priv;
+    if (s->pool) {
+        zst_buffer_pool_destroy(s->pool);
+        s->pool = NULL;
+    }
     if (s->codec_ctx) {
         avcodec_free_context(&s->codec_ctx);
         s->codec_ctx = NULL;
@@ -95,6 +93,21 @@ aac_init_encoder(aac_encoder_t* s)
         return ZST_ERROR;
     }
 
+    zst_buffer_pool_config_t pool_cfg = {
+        .min_buffers = 2,
+        .max_buffers = 8,
+        .buffer_size = 16384, // Safe upper bound for AAC packet (typical < 8192)
+        .buffer_type = ZST_BUFFER_AUDIO_PACKET
+    };
+    s->pool = zst_buffer_pool_create(NULL, &pool_cfg);
+    if (!s->pool) {
+        av_frame_free(&s->frame);
+        s->frame = NULL;
+        avcodec_free_context(&s->codec_ctx);
+        s->codec_ctx = NULL;
+        return ZST_ERROR;
+    }
+
     s->initialized = 1;
     return ZST_OK;
 }
@@ -143,26 +156,18 @@ aac_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
 
     int ret = avcodec_receive_packet(s->codec_ctx, av_pkt);
     if (ret == 0) {
-        zst_buffer_t* pkt = zst_buffer_create(ZST_BUFFER_AUDIO_PACKET);
-        if (!pkt) {
+        zst_buffer_t* pkt = NULL;
+        if (zst_buffer_pool_acquire(s->pool, &pkt, 0) != ZST_OK) {
             av_packet_free(&av_pkt);
             return ZST_ERROR;
         }
 
-        uint8_t* data = malloc(av_pkt->size);
-        if (!data) {
-            zst_buffer_unref(pkt);
-            av_packet_free(&av_pkt);
-            return ZST_ERROR;
-        }
+        uint8_t* data = pkt->memory.data;
         memcpy(data, av_pkt->data, av_pkt->size);
 
-        pkt->memory.type = ZST_MEMORY_CPU;
-        pkt->memory.data = data;
         pkt->memory.size = av_pkt->size;
         pkt->pts = av_pkt->pts;
         pkt->dts = av_pkt->dts;
-        pkt->destroy = aac_buf_free;
 
         *out = pkt;
     } else if (ret == AVERROR(EAGAIN)) {

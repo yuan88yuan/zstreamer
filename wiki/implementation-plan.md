@@ -265,7 +265,7 @@ An async notification channel (`zst_bus_t`) that decouples error/state/EOS from 
   - [x] `alsa_source`: same pattern for audio frames
   - [x] `video_scaler`: pool for output buffers
   - [x] `audio_resampler`: pool for output buffers
-  - [ ] `h264_encoder` / `aac_encoder`: packet pool for encoded output
+  - [x] `h264_encoder` / `aac_encoder`: packet pool for encoded output
   - [ ] `queue_element`: optionally attach pool to queue — return consumed buffers
         to the upstream pool automatically
 
