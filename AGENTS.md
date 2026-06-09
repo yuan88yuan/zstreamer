@@ -80,7 +80,7 @@ docker run --rm -it \
     zstreamer bash
 # then: cd /workspace/build && cmake .. && make -j && ctest -V
 
-# Docker — rebuild after source changes
+# Docker — rebuild after source changes (cache-friendly)
 docker build -t zstreamer . && docker run --rm zstreamer
 ```
 

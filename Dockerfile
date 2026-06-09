@@ -1,12 +1,15 @@
 #===============================================================================
 #  zstreamer — Docker development environment
 #
-#  Build:  docker build -t zstreamer .
-#  Run:    docker run --rm -it zstreamer
-#  Test:   docker run --rm zstreamer ctest --test-dir build
+#  Build:    docker build -t zstreamer .
+#  Run:      docker run --rm zstreamer              # runs ctest (ci target)
+#  Run dev:  docker run --rm -it zstreamer bash     # interactive shell
 #
 #  For device access (V4L2 cameras) add:
 #    --device /dev/video0
+#
+#  Build for a specific stage:
+#    docker build --target dev -t zstreamer-dev .
 #===============================================================================
 
 FROM ubuntu:24.04 AS base
@@ -21,9 +24,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Multimedia libraries (for element plugins) ──────────────────────────
-# libv4l2       — V4L2 source element
-# libx264-dev   — H.264 software encoder
-# libavformat / libavcodec — MP4 muxer (optional FFmpeg backend)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libv4l-dev \
     libx264-dev \
@@ -47,12 +47,12 @@ RUN mkdir -p build && cd build && \
     cmake .. -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON && \
     make -j$(nproc)
 
-# ── Default entry: build & test ─────────────────────────────────────────
-FROM base AS ci
-WORKDIR /workspace/build
-CMD ["ctest", "--output-on-failure"]
-
-# ── Interactive development ─────────────────────────────────────────────
+# ── Interactive development (inherits all of base) ──────────────────────
 FROM base AS dev
 WORKDIR /workspace
 CMD ["/bin/bash"]
+
+# ── CI / one-shot test (default target — last in Dockerfile) ────────────
+FROM base AS ci
+WORKDIR /workspace/build
+CMD ["ctest", "--output-on-failure"]
