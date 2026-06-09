@@ -7,6 +7,8 @@
 #include "zst_pad.h"
 #include "zst_buffer.h"
 #include "zst_clock.h"
+#include <string.h>
+#include "zst_buffer_pool.h"
 #include <stdlib.h>
 #include <pthread.h>
 
@@ -17,6 +19,7 @@ typedef struct {
     volatile int      running;
     zst_pad_t*         sinkpad;
     zst_pad_t*         srcpad;
+    zst_buffer_pool_t* pool;
 } queue_el_priv_t;
 
 static void*
@@ -50,6 +53,7 @@ queue_el_worker(void* arg)
     return NULL;
 }
 
+
 static zst_result_t
 queue_el_sink_push(zst_pad_t* pad, zst_buffer_t* buf)
 {
@@ -57,6 +61,40 @@ queue_el_sink_push(zst_pad_t* pad, zst_buffer_t* buf)
     queue_el_priv_t* priv = el->priv;
 
     if (!priv->queue) return ZST_ERROR;
+
+    /* Optionally attach pool: if a pool is configured and it's not an EOS buffer,
+       we acquire a buffer from the pool, copy the incoming buffer's data,
+       and push the pooled buffer instead. */
+    if (priv->pool && !(buf->flags & ZST_BUFFER_FLAG_EOS)) {
+        zst_buffer_t* pool_buf = NULL;
+        /* Block until a buffer is available */
+        if (zst_buffer_pool_acquire(priv->pool, &pool_buf, -1, 0) == ZST_OK) {
+            /* Copy metadata */
+            pool_buf->pts = buf->pts;
+            pool_buf->dts = buf->dts;
+            pool_buf->duration = buf->duration;
+            pool_buf->flags = buf->flags;
+            pool_buf->type = buf->type;
+            pool_buf->payload = buf->payload;
+            pool_buf->metadata = buf->metadata;
+
+            /* Copy payload memory if fits */
+            if (buf->memory.size > 0) {
+                if (pool_buf->memory.size < buf->memory.size) {
+                    /* Buffer too small, error out */
+                    zst_buffer_unref(pool_buf);
+                    return ZST_ERROR;
+                }
+                memcpy(pool_buf->memory.data, buf->memory.data, buf->memory.size);
+            }
+
+            zst_result_t ret = zst_queue_push(priv->queue, pool_buf, UINT32_MAX);
+
+            /* push adds a reference, so we unref our local reference to return it to the queue's ownership */
+            zst_buffer_unref(pool_buf);
+            return ret;
+        }
+    }
 
     /* Push the buffer into the queue (blocking or dropping based on config) */
     return zst_queue_push(priv->queue, buf, UINT32_MAX);
@@ -155,4 +193,13 @@ zst_queue_element_create(const zst_queue_config_t* cfg)
     priv->sinkpad->push = queue_el_sink_push;
 
     return el;
+}
+
+zst_result_t
+zst_queue_element_set_pool(zst_element_t* el, zst_buffer_pool_t* pool)
+{
+    if (!el || !el->ops) return ZST_ERROR;
+    queue_el_priv_t* priv = el->priv;
+    priv->pool = pool;
+    return ZST_OK;
 }
