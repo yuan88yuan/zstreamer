@@ -20,6 +20,8 @@
 #include "zst_bus.h"
 #include "zst_plugin.h"
 #include "zst_log.h"
+#include "zst_allocator.h"
+#include "zst_clock.h"
 
 zst_element_t* zst_video_scaler_create(int target_width, int target_height, const char* target_pixel_format);
 zst_element_t* zst_audio_resampler_create(int target_sample_rate, int target_channels, const char* target_format);
@@ -1401,6 +1403,72 @@ test_log_custom_handler(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   Allocator & Clock tests (Phase 8a/8b)
+   ═══════════════════════════════════════════════════════════════ */
+static void
+test_allocator_basic(void)
+{
+    TEST("allocator create / alloc / free / destroy");
+
+    zst_allocator_t* alloc = zst_allocator_cpu_create();
+    assert(alloc != NULL);
+
+    void* ptr = zst_allocator_alloc(alloc, 1024);
+    assert(ptr != NULL);
+
+    zst_allocator_free(alloc, ptr);
+
+    zst_buffer_t* buf = zst_buffer_create_with_allocator(ZST_BUFFER_USER, alloc, 512);
+    assert(buf != NULL);
+    assert(buf->memory.data != NULL);
+    assert(buf->memory.size == 512);
+
+    /* Buffer creation should have bumped the allocator's refcount */
+    assert(alloc->refcount == 2);
+
+    zst_buffer_unref(buf);
+
+    /* Allocator refcount should be back to 1 */
+    assert(alloc->refcount == 1);
+
+    zst_allocator_unref(alloc);
+
+    PASS();
+}
+
+static void
+test_clock_basic(void)
+{
+    TEST("clock create / time / wait / destroy");
+
+    zst_clock_t* clk = zst_clock_system_create();
+    assert(clk != NULL);
+
+    zst_time_t t1 = zst_clock_get_time(clk);
+    assert(t1 > 0);
+
+    /* Wait for 50 ms (50000000 ns) */
+    zst_clock_wait(clk, 50000000);
+
+    zst_time_t t2 = zst_clock_get_time(clk);
+    assert(t2 > t1);
+    /* Should have elapsed at least ~50ms */
+    assert(t2 - t1 >= 40000000);
+
+    zst_pipeline_t* pipe = zst_pipeline_create();
+    zst_pipeline_set_clock(pipe, clk);
+    assert(zst_pipeline_get_clock(pipe) == clk);
+    assert(clk->refcount == 2);
+
+    zst_pipeline_destroy(pipe);
+    assert(clk->refcount == 1);
+
+    zst_clock_unref(clk);
+
+    PASS();
+}
+
+/* ═══════════════════════════════════════════════════════════════
    Main
    ═══════════════════════════════════════════════════════════════ */
 int main(void)
@@ -1476,6 +1544,14 @@ int main(void)
     printf("[conversion elements]\n");
     test_video_scaler();
     test_audio_resampler();
+
+    /* ── Allocator (Phase 8a) ── */
+    printf("[allocator]\n");
+    test_allocator_basic();
+
+    /* ── Clock (Phase 8b) ── */
+    printf("[clock]\n");
+    test_clock_basic();
 
     /* ── Summary ── */
     printf("\n──────────────────────────────────────────────────\n");

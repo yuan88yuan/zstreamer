@@ -21,6 +21,7 @@ struct zst_pipeline {
     void* priv;
 
     zst_bus_t* bus;
+    zst_clock_t* clock;
 };
 
 zst_pipeline_t* zst_pipeline_create(void);
@@ -29,6 +30,13 @@ void zst_pipeline_destroy(
     zst_pipeline_t* pipe);
 
 zst_bus_t* zst_pipeline_get_bus(
+    zst_pipeline_t* pipe);
+
+void zst_pipeline_set_clock(
+    zst_pipeline_t* pipe,
+    zst_clock_t* clock);
+
+zst_clock_t* zst_pipeline_get_clock(
     zst_pipeline_t* pipe);
 
 zst_result_t zst_pipeline_add(

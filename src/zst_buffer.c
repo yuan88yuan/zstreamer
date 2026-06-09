@@ -3,8 +3,59 @@
 =============================================================================*/
 
 #include "zst_buffer.h"
+#include "zst_allocator.h"
 #include <stdlib.h>
 #include <string.h>
+
+typedef struct {
+    zst_allocator_t* allocator;
+    void* ptr;
+} zst_buffer_alloc_ctx_t;
+
+static void
+zst_buffer_alloc_release(void* priv)
+{
+    zst_buffer_alloc_ctx_t* ctx = (zst_buffer_alloc_ctx_t*)priv;
+    if (ctx) {
+        if (ctx->allocator && ctx->ptr) {
+            zst_allocator_free(ctx->allocator, ctx->ptr);
+            zst_allocator_unref(ctx->allocator);
+        }
+        free(ctx);
+    }
+}
+
+zst_buffer_t*
+zst_buffer_create_with_allocator(uint32_t type, zst_allocator_t* allocator, size_t size)
+{
+    if (!allocator) return NULL;
+
+    zst_buffer_t* buf = zst_buffer_create(type);
+    if (!buf) return NULL;
+
+    void* ptr = zst_allocator_alloc(allocator, size);
+    if (!ptr) {
+        zst_buffer_unref(buf);
+        return NULL;
+    }
+
+    zst_buffer_alloc_ctx_t* ctx = calloc(1, sizeof(*ctx));
+    if (!ctx) {
+        zst_allocator_free(allocator, ptr);
+        zst_buffer_unref(buf);
+        return NULL;
+    }
+
+    ctx->allocator = zst_allocator_ref(allocator);
+    ctx->ptr = ptr;
+
+    buf->memory.data = ptr;
+    buf->memory.size = size;
+    buf->memory.priv = ctx;
+    buf->memory.release = zst_buffer_alloc_release;
+
+    return buf;
+}
 
 zst_buffer_t*
 zst_buffer_create(uint32_t type)
