@@ -17,6 +17,7 @@
 #include "zst_element.h"
 #include "zst_log.h"
 #include "zst_buffer.h"
+#include "zst_buffer_pool.h"
 #include "zst_clock.h"
 
 static void v4l2_buf_free(zst_buffer_t* buf);
@@ -33,6 +34,8 @@ typedef struct {
         size_t length;
     } *buffers;
     uint32_t nb_buffers;
+
+    zst_buffer_pool_t* pool;
 } v4l2_source_t;
 
 static void
@@ -63,6 +66,14 @@ v4l2_open(zst_element_t* el)
     s->width = 640;
     s->height = 480;
     s->frame_count = 0;
+
+    zst_buffer_pool_config_t pool_cfg = {
+        .min_buffers = 4,
+        .max_buffers = 8,
+        .buffer_size = s->width * s->height * 3 / 2, // YUV420P
+        .buffer_type = ZST_BUFFER_VIDEO_FRAME
+    };
+    s->pool = zst_buffer_pool_create(NULL, &pool_cfg);
 
     s->fd = open("/dev/video0", O_RDWR | O_NONBLOCK);
     if (s->fd < 0) {
@@ -165,6 +176,12 @@ v4l2_close(zst_element_t* el)
         close(s->fd);
         s->fd = -1;
     }
+
+    if (s->pool) {
+        zst_buffer_pool_destroy(s->pool);
+        s->pool = NULL;
+    }
+
     return ZST_OK;
 }
 
@@ -198,26 +215,26 @@ v4l2_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
 {
     (void)in;
     v4l2_source_t* s = el->priv;
-    zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
-    if (!buf) return ZST_ERROR;
+
+    zst_buffer_t* buf = NULL;
+    if (zst_buffer_pool_acquire(s->pool, &buf, 0) != ZST_OK) {
+        return ZST_ERROR;
+    }
 
     size_t yuv_size = s->width * s->height * 3 / 2;
-    uint8_t* raw_data = malloc(yuv_size);
-    if (!raw_data) {
-        zst_buffer_unref(buf);
-        return ZST_ERROR;
-    }
+    uint8_t* raw_data = buf->memory.data;
 
-    buf->memory.type = ZST_MEMORY_CPU;
-    buf->memory.data = raw_data;
-    buf->memory.size = yuv_size;
-
-    zst_video_frame_t* frame = calloc(1, sizeof(*frame));
+    zst_video_frame_t* frame = buf->payload;
     if (!frame) {
-        free(raw_data);
-        zst_buffer_unref(buf);
-        return ZST_ERROR;
+        frame = calloc(1, sizeof(*frame));
+        if (!frame) {
+            zst_buffer_unref(buf);
+            return ZST_ERROR;
+        }
+        buf->payload = frame;
+        buf->destroy = v4l2_buf_free;
     }
+
     frame->width = s->width;
     frame->height = s->height;
     frame->format = 0; // YUV420P
@@ -227,7 +244,6 @@ v4l2_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     frame->stride[0] = s->width;
     frame->stride[1] = s->width / 2;
     frame->stride[2] = s->width / 2;
-    buf->payload = frame;
 
     if (s->is_mock) {
         /* Generate synthetic YUV420P frame (moving vertical bar) */
@@ -276,7 +292,6 @@ v4l2_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
         buf->pts = s->frame_count * 33333333ULL; // 30 fps in nanoseconds
     }
     buf->duration = 33333333ULL;
-    buf->destroy = v4l2_buf_free;
     s->frame_count++;
 
     *out = buf;
@@ -287,10 +302,7 @@ static void
 v4l2_buf_free(zst_buffer_t* buf)
 {
     if (buf) {
-        if (buf->memory.data) {
-            free(buf->memory.data);
-            buf->memory.data = NULL;
-        }
+        // We only free payload since memory is managed by the allocator.
         if (buf->payload) {
             free(buf->payload);
             buf->payload = NULL;

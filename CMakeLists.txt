@@ -63,6 +63,7 @@ set(ZSTREAMER_INCLUDE_DIR
 set(CORE_SOURCES
     src/zst_caps.c
     src/zst_buffer.c
+    src/zst_buffer_pool.c
     src/zst_pad.c
     src/zst_element.c
     src/zst_pipeline.c

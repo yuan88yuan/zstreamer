@@ -22,6 +22,7 @@ typedef uint64_t zst_time_t;
 typedef struct zst_allocator   zst_allocator_t;
 typedef struct zst_clock       zst_clock_t;
 typedef struct zst_buffer      zst_buffer_t;
+typedef struct zst_buffer_pool zst_buffer_pool_t;
 typedef struct zst_queue       zst_queue_t;
 typedef struct zst_pad         zst_pad_t;
 typedef struct zst_element     zst_element_t;
