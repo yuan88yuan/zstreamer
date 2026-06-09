@@ -11,6 +11,7 @@
 #include "zst_element.h"
 #include "zst_pad.h"
 #include "zst_buffer.h"
+#include "zst_buffer_pool.h"
 
 typedef struct {
     int target_width;
@@ -28,6 +29,8 @@ typedef struct {
     int current_out_width;
     int current_out_height;
     enum AVPixelFormat current_out_format;
+
+    zst_buffer_pool_t* pool;
 } video_scaler_t;
 
 static enum AVPixelFormat
@@ -63,6 +66,10 @@ scaler_close(zst_element_t* el)
     if (s->sws_ctx) {
         sws_freeContext(s->sws_ctx);
         s->sws_ctx = NULL;
+    }
+    if (s->pool) {
+        zst_buffer_pool_destroy(s->pool);
+        s->pool = NULL;
     }
     return ZST_OK;
 }
@@ -187,10 +194,7 @@ static void
 scaler_scaled_buf_free(zst_buffer_t* buf)
 {
     if (buf) {
-        if (buf->memory.data) {
-            free(buf->memory.data);
-            buf->memory.data = NULL;
-        }
+        // memory.data is managed by the allocator
         if (buf->payload) {
             free(buf->payload);
             buf->payload = NULL;
@@ -308,17 +312,48 @@ scaler_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
         }
     }
 
-    /* Allocate output memory */
+    /* Recreate buffer pool if size changed or it doesn't exist */
     int out_size = av_image_get_buffer_size(out_pix_fmt, out_width, out_height, 1);
     if (out_size < 0) return ZST_ERROR;
 
-    uint8_t* out_data = malloc(out_size);
-    if (!out_data) return ZST_ERROR;
+    int needs_new_pool = 1;
+    if (s->pool) {
+        zst_buffer_pool_config_t cfg = zst_buffer_pool_get_config(s->pool);
+        if (cfg.buffer_size == (size_t)out_size) {
+            needs_new_pool = 0;
+        } else {
+            zst_buffer_pool_destroy(s->pool);
+            s->pool = NULL;
+        }
+    }
 
-    zst_video_frame_t* out_frame = calloc(1, sizeof(*out_frame));
-    if (!out_frame) {
-        free(out_data);
+    if (needs_new_pool) {
+        zst_buffer_pool_config_t pool_cfg = {
+            .min_buffers = 2,
+            .max_buffers = 8,
+            .buffer_size = out_size,
+            .buffer_type = ZST_BUFFER_VIDEO_FRAME
+        };
+        s->pool = zst_buffer_pool_create(NULL, &pool_cfg);
+        if (!s->pool) return ZST_ERROR;
+    }
+
+    zst_buffer_t* out_buf = NULL;
+    if (zst_buffer_pool_acquire(s->pool, &out_buf, 0) != ZST_OK) {
         return ZST_ERROR;
+    }
+
+    uint8_t* out_data = out_buf->memory.data;
+
+    zst_video_frame_t* out_frame = out_buf->payload;
+    if (!out_frame) {
+        out_frame = calloc(1, sizeof(*out_frame));
+        if (!out_frame) {
+            zst_buffer_unref(out_buf);
+            return ZST_ERROR;
+        }
+        out_buf->payload = out_frame;
+        out_buf->destroy = scaler_scaled_buf_free;
     }
 
     out_frame->width = out_width;
@@ -329,8 +364,7 @@ scaler_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     int tmp_linesize[4] = {0};
     int fill_ret = av_image_fill_arrays(tmp_data, tmp_linesize, out_data, out_pix_fmt, out_width, out_height, 1);
     if (fill_ret < 0) {
-        free(out_frame);
-        free(out_data);
+        zst_buffer_unref(out_buf);
         return ZST_ERROR;
     }
     for (int i = 0; i < 4; i++) {
@@ -362,8 +396,7 @@ scaler_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
             tmp_linesize
         );
         if (scale_ret < 0) {
-            free(out_frame);
-            free(out_data);
+            zst_buffer_unref(out_buf);
             return ZST_ERROR;
         }
     } else {
@@ -394,22 +427,10 @@ scaler_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
         }
     }
 
-    zst_buffer_t* out_buf = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
-    if (!out_buf) {
-        free(out_frame);
-        free(out_data);
-        return ZST_ERROR;
-    }
-
-    out_buf->memory.type = ZST_MEMORY_CPU;
-    out_buf->memory.data = out_data;
-    out_buf->memory.size = out_size;
     out_buf->pts = in->pts;
     out_buf->dts = in->dts;
     out_buf->duration = in->duration;
     out_buf->flags = in->flags;
-    out_buf->payload = out_frame;
-    out_buf->destroy = scaler_scaled_buf_free;
 
     *out = out_buf;
     return ZST_OK;

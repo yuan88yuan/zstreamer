@@ -4,6 +4,7 @@
 
 #include "zst_buffer.h"
 #include "zst_allocator.h"
+#include "zst_buffer_pool.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -73,6 +74,7 @@ zst_buffer_create(uint32_t type)
     buf->memory.size = 0;
     buf->payload   = NULL;
     buf->metadata  = NULL;
+    buf->pool      = NULL;
     buf->destroy   = NULL;
 
     return buf;
@@ -94,6 +96,11 @@ zst_buffer_unref(zst_buffer_t* buf)
 
     if (__sync_sub_and_fetch(&buf->refcount, 1) > 0)
         return;
+
+    if (buf->pool) {
+        zst_buffer_pool_release(buf->pool, buf);
+        return;
+    }
 
     /* Release attached memory */
     if (buf->memory.release && buf->memory.priv)

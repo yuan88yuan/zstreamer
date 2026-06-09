@@ -1,0 +1,40 @@
+/*=============================================================================
+    zst_buffer_pool.h
+=============================================================================*/
+#pragma once
+
+#include "zst_types.h"
+#include "zst_buffer.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct {
+    uint32_t min_buffers;
+    uint32_t max_buffers;
+    size_t   buffer_size;
+    uint32_t buffer_type;
+} zst_buffer_pool_config_t;
+
+zst_buffer_pool_t* zst_buffer_pool_create(
+    zst_allocator_t* allocator,
+    zst_buffer_pool_config_t* config);
+
+zst_result_t zst_buffer_pool_acquire(
+    zst_buffer_pool_t* pool,
+    zst_buffer_t** out_buf,
+    int timeout_ms);
+
+void zst_buffer_pool_release(
+    zst_buffer_pool_t* pool,
+    zst_buffer_t* buf);
+
+void zst_buffer_pool_destroy(
+    zst_buffer_pool_t* pool);
+
+zst_buffer_pool_config_t zst_buffer_pool_get_config(zst_buffer_pool_t* pool);
+
+#ifdef __cplusplus
+}
+#endif

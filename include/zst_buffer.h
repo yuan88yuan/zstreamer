@@ -79,6 +79,8 @@ struct zst_buffer {
     void* payload;
     void* metadata;
 
+    struct zst_buffer_pool* pool;
+
     void (*destroy)(zst_buffer_t* buf);
 };
 

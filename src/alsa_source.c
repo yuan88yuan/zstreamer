@@ -11,6 +11,7 @@
 #include "zst_element.h"
 #include "zst_log.h"
 #include "zst_buffer.h"
+#include "zst_buffer_pool.h"
 #include "zst_clock.h"
 
 typedef struct {
@@ -19,16 +20,15 @@ typedef struct {
     uint64_t        sample_count;
     uint32_t        sample_rate;
     uint32_t        channels;
+
+    zst_buffer_pool_t* pool;
 } alsa_source_t;
 
 static void
 alsa_buf_free(zst_buffer_t* buf)
 {
     if (buf) {
-        if (buf->memory.data) {
-            free(buf->memory.data);
-            buf->memory.data = NULL;
-        }
+        // memory.data is managed by the allocator
         if (buf->payload) {
             free(buf->payload);
             buf->payload = NULL;
@@ -44,6 +44,14 @@ alsa_open(zst_element_t* el)
     s->channels = 2;
     s->sample_count = 0;
     s->handle = NULL;
+
+    zst_buffer_pool_config_t pool_cfg = {
+        .min_buffers = 4,
+        .max_buffers = 8,
+        .buffer_size = 1024 * s->channels * sizeof(int16_t),
+        .buffer_type = ZST_BUFFER_AUDIO_FRAME
+    };
+    s->pool = zst_buffer_pool_create(NULL, &pool_cfg);
 
     int err = snd_pcm_open(&s->handle, "default", SND_PCM_STREAM_CAPTURE, 0);
     if (err < 0) {
@@ -80,6 +88,12 @@ alsa_close(zst_element_t* el)
         snd_pcm_close(s->handle);
         s->handle = NULL;
     }
+
+    if (s->pool) {
+        zst_buffer_pool_destroy(s->pool);
+        s->pool = NULL;
+    }
+
     return ZST_OK;
 }
 
@@ -99,34 +113,31 @@ alsa_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     (void)in;
     alsa_source_t* s = el->priv;
     
-    zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_AUDIO_FRAME);
-    if (!buf) return ZST_ERROR;
+    zst_buffer_t* buf = NULL;
+    if (zst_buffer_pool_acquire(s->pool, &buf, 0) != ZST_OK) {
+        return ZST_ERROR;
+    }
 
     uint32_t nb_samples = 1024;
     size_t data_size = nb_samples * s->channels * sizeof(int16_t);
-    uint8_t* raw_data = malloc(data_size);
-    if (!raw_data) {
-        zst_buffer_unref(buf);
-        return ZST_ERROR;
-    }
+    uint8_t* raw_data = buf->memory.data;
 
-    buf->memory.type = ZST_MEMORY_CPU;
-    buf->memory.data = raw_data;
-    buf->memory.size = data_size;
-
-    zst_audio_frame_t* frame = calloc(1, sizeof(*frame));
+    zst_audio_frame_t* frame = buf->payload;
     if (!frame) {
-        free(raw_data);
-        zst_buffer_unref(buf);
-        return ZST_ERROR;
+        frame = calloc(1, sizeof(*frame));
+        if (!frame) {
+            zst_buffer_unref(buf);
+            return ZST_ERROR;
+        }
+        buf->payload = frame;
+        buf->destroy = alsa_buf_free;
     }
+
     frame->sample_rate = s->sample_rate;
     frame->channels = s->channels;
     frame->format = 0; // S16_LE
     frame->nb_samples = nb_samples;
     frame->data = raw_data;
-    buf->payload = frame;
-    buf->destroy = alsa_buf_free;
 
     if (s->is_mock) {
         /* Generate a synthetic 440 Hz square wave (period = 100 samples @ 44100Hz) */
