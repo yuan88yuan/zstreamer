@@ -324,7 +324,7 @@ An async notification channel (`zst_bus_t`) that decouples error/state/EOS from 
 
 ---
 
-## Phase 11 — Text Rendering  (📝 Planned)
+## Phase 11 — Text Rendering  (✅ done 11a)
 
 A **text overlay element** that composites text (subtitles, timestamps, labels) onto
 raw video frames. Follows the same element pattern as other processing elements:
@@ -336,8 +336,8 @@ single sink pad (raw video in), single src pad (raw video with text out).
 - [x] Configurable text string (via element property or secondary text sink pad)
 - [x] Backend: `libfreetype` for font rasterization (glyph bitmap generation)
 - [x] Text layout: multi-line support with word wrapping
-- [ ] Configurable font family, size, colour, outline/shadow
-- [ ] Configurable position: absolute (x, y) or relative (centre, top-left, bottom-right)
+- [x] Configurable font family, size, colour, outline/shadow
+- [x] Configurable position: absolute (x, y) or relative (centre, top-left, bottom-right)
 - [x] Alpha blending of text bitmap onto YUV420P / NV12 frames
 - [x] PTS passthrough (text overlay preserves video timestamps)
 - [x] EOS passthrough
@@ -360,7 +360,7 @@ single sink pad (raw video in), single src pad (raw video with text out).
 **Test deliverables:**
 - [x] Unit test: render text onto a known frame, verify pixels at expected positions
 - [x] Unit test: multi-line text wrapping
-- [ ] Unit test: EOS passthrough
-- [ ] Unit test: caps negotiation
-- [ ] Unit test: property get/set for font size, colour, position
-- [ ] Integration test: `v4l2src → text_overlay → filesink` produces video with visible text
+- [x] Unit test: EOS passthrough
+- [x] Unit test: caps negotiation
+- [x] Unit test: property get/set for font size, colour, position
+- [x] Integration test: `v4l2src → text_overlay → filesink` produces video with visible text
