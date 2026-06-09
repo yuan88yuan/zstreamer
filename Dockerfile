@@ -33,6 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libswscale-dev \
     libswresample-dev \
     libasound2-dev \
+    libfreetype-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Debugging / profiling tools ─────────────────────────────────────────
