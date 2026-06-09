@@ -44,3 +44,17 @@ See: Phase 8a in implementation-plan.md
 A/V sync 核心。
 
 See: Phase 8b in implementation-plan.md
+
+---
+
+## text rendering
+
+Subtitle / caption / label 文字疊加在 video frame 上。
+
+實際上是 video pipeline 很常見的需求：
+
+```
+v4l2src → queue → text_overlay → queue → h264enc → ...
+```
+
+See: Phase 11 in implementation-plan.md

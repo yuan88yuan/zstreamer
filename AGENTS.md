@@ -156,6 +156,7 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | Dynamic Plugins             | ✅ Done                          |
 | Logging System              | ✅ Done                          |
 | Unit Tests                  | ✅ 35 tests, all passing         |
+| Text Rendering              | 📝 Planned (Phase 11)            |
 | Allocator API               | 📝 Future                        |
 | Clock / A/V Sync            | 📝 Future                        |
 | CI Pipeline                 | 📝 Future                        |

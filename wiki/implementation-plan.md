@@ -264,3 +264,46 @@ An async notification channel (`zst_bus_t`) that decouples error/state/EOS from 
 - [ ] Clock and A/V sync guide
 - [ ] Queue element threading model explainer
 - [ ] Plugin authoring guide
+
+---
+
+## Phase 11 — Text Rendering  (📝 Planned)
+
+A **text overlay element** that composites text (subtitles, timestamps, labels) onto
+raw video frames. Follows the same element pattern as other processing elements:
+single sink pad (raw video in), single src pad (raw video with text out).
+
+### 11a — Text Overlay Element
+
+- [ ] `text_overlay` element with 1 sink pad (video/x-raw) + 1 src pad (video/x-raw)
+- [ ] Configurable text string (via element property or secondary text sink pad)
+- [ ] Backend: `libfreetype` for font rasterization (glyph bitmap generation)
+- [ ] Text layout: multi-line support with word wrapping
+- [ ] Configurable font family, size, colour, outline/shadow
+- [ ] Configurable position: absolute (x, y) or relative (centre, top-left, bottom-right)
+- [ ] Alpha blending of text bitmap onto YUV420P / NV12 frames
+- [ ] PTS passthrough (text overlay preserves video timestamps)
+- [ ] EOS passthrough
+- [ ] Caps negotiation: accept/caps on sink pad, same caps on src pad (passthrough)
+
+**Dependencies:** `libfreetype-dev` (added to Dockerfile)
+
+### 11b — Text Source Element (stretch goal)
+
+- [ ] `text_source` element: generates video frames with rendered text (no video input)
+- [ ] Useful for test patterns, title cards, and simple slideshows
+- [ ] Configurable resolution, framerate, text content, background colour
+
+### 11c — SRT Subtitle Parser (stretch goal)
+
+- [ ] Parse SRT subtitle format into timed text events
+- [ ] Feed parsed text segments to `text_overlay` at correct PTS
+- [ ] Support ASS/SSA format parsing (advanced styling)
+
+**Test deliverables:**
+- [ ] Unit test: render text onto a known frame, verify pixels at expected positions
+- [ ] Unit test: multi-line text wrapping
+- [ ] Unit test: EOS passthrough
+- [ ] Unit test: caps negotiation
+- [ ] Unit test: property get/set for font size, colour, position
+- [ ] Integration test: `v4l2src → text_overlay → filesink` produces video with visible text
