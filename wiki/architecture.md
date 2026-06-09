@@ -122,3 +122,47 @@ Queues decouple producers from consumers, allowing each stage to run on its own 
 3. **Explicit state machine** — every resource transition is traceable.
 4. **Pluggable everything** — elements are loaded at runtime; scheduler strategy is configurable.
 5. **C11** — portable, embeddable, FFI-friendly.
+
+---
+
+## Future Direction
+
+The following features are planned but not yet implemented. They will extend the architecture described above. See `wiki/future.md` and `wiki/implementation-plan.md` for full details.
+
+### Queue Element
+
+Currently queues are internal objects (`mm_queue_t`) auto-inserted by the scheduler. A **queue element** (`mm_element` subclass with one sink pad + one src pad, backed by `mm_queue_t`) will make queues first-class pipeline citizens.
+
+```
+v4l2src → queue → h264enc → queue → mp4mux → queue → filesink
+```
+
+Users place them explicitly, which means every queue boundary is an intentional thread switch. The scheduler no longer injects queues automatically.
+
+### Event Bus
+
+An async notification channel (`mm_bus_t`) decoupled from the data path. Elements and the pipeline post events (`EOS`, `ERROR`, `STATE_CHANGED`) to the bus; applications listen via `mm_bus_pop()` or a callback.
+
+### Caps Negotiation
+
+Currently pads have a placeholder `mm_caps_t` with only `media_type`. The full system will add:
+- Rich caps with dimensions, format, framerate, channels, sample rate
+- `mm_caps_intersect()` to find compatible formats
+- Auto-negotiation at link time
+- Auto-inserted converter elements when formats don't match
+
+### Allocator API
+
+`mm_allocator_t` interface for custom memory backends:
+- Default CPU allocator (malloc/free)
+- DMABUF (Linux dma-buf for zero-copy between HW blocks)
+- CUDA / Vulkan device memory
+- Buffer pools to eliminate per-frame allocation
+
+### Clock
+
+`mm_clock_t` master clock wrapping `CLOCK_MONOTONIC`, with:
+- `mm_clock_get_time()` / `mm_clock_wait()`
+- Pipeline-level clock selection
+- Clock slaving for A/V sync
+- Jitter measurement
