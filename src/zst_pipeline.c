@@ -4,6 +4,7 @@
 
 #include "zst_pipeline.h"
 #include "zst_bus.h"
+#include "zst_clock.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -18,6 +19,7 @@ zst_pipeline_create(void)
     pipe->state       = ZST_STATE_NULL;
     pipe->priv        = NULL;
     pipe->bus         = zst_bus_create();
+    pipe->clock       = NULL;
 
     return pipe;
 }
@@ -35,6 +37,10 @@ zst_pipeline_destroy(zst_pipeline_t* pipe)
         zst_bus_destroy(pipe->bus);
     }
 
+    if (pipe->clock) {
+        zst_clock_unref(pipe->clock);
+    }
+
     free(pipe->elements);
     free(pipe);
 }
@@ -43,6 +49,23 @@ zst_bus_t*
 zst_pipeline_get_bus(zst_pipeline_t* pipe)
 {
     return pipe ? pipe->bus : NULL;
+}
+
+void
+zst_pipeline_set_clock(zst_pipeline_t* pipe, zst_clock_t* clock)
+{
+    if (!pipe) return;
+    if (pipe->clock == clock) return;
+    if (pipe->clock) {
+        zst_clock_unref(pipe->clock);
+    }
+    pipe->clock = clock ? zst_clock_ref(clock) : NULL;
+}
+
+zst_clock_t*
+zst_pipeline_get_clock(zst_pipeline_t* pipe)
+{
+    return pipe ? pipe->clock : NULL;
 }
 
 zst_result_t

@@ -68,6 +68,8 @@ set(CORE_SOURCES
     src/zst_scheduler.c
     src/zst_bus.c
     src/zst_log.c
+    src/zst_allocator.c
+    src/zst_clock.c
 )
 
 if(ENABLE_PLUGINS)
