@@ -140,8 +140,9 @@ MM_STATE_NULL  ──open──→  MM_STATE_READY  ──start──→  MM_STA
 | Scheduler Integration       | ✅ Topological sort, push/pull, EOS, state hardening |
 | Queue Element               | ✅ First-class queue with worker thread |
 | Real Element Implementations| ✅ All 6 elements: V4L2, x264, MP4(mux), file, ALSA, AAC |
-| Unit Tests                  | ✅ 24 tests, all passing         |
-| Caps Negotiation            | ✅ done                         |
+| Video Scaler / Audio Resampler | 📝 Planned (Phase 4g/4h)       |
+| Unit Tests                  | ✅ 19 tests, all passing         |
+| Caps Negotiation            | 📝 Future                        |
 | Event Bus                   | 📝 Future                        |
 | Dynamic Plugins             | 📝 Future                        |
 | Allocator API               | 📝 Future                        |
