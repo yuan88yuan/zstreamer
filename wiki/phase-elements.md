@@ -1,7 +1,7 @@
-# Element Implementations — Phase 4  (✅ 4a-4i, 4l-4n, 4s, 4t; 📝 4j-4k, 4o-4r, 4u)
+# Element Implementations — Phase 4  (✅ 4a-4i, 4l-4n, 4s, 4t; 📝 4j-4k, 4o-4r, 4u-4y)
 
 Fourteen elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.
-Additional elements are planned: network I/O for stream ingestion, RTSP/RTMP for live streaming, and subtitle parsing utilities.
+Additional elements are planned: network I/O for stream ingestion, RTSP/RTMP for live streaming, subtitle parsing utilities, and expanded codec coverage.
 Two handle format conversion (scaling, resampling) — essential once caps negotiation (Phase 5) requires automatic conversion between mismatched formats.
 
 ### 4a — V4L2 Source  (✅ done)
@@ -217,6 +217,66 @@ Parse SRT subtitle format into timed text events and feed them to `text_overlay`
 - [ ] Parse SRT subtitle format into timed text events
 - [ ] Feed parsed text segments to `text_overlay` at correct PTS
 - [ ] Support ASS/SSA format parsing (advanced styling)
+
+### 4v — H.264 Decoder  (📝 Planned)
+
+Decodes H.264 elementary stream packets into raw video frames for processing, transcoding, preview, or analysis pipelines.
+
+- [ ] `h264dec` element with 1 sink pad (`video/x-h264`) and 1 src pad (`video/x-raw`)
+- [ ] FFmpeg `libavcodec` decoder integration (`AV_CODEC_ID_H264`)
+- [ ] Accept Annex B bytestream and AVCC/extradata forms where possible
+- [ ] Convert `AVFrame` output into `zst_video_frame_t` payloads
+- [ ] Preserve PTS/DTS/duration and handle B-frame reordering
+- [ ] Caps negotiation: advertise raw pixel format, width, height, framerate
+- [ ] EOS drain/flush: send NULL packet, emit delayed frames, then propagate EOS
+- [ ] Decoder reset on stream parameter changes or corruption recovery
+
+**Dependencies:** `libavcodec-dev`, `libavutil-dev` (in Docker)
+
+### 4w — H.265 Encoder  (📝 Planned)
+
+Encodes raw video frames to H.265/HEVC for lower bitrate streaming and storage profiles.
+
+- [ ] `h265enc` element with 1 sink pad (`video/x-raw`) and 1 src pad (`video/x-h265`)
+- [ ] Backend: x265 (`libx265`) or FFmpeg HEVC encoder (`AV_CODEC_ID_HEVC`)
+- [ ] Accept I420/YUV420P frames from `zst_video_frame_t` payload
+- [ ] Configurable preset/tune, CRF/bitrate, GOP/keyframe interval, profile/level
+- [ ] Output VPS/SPS/PPS headers and frame NAL units in Annex B format
+- [ ] PTS passthrough and monotonic DTS generation where needed
+- [ ] EOS flush: drain delayed encoder frames before propagating EOS
+- [ ] Caps negotiation: advertise `video/x-h265` with stream format/profile metadata
+
+**Dependencies:** `libx265-dev` or `libavcodec-dev`, `libavutil-dev`
+
+### 4x — H.265 Decoder  (📝 Planned)
+
+Decodes H.265/HEVC packets into raw video frames for HEVC ingest, transcoding, or inspection pipelines.
+
+- [ ] `h265dec` element with 1 sink pad (`video/x-h265`) and 1 src pad (`video/x-raw`)
+- [ ] FFmpeg `libavcodec` decoder integration (`AV_CODEC_ID_HEVC`)
+- [ ] Accept Annex B bytestream and hvcC/extradata forms where possible
+- [ ] Convert `AVFrame` output into `zst_video_frame_t` payloads
+- [ ] Preserve PTS/DTS/duration and handle B-frame reordering
+- [ ] Caps negotiation: advertise raw pixel format, width, height, framerate
+- [ ] EOS drain/flush: send NULL packet, emit delayed frames, then propagate EOS
+- [ ] Decoder reset on parameter-set changes or corruption recovery
+
+**Dependencies:** `libavcodec-dev`, `libavutil-dev` (in Docker)
+
+### 4y — AAC Decoder  (📝 Planned)
+
+Decodes AAC packets into raw audio frames for playback, transcoding, waveform analysis, or audio filtering.
+
+- [ ] `aacdec` element with 1 sink pad (`audio/aac`) and 1 src pad (`audio/x-raw`)
+- [ ] FFmpeg `libavcodec` decoder integration (`AV_CODEC_ID_AAC`)
+- [ ] Accept ADTS and AudioSpecificConfig/extradata forms where possible
+- [ ] Convert decoder output to `zst_audio_frame_t` payloads
+- [ ] Optional conversion to interleaved S16LE or F32LE for downstream compatibility
+- [ ] Preserve PTS/DTS/duration and calculate duration from decoded sample count
+- [ ] Caps negotiation: advertise sample rate, channels, and sample format
+- [ ] EOS drain/flush: send NULL packet, emit delayed frames, then propagate EOS
+
+**Dependencies:** `libavcodec-dev`, `libavutil-dev` (in Docker)
 
 ---
 
