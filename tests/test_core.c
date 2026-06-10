@@ -1742,6 +1742,74 @@ test_fakesink(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   Video Test Source
+   ═══════════════════════════════════════════════════════════════ */
+static void
+test_video_test_src(void)
+{
+    TEST("video_test_src basic generation");
+
+    zst_element_t* src = zst_element_factory_make("videotestsrc");
+    assert(src != NULL);
+
+    zst_element_t* sink = zst_element_factory_make("fakesink");
+    assert(sink != NULL);
+
+    zst_pipeline_t* pipe = zst_pipeline_create();
+    zst_pipeline_add(pipe, src);
+    zst_pipeline_add(pipe, sink);
+
+    zst_pad_t* src_pad = zst_element_get_pad(src, "src");
+    zst_pad_t* sink_pad = zst_element_get_pad(sink, "sink");
+
+    zst_result_t res = zst_pad_link(src_pad, sink_pad);
+    assert(res == ZST_OK);
+
+    zst_element_set_property(src, "num-buffers", "5");
+    zst_element_set_property(src, "pattern", "gradient");
+
+    zst_pipeline_set_state(pipe, ZST_STATE_PLAYING);
+
+    /* Process manually since there is no scheduler thread attached here.
+     * video_test_src produces buffers via its pull callback because it's a source.
+     * Wait, src pad of videotestsrc actually pushes? It doesn't have a thread.
+     * To simulate, we'll pull from its src pad and push to sink.
+     * Actually, the test_fakesink calls sink_pad->push.
+     * Let's do a loop.
+     */
+    for (int i = 0; i < 6; i++) {
+        zst_buffer_t* buf = NULL;
+        zst_result_t ret = src_pad->pull(src_pad, &buf);
+        if (ret == ZST_OK && buf != NULL) {
+            if (buf->flags & ZST_BUFFER_FLAG_EOS) {
+                zst_buffer_unref(buf);
+                break;
+            }
+            zst_video_frame_t* vf = buf->payload;
+            assert(vf != NULL);
+            assert(vf->width == 640);
+            assert(vf->height == 480);
+            assert(buf->type == ZST_BUFFER_VIDEO_FRAME);
+            assert(buf->memory.size == 640 * 480 * 3 / 2);
+
+            sink_pad->push(sink_pad, buf);
+            zst_buffer_unref(buf);
+        } else {
+            break;
+        }
+    }
+
+    char val[64];
+    zst_element_get_property(sink, "total-buffers", val, sizeof(val));
+    assert(strcmp(val, "5") == 0);
+
+    zst_pipeline_set_state(pipe, ZST_STATE_NULL);
+    zst_pipeline_destroy(pipe);
+
+    PASS();
+}
+
+/* ═══════════════════════════════════════════════════════════════
    Main
    ═══════════════════════════════════════════════════════════════ */
 static void
@@ -1891,6 +1959,9 @@ int main(void)
 
     printf("[fakesink]\n");
     test_fakesink();
+
+    printf("[video test source]\n");
+    test_video_test_src();
 
     /* ── Summary ── */
     printf("\n──────────────────────────────────────────────────\n");
