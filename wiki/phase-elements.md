@@ -1,7 +1,7 @@
-# Element Implementations — Phase 4  (✅ 4a-4i, 4l, 4n, 4s, 4t; 📝 4j-4k, 4m, 4o-4r, 4u)
+# Element Implementations — Phase 4  (✅ 4a-4i, 4l-4n, 4s, 4t; 📝 4j-4k, 4o-4r, 4u)
 
-Twelve elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.
-Nine more are planned: file/network I/O for stream ingestion, RTSP/RTMP for live streaming, test sources for headless benchmarking, a fake sink for pipeline debugging, and text rendering utilities.
+Fourteen elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.
+Additional elements are planned: network I/O for stream ingestion, RTSP/RTMP for live streaming, and subtitle parsing utilities.
 Two handle format conversion (scaling, resampling) — essential once caps negotiation (Phase 5) requires automatic conversion between mismatched formats.
 
 ### 4a — V4L2 Source  (✅ done)
@@ -149,17 +149,17 @@ Generates synthetic video test patterns without any real hardware input. Useful 
 - [ ] Optional YUV420P → NV12 / RGB conversion in software
 - [x] Loop mode: restart pattern sequence on frame limit or EOS
 
-### 4m — Audio Test Source  (📝 Planned)
+### 4m — Audio Test Source  (✅ done)
 
 Generates synthetic audio test signals without any real hardware input. Useful for pipeline testing, latency measurement, and audio chain verification.
 
-- [ ] `audio_test_src` element with 1 src pad
-- [ ] Configurable sample rate, channels, sample format (S16LE, F32LE)
-- [ ] Signal options: sine wave (configurable frequency), square wave, pink/white noise, silence
-- [ ] Timestamp generation: `pts` set from pipeline clock based on `nb_samples`
-- [ ] EOS on `stop` or configurable sample limit
-- [ ] Caps negotiation: advertise `audio/x-raw` with configurable format/channels/rate
-- [ ] Loop mode: restart signal sequence on limit or EOS
+- [x] `audio_test_src` / `audiotestsrc` element with 1 src pad
+- [x] Configurable sample rate, channels, sample format (S16LE, F32LE)
+- [x] Signal options: sine wave (configurable frequency), square wave, pink/white noise, silence
+- [x] Timestamp generation: `pts` set from pipeline clock or sample count based on `nb_samples`
+- [x] EOS on `stop` or configurable sample/buffer limit
+- [x] Caps negotiation: advertise `audio/x-raw` with configurable format/channels/rate
+- [x] Loop mode: restart signal sequence on limit or EOS
 
 ### 4n — Fake Sink  (✅ done)
 
