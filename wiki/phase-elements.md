@@ -1,4 +1,4 @@
-# Element Implementations — Phase 4  (✅ 4a-4j, 4l-4n, 4s, 4t; 📝 4k, 4o-4r, 4u-4y)
+# Element Implementations — Phase 4  (✅ 4a-4p, 4s, 4t, 4v-4y; 📝 4q, 4r, 4u)
 
 Fourteen elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.
 Additional elements are planned: network I/O for stream ingestion, RTSP/RTMP for live streaming, subtitle parsing utilities, and expanded codec coverage.
@@ -119,20 +119,28 @@ Receives raw byte streams over TCP or Unix sockets and feeds them into the pipel
 - [x] EOS on clean disconnect; error recovery on unexpected disconnect
 - [x] Caps negotiation: fixed `text/plain` caps or none (passthrough)
 
-### 4k — Network Sink  (📝 Planned)
+### 4k — Network Sink  (✅ done)
 
 Sends raw byte buffers over TCP or Unix sockets. Enables local IPC and custom binary protocol output.
 
 > **Protocol layering note:** This is a **raw transport** element. It writes bytes to a socket without understanding any application-layer protocol (RTSP, RTMP, HTTP, SRT, etc.). It accepts a single raw byte buffer on its sink pad — not demuxed video/audio streams. For protocol-aware streaming output with proper muxing, use **4p (RTSP Sink)** or **4r (RTMP Sink)** instead.
 
-- [ ] `net_sink` element with 1 sink pad — accepts raw byte buffers
-- [ ] TCP client mode: connect to remote host:port and write buffers
-- [ ] TCP server mode: listen, accept, and stream to connected clients
-- [ ] Unix socket support for local IPC
-- [ ] Configurable `host`, `port`, `protocol` (tcp-client, tcp-server, unix)
-- [ ] Reconnection with exponential back-off on connection loss
-- [ ] Write timeout and buffer drain on disconnect
-- [ ] EOS passthrough: flush remaining data before closing connection
+- [x] `net_sink` element with 1 sink pad — accepts raw byte buffers
+- [x] TCP client mode: connect to remote host:port and write buffers
+- [x] TCP server mode: listen, accept, and stream to connected clients
+- [x] Unix socket support for local IPC
+- [x] Configurable `host`, `port`, `protocol` (tcp-client, tcp-server, unix)
+- [x] Reconnection with exponential back-off on connection loss
+- [x] Write timeout and buffer drain on disconnect
+- [x] EOS passthrough: flush remaining data before closing connection
+
+**Test deliverables:**
+- [x] Property get/set for `host`, `port`, `protocol`, `path`, `write-timeout`
+- [x] State transitions: NULL ↔ READY ↔ PLAYING
+- [x] Caps negotiation: advertise `application/octet-stream` caps
+- [x] TCP client mode test: connect to server, send data, verify reception
+- [x] Socket error handling: reconnection with exponential back-off
+- [x] EOS handling: graceful connection close
 
 ---
 
