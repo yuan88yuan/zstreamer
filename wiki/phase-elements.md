@@ -280,18 +280,18 @@ Decodes AAC packets into raw audio frames for playback, transcoding, waveform an
 
 ---
 
-### 4o — RTSP Source  (📝 Planned)
+### 4o — RTSP Source  (✅ Done)
 
 Receives live or on-demand streaming media from an RTSP server (DESCRIBE/SETUP/PLAY), demuxes RTP streams into separate video/audio source pads, and feeds them into the pipeline. The de-facto standard for IP camera ingestion.
 
-- [ ] `rtsp_source` element with 2+ src pads (video, audio, metadata)
-- [ ] RTSP control: DESCRIBE (SDP parsing), SETUP (transport negotiation), PLAY/PAUSE/TEARDOWN
-- [ ] RTP/RTCP transport: UDP (unicast + multicast), TCP interleaved mode
-- [ ] SDP → caps negotiation: map payload types (PT) to `video/x-h264`, `audio/aac`, etc.
+- [x] `rtsp_source` element with 2+ src pads (video, audio, metadata)
+- [x] RTSP control: DESCRIBE (SDP parsing), SETUP (transport negotiation), PLAY/PAUSE/TEARDOWN
+- [x] RTP/RTCP transport: UDP (unicast + multicast), TCP interleaved mode
+- [x] SDP → caps negotiation: map payload types (PT) to `video/x-h264`, `audio/aac`, etc.
 - [ ] RTSP authentication: Basic, Digest
 - [ ] Reconnection: automatic re-SETUP on transport loss, exponential back-off
 - [ ] NTP timestamp correlation: map RTP timestamps → pipeline clock via RTCP SR
-- [ ] Configurable `rtsp_url`, `username`, `password`, `transport` (udp/tcp), `buffer_size`
+- [x] Configurable `rtsp_url`, `username`, `password`, `transport` (udp/tcp), `buffer_size`
 - [ ] RTSP keep-alive: OPTIONS pings to prevent server timeout
 - [ ] EOS on RTSP BYE or TEARDOWN
 
