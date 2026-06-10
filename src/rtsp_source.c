@@ -7,10 +7,16 @@
       - TCP connection to RTSP server
       - State machine: INIT → DESCRIBE → SETUP → PLAY → STREAMING
       - SDP parsing to extract media tracks and codec info
-      - RTP-over-RTSP TCP interleaved transport ($ + channel + len + data)
+      - RTP transport: TCP interleaved ($ + channel + len + data) or
+        UDP unicast (RFC 3550 even/odd port pairs)
       - RTP depacketization: H.264 (RFC 3984), AAC (RFC 3640 MPEG4-Generic)
       - Basic/Digest authentication
       - Worker thread for continuous streaming
+
+    Transport negotiation (RFC 2326 §12.39):
+      - SETUP with Transport: RTP/AVP/TCP;interleaved=...   (TCP mode)
+      - SETUP with Transport: RTP/AVP;unicast;client_port=.. (UDP mode)
+      - Server echoes back server_port for RTCP reports
 
     References:
       - RFC 2326 (RTSP)
@@ -32,6 +38,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <netinet/udp.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <fcntl.h>
@@ -72,6 +79,10 @@ typedef struct {
 #define H264_NAL_SPS          7
 #define H264_NAL_PPS          8
 
+/* Transport type */
+#define RTSP_SOURCE_TRANSPORT_TCP  0
+#define RTSP_SOURCE_TRANSPORT_UDP  1
+
 /*===========================================================================
     Track info from SDP
 ===========================================================================*/
@@ -84,6 +95,13 @@ typedef struct {
     char     fmtp[256];     /* format parameters */
     int      interleaved_rtp;   /* TCP interleaved channel for this track */
     int      interleaved_rtcp;
+    /* UDP transport state */
+    int      udp_rtp_fd;        /* UDP socket for receiving RTP */
+    int      udp_rtcp_fd;       /* UDP socket for receiving RTCP */
+    uint16_t client_rtp_port;   /* our (client) RTP port */
+    uint16_t client_rtcp_port;  /* our (client) RTCP port */
+    uint16_t server_rtp_port;   /* server RTP port (from SETUP response) */
+    uint16_t server_rtcp_port;  /* server RTCP port (from SETUP response) */
     /* SPS/PPS for H.264 extracted from fmtp or stream */
     uint8_t* extra_data;
     int      extra_size;
@@ -143,6 +161,9 @@ typedef struct {
     int          fu_accum_len;
     uint32_t     fu_accum_ts;
     int          fu_accum_ssrc;
+
+    /* Transport type */
+    int          transport_type;
 
     /* RTP timestamp tracking */
     uint64_t     base_pts;
@@ -602,6 +623,34 @@ static int build_request(rtsp_client_t* cl, const char* method,
 }
 
 /*===========================================================================
+    UDP socket helpers
+===========================================================================*/
+static int create_udp_socket(void) {
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return -1;
+    int opt = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    int fl = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+    return fd;
+}
+
+/* Bind UDP socket to ephemeral port and return the assigned port */
+static int bind_udp_ephemeral(int fd, uint16_t* out_port) {
+    struct sockaddr_in a;
+    memset(&a, 0, sizeof(a));
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = INADDR_ANY;
+    a.sin_port = 0; /* ephemeral */
+    if (bind(fd, (struct sockaddr*)&a, sizeof(a)) < 0) return -1;
+
+    socklen_t alen = sizeof(a);
+    if (getsockname(fd, (struct sockaddr*)&a, &alen) < 0) return -1;
+    *out_port = ntohs(a.sin_port);
+    return 0;
+}
+
+/*===========================================================================
     RTSP state machine operations
 ===========================================================================*/
 static int do_describe(rtsp_client_t* cl) {
@@ -671,7 +720,7 @@ static int handle_describe_reply(rtsp_client_t* cl, const char* body, int body_l
     return 0;
 }
 
-static int do_setup(rtsp_client_t* cl, int idx) {
+static int do_setup(rtsp_client_t* cl, int idx, const char* transport_mode) {
     if (idx >= cl->track_count) return -1;
     track_info_t* tr = &cl->tracks[idx];
 
@@ -679,10 +728,37 @@ static int do_setup(rtsp_client_t* cl, int idx) {
     char track_uri[512];
     snprintf(track_uri, sizeof(track_uri), "%s/trackID=%d", cl->path, idx);
 
-    char transport_hdr[128];
-    snprintf(transport_hdr, sizeof(transport_hdr),
-        "Transport: RTP/AVP/TCP;interleaved=%d-%d\r\n",
-        tr->interleaved_rtp, tr->interleaved_rtcp);
+    char transport_hdr[256];
+
+    if (transport_mode && strcasecmp(transport_mode, "udp") == 0) {
+        /* UDP unicast transport */
+        /* Create and bind UDP sockets to ephemeral ports */
+        tr->udp_rtp_fd = create_udp_socket();
+        tr->udp_rtcp_fd = create_udp_socket();
+
+        if (tr->udp_rtp_fd < 0 || tr->udp_rtcp_fd < 0 ||
+            bind_udp_ephemeral(tr->udp_rtp_fd, &tr->client_rtp_port) < 0 ||
+            bind_udp_ephemeral(tr->udp_rtcp_fd, &tr->client_rtcp_port) < 0)
+        {
+            if (tr->udp_rtp_fd >= 0) close(tr->udp_rtp_fd);
+            if (tr->udp_rtcp_fd >= 0) close(tr->udp_rtcp_fd);
+            tr->udp_rtp_fd = tr->udp_rtcp_fd = -1;
+            ZST_LOG_ERROR("rtspsrc", "failed to create UDP sockets for track %d", idx);
+            return -1;
+        }
+
+        snprintf(transport_hdr, sizeof(transport_hdr),
+            "Transport: RTP/AVP;unicast;client_port=%hu-%hu\r\n",
+            tr->client_rtp_port, tr->client_rtcp_port);
+
+        ZST_LOG_INFO("rtspsrc", "track %d UDP: client_port=%hu-%hu",
+                     idx, tr->client_rtp_port, tr->client_rtcp_port);
+    } else {
+        /* TCP interleaved transport */
+        snprintf(transport_hdr, sizeof(transport_hdr),
+            "Transport: RTP/AVP/TCP;interleaved=%d-%d\r\n",
+            tr->interleaved_rtp, tr->interleaved_rtcp);
+    }
 
     char req[RTSP_REQ_SIZE];
     int req_len = build_request(cl, "SETUP", track_uri,
@@ -694,7 +770,7 @@ static int do_setup(rtsp_client_t* cl, int idx) {
     return 0;
 }
 
-static int handle_setup_reply(rtsp_client_t* cl) {
+static int handle_setup_reply(rtsp_client_t* cl, const char* transport_mode) {
     const char* resp = (const char*)cl->buf;
     int code = get_status_code(resp);
     if (code != 200) {
@@ -706,10 +782,31 @@ static int handle_setup_reply(rtsp_client_t* cl) {
     /* Get session ID */
     get_header_value(resp, "Session", cl->session_id, sizeof(cl->session_id));
 
+    /* Parse server_port from Transport response (UDP mode) */
     int idx = cl->setup_progress;
+    if (transport_mode && strcasecmp(transport_mode, "udp") == 0) {
+        /* Find Transport header in response */
+        const char* transport_val = strstr(resp, "Transport: ");
+        if (transport_val) {
+            transport_val += 11; /* skip "Transport: " */
+            /* Parse server_port=XXX-XXX */
+            const char* sp = strstr(transport_val, "server_port=");
+            if (sp) {
+                sp += 12;
+                unsigned long sp1 = strtoul(sp, NULL, 10);
+                const char* dash = strchr(sp, '-');
+                unsigned long sp2 = dash ? strtoul(dash + 1, NULL, 10) : sp1 + 1;
+                cl->tracks[idx].server_rtp_port  = (uint16_t)sp1;
+                cl->tracks[idx].server_rtcp_port = (uint16_t)sp2;
+                ZST_LOG_INFO("rtspsrc", "track %d server_port=%lu-%lu",
+                             idx, sp1, sp2);
+            }
+        }
+    }
+
     if (idx + 1 < cl->track_count) {
         /* Setup next track */
-        return do_setup(cl, idx + 1);
+        return do_setup(cl, idx + 1, transport_mode);
     }
 
     cl->state = STATE_SETUP_DONE;
@@ -992,14 +1089,78 @@ static int process_interleaved_data(rtsp_source_priv_t* srv, rtsp_client_t* cl) 
 }
 
 /*===========================================================================
+    Read and process RTP data from UDP
+===========================================================================*/
+static int process_udp_data(rtsp_source_priv_t* srv, rtsp_client_t* cl) {
+    for (int i = 0; i < cl->track_count; i++) {
+        track_info_t* tr = &cl->tracks[i];
+        if (tr->udp_rtp_fd < 0) continue;
+
+        /* Non-blocking read — grab all available packets */
+        uint8_t rtp_buf[2048];
+        int n;
+        while ((n = (int)read(tr->udp_rtp_fd, rtp_buf, sizeof(rtp_buf))) > 0) {
+            cl->bytes_read += n;
+
+            if (n < 12) continue; /* too small for RTP header */
+
+            /* Parse RTP header */
+            rtp_hdr_t* rh = (rtp_hdr_t*)rtp_buf;
+            int pt = rh->pt;
+            int marker = rh->m;
+            uint16_t seq = ntohs(rh->seq);
+            uint32_t rtp_ts = ntohl(rh->timestamp);
+            uint32_t ssrc = ntohl(rh->ssrc);
+            (void)seq;
+            (void)ssrc;
+
+            int payload_offset = 12;
+            if (rh->cc > 0) payload_offset += rh->cc * 4;
+            if (rh->x && payload_offset + 4 <= n) {
+                uint16_t ext_len = ntohs(*(uint16_t*)(rtp_buf + payload_offset + 2));
+                payload_offset += 4 + ext_len * 4;
+            }
+
+            if (payload_offset >= n) continue;
+            int payload_len = n - payload_offset;
+
+            /* Route by payload type to the right track */
+            int track_idx = -1;
+            for (int j = 0; j < cl->track_count; j++) {
+                if (cl->tracks[j].payload_type == pt) {
+                    track_idx = j;
+                    break;
+                }
+            }
+
+            if (track_idx < 0) continue;
+            track_info_t* trk = &cl->tracks[track_idx];
+
+            if (trk->type == 1 &&
+                (strcasecmp(trk->encoding, "H264") == 0)) {
+                process_h264_rtp(srv, cl, rtp_buf + payload_offset,
+                                 payload_len, rtp_ts, ssrc, marker);
+            } else if (trk->type == 2 &&
+                       (strcasecmp(trk->encoding, "MPEG4-GENERIC") == 0)) {
+                process_aac_rtp(srv, cl, rtp_buf + payload_offset,
+                                payload_len, rtp_ts, trk->clock_rate, marker);
+            }
+        }
+    }
+    return 0;
+}
+
+/*===========================================================================
     Main streaming thread
 ===========================================================================*/
 static void* streaming_thread(void* arg) {
     rtsp_source_priv_t* srv = (rtsp_source_priv_t*)arg;
     rtsp_client_t* cl = &srv->client;
+    int is_udp = (strcasecmp(srv->transport, "udp") == 0);
+    cl->transport_type = is_udp ? RTSP_SOURCE_TRANSPORT_UDP : RTSP_SOURCE_TRANSPORT_TCP;
 
-    ZST_LOG_INFO("rtspsrc", "connecting to rtsp://%s:%d%s",
-                 cl->host, cl->port, cl->path);
+    ZST_LOG_INFO("rtspsrc", "connecting to rtsp://%s:%d%s transport=%s",
+                 cl->host, cl->port, cl->path, is_udp ? "UDP" : "TCP");
 
     /* Connect */
     cl->fd = tcp_connect(cl->host, cl->port);
@@ -1039,7 +1200,7 @@ static void* streaming_thread(void* arg) {
     for (int i = 0; i < cl->track_count; i++) {
         ZST_LOG_INFO("rtspsrc", "setting up track %d (%s)", i,
                      cl->tracks[i].encoding);
-        if (do_setup(cl, i) < 0) { close(cl->fd); return NULL; }
+        if (do_setup(cl, i, srv->transport) < 0) { close(cl->fd); return NULL; }
 
         while (cl->state == STATE_SETUP_SENT) {
             struct pollfd pfd = { .fd = cl->fd, .events = POLLIN };
@@ -1053,7 +1214,7 @@ static void* streaming_thread(void* arg) {
             char* body; int body_len;
             int r = read_rtsp_response(cl, &body, &body_len);
             if (r == 0) {
-                if (handle_setup_reply(cl) < 0) {
+                if (handle_setup_reply(cl, srv->transport) < 0) {
                     close(cl->fd); return NULL;
                 }
             }
@@ -1082,27 +1243,77 @@ static void* streaming_thread(void* arg) {
         }
     }
 
-    /* Phase 4: Streaming — read RTP interleaved data */
-    ZST_LOG_INFO("rtspsrc", "streaming started");
+    /* Phase 4: Streaming */
+    ZST_LOG_INFO("rtspsrc", "streaming started (%s)", is_udp ? "UDP" : "TCP interleaved");
     srv->running = 1;
 
-    while (srv->running && cl->state == STATE_STREAMING) {
-        struct pollfd pfd = { .fd = cl->fd, .events = POLLIN };
-        int ret = poll(&pfd, 1, 1000);
+    if (is_udp) {
+        /* UDP mode: poll TCP for RTSP + all UDP RTP sockets */
+        int max_fds = 1 + cl->track_count;
+        struct pollfd* pfds = malloc(sizeof(struct pollfd) * (size_t)max_fds);
+        if (!pfds) { close(cl->fd); srv->running = 0; return NULL; }
 
-        if (ret < 0) { if (errno == EINTR) continue; break; }
-        if (ret == 0) continue;
+        while (srv->running && cl->state == STATE_STREAMING) {
+            int nfds = 0;
 
-        if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) break;
+            /* TCP socket for RTSP keepalive/commands */
+            pfds[nfds].fd = cl->fd;
+            pfds[nfds].events = POLLIN;
+            nfds++;
 
-        int n = (int)read(cl->fd, cl->buf + cl->buf_len,
-                          sizeof(cl->buf) - cl->buf_len);
-        if (n <= 0) break;
-        cl->buf_len += n;
-        cl->bytes_read += n;
+            /* UDP RTP sockets for each track */
+            for (int i = 0; i < cl->track_count; i++) {
+                if (cl->tracks[i].udp_rtp_fd >= 0) {
+                    pfds[nfds].fd = cl->tracks[i].udp_rtp_fd;
+                    pfds[nfds].events = POLLIN;
+                    nfds++;
+                }
+            }
 
-        /* Process interleaved RTP data */
-        if (process_interleaved_data(srv, cl) < 0) break;
+            int ret = poll(pfds, (nfds_t)nfds, 1000);
+            if (ret < 0) { if (errno == EINTR) continue; break; }
+            if (ret == 0) continue;
+
+            /* Check TCP for RTSP data */
+            if (pfds[0].revents & POLLIN) {
+                int n = (int)read(cl->fd, cl->buf + cl->buf_len,
+                                  sizeof(cl->buf) - cl->buf_len);
+                if (n <= 0) break;
+                cl->buf_len += n;
+                /* Process any RTSP responses (e.g. keepalive) */
+                char* body; int body_len;
+                while (cl->buf_len > 0) {
+                    int r = read_rtsp_response(cl, &body, &body_len);
+                    if (r == 1) break; /* need more data */
+                    if (r < 0) { break; }
+                }
+            }
+            if (pfds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) break;
+
+            /* Check UDP RTP sockets */
+            process_udp_data(srv, cl);
+        }
+        free(pfds);
+    } else {
+        /* TCP interleaved mode: poll TCP only */
+        while (srv->running && cl->state == STATE_STREAMING) {
+            struct pollfd pfd = { .fd = cl->fd, .events = POLLIN };
+            int ret = poll(&pfd, 1, 1000);
+
+            if (ret < 0) { if (errno == EINTR) continue; break; }
+            if (ret == 0) continue;
+
+            if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) break;
+
+            int n = (int)read(cl->fd, cl->buf + cl->buf_len,
+                              sizeof(cl->buf) - cl->buf_len);
+            if (n <= 0) break;
+            cl->buf_len += n;
+            cl->bytes_read += n;
+
+            /* Process interleaved RTP data */
+            if (process_interleaved_data(srv, cl) < 0) break;
+        }
     }
 
     /* Teardown */
@@ -1119,6 +1330,19 @@ static void* streaming_thread(void* arg) {
 
     close(cl->fd);
     cl->fd = -1;
+
+    /* Close UDP sockets */
+    for (int i = 0; i < cl->track_count; i++) {
+        if (cl->tracks[i].udp_rtp_fd >= 0) {
+            close(cl->tracks[i].udp_rtp_fd);
+            cl->tracks[i].udp_rtp_fd = -1;
+        }
+        if (cl->tracks[i].udp_rtcp_fd >= 0) {
+            close(cl->tracks[i].udp_rtcp_fd);
+            cl->tracks[i].udp_rtcp_fd = -1;
+        }
+    }
+
     srv->running = 0;
 
     ZST_LOG_INFO("rtspsrc", "streaming ended, %llu bytes read",
