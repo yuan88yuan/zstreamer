@@ -19,17 +19,22 @@ It provides a **GStreamer-like** pipeline architecture: elements connected via p
 ├── .dockerignore
 ├── .gitignore
 ├── include/           ← Public API headers
-│   ├── zst_types.h     ← Base types, result codes, struct forward decls
-│   ├── zst_buffer.h    ← Reference-counted buffer + typed memory
-│   ├── zst_pad.h       ← SRC/SINK connection pads
-│   ├── zst_element.h   ← Element ops vtable + state machine
-│   ├── zst_pipeline.h  ← Element container with state propagation
-│   ├── zst_queue.h     ← Thread-safe bounded buffer queue
-│   ├── zst_scheduler.h ← Single / multi-thread pipeline driver
-│   ├── zst_plugin.h    ← Dynamic plugin loading (dlopen)
-│   ├── zst_bus.h       ← Async event bus for error/EOS/state notifications
-│   ├── zst_caps.h      ← Caps negotiation (media type, resolution, format)
-│   └── zst_log.h       ← Lightweight logging system
+│   ├── zst_types.h        ← Base types, result codes, struct forward decls
+│   ├── zst_buffer.h       ← Reference-counted buffer + typed memory
+│   ├── zst_pad.h          ← SRC/SINK connection pads
+│   ├── zst_element.h      ← Element ops vtable + state machine
+│   ├── zst_pipeline.h     ← Element container with state propagation
+│   ├── zst_queue.h        ← Thread-safe bounded buffer queue
+│   ├── zst_scheduler.h    ← Single / multi-thread pipeline driver
+│   ├── zst_plugin.h       ← Dynamic plugin loading (dlopen)
+│   ├── zst_bus.h          ← Async event bus for error/EOS/state notifications
+│   ├── zst_caps.h         ← Caps negotiation (media type, resolution, format)
+│   ├── zst_log.h          ← Lightweight logging system
+│   ├── zst_clock.h        ← Clock for A/V sync
+│   ├── zst_allocator.h    ← Memory allocator interface
+│   ├── zst_buffer_pool.h  ← Pre-allocated buffer recycling
+│   ├── zst_rtsp_server.h  ← RTSP server multi-session API
+│   └── zst_srt.h          ← SRT subtitle parser element
 ├── src/               ← Core library + element implementations
 │   ├── zst_buffer.c
 │   ├── zst_bus.c
@@ -40,16 +45,35 @@ It provides a **GStreamer-like** pipeline architecture: elements connected via p
 │   ├── zst_queue.c
 │   ├── zst_queue_element.c ← First-class queue element
 │   ├── zst_scheduler.c
-│   ├── zst_log.c      ← Logging implementation
+│   ├── zst_log.c          ← Logging implementation
 │   ├── zst_plugin.c
-│   ├── v4l2_source.c  ← V4L2 camera capture (real V4L2 + mock fallback)
-│   ├── h264_encoder.c ← x264 H.264 encoder (real x264)
-│   ├── mp4_muxer.c    ← FFmpeg/libavformat MP4 muxer (real libavformat)
-│   ├── file_sink.c    ← FILE* writer
-│   ├── alsa_source.c  ← ALSA audio capture (real ALSA + mock fallback)
-│   ├── aac_encoder.c  ← FFmpeg AAC audio encoder (real libavcodec)
-│   ├── video_scaler.c ← libswscale video format/resolution conversion
-│   └── audio_resampler.c ← libswresample audio sample rate/format conversion
+│   ├── zst_clock.c        ← System clock + pipeline clock
+│   ├── zst_allocator.c    ← Memory allocator
+│   ├── zst_buffer_pool.c  ← Buffer pool
+│   ├── v4l2_source.c      ← V4L2 camera capture (real V4L2 + mock fallback)
+│   ├── alsa_source.c      ← ALSA audio capture (real ALSA + mock fallback)
+│   ├── h264_encoder.c     ← x264 H.264 encoder (real x264)
+│   ├── h264_decoder.c     ← FFmpeg libavcodec H.264 decoder
+│   ├── h265_encoder.c     ← FFmpeg libavcodec H.265 encoder
+│   ├── h265_decoder.c     ← FFmpeg libavcodec H.265 decoder
+│   ├── aac_encoder.c      ← FFmpeg AAC audio encoder (real libavcodec)
+│   ├── aac_decoder.c      ← FFmpeg AAC audio decoder
+│   ├── mp4_muxer.c        ← FFmpeg/libavformat MP4 muxer (real libavformat)
+│   ├── file_sink.c        ← FILE* writer
+│   ├── file_source.c      ← FILE* reader
+│   ├── fake_sink.c        ← Null sink for testing
+│   ├── video_scaler.c     ← libswscale video format/resolution conversion
+│   ├── audio_resampler.c  ← libswresample audio sample rate/format conversion
+│   ├── video_test_src.c   ← Synthetic video test pattern source
+│   ├── audio_test_src.c   ← Synthetic audio tone source
+│   ├── text_overlay.c     ← Text overlay on video frames
+│   ├── text_source.c      ← Timed text subtitle source
+│   ├── srt_parser.c       ← SRT subtitle file parser
+│   ├── net_source.c       ← TCP/UDP network source (raw bytes)
+│   ├── net_sink.c         ← TCP/UDP network sink (raw bytes)
+│   ├── rtsp_source.c      ← RTSP client source (TCP interleaved + UDP)
+│   ├── rtsp_sink.c        ← RTSP client sink
+│   └── rtsp_server.c      ← Multi-session RTSP server (TCP interleaved + UDP)
 ├── tests/
 │   ├── test_core.c    ← 35 unit tests: core + scheduler + queue + caps + bus + plugins + log + scaler + resampler
 │   └── example_record.c ← Full pipeline demo with queue elements
@@ -150,19 +174,29 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | Core Framework              | ✅ All 8 core modules implemented|
 | Scheduler Integration       | ✅ Topological sort, push/pull, EOS, state hardening |
 | Queue Element               | ✅ First-class queue with worker thread |
-| Real Element Implementations| ✅ 16 elements: V4L2, x264, MP4(mux), file sink, file source, ALSA, AAC, video_scaler, audio_resampler, fakesink, video_test_src, audio_test_src, text_overlay, text_source, net_source, rtsp_server |
+| Real Element Implementations| ✅ 24 elements: v4l2_source, alsa_source, h264_encoder, h264_decoder, h265_encoder, h265_decoder, aac_encoder, aac_decoder, mp4_muxer, file_sink, file_source, fake_sink, video_scaler, audio_resampler, video_test_src, audio_test_src, text_overlay, text_source, srt_parser, net_source, net_sink, rtsp_source, rtsp_sink, rtsp_server |
 | Caps Negotiation            | ✅ Done                          |
 | Event Bus                   | ✅ Done                          |
 | Dynamic Plugins             | ✅ Done                          |
 | Logging System              | ✅ Done                          |
-| Unit Tests                  | ✅ 47 tests, all passing         |
-| Allocator API               | ✅ Mostly done (pools + all 7 elements migrated; default sizing & expanded tests pending) |
+| Unit Tests                  | ✅ 52 core tests + test_net_source + test_net_sink, all passing |
+| Allocator API + Pool        | ✅ Done (allocator interface, buffer pools, 7+ elements migrated) |
 | Clock                       | ✅ Done (system clock + pipeline integration) |
 | Text Overlay (4s)           | ✅ Included in Element Implementations |
 | A/V Sync (clock slaving)    | 📝 Future                        |
-| Text Source (4t)            | ✅ Done                          |
-| RTSP Server Multi-Session (4z) | ✅ Done (port 8554, multiple mount points, per-client threads, H.264/AAC RTP) |
-| SRT Parser (4u)             | 📝 Planned                       |
+| RTSP Server Multi-Session (4z) | ✅ Done (port 8554, multiple mount points, per-client threads, H.264/AAC RTP, TCP interleaved + UDP unicast transport) |
+| SRT Subtitle Parser (4u)    | ✅ Done                          |
+| H.264 Decoder (4v)          | ✅ Done                          |
+| H.265 Encoder               | ✅ Done                          |
+| H.265 Decoder               | ✅ Done                          |
+| AAC Decoder (4y)            | ✅ Done                          |
+| Net Source / Net Sink (4m/n)| ✅ Done                          |
+| RTSP Source (UDP support)   | ✅ Done (TCP interleaved + UDP unicast transport) |
+| RTSP Sink (4p)              | ✅ Done                          |
+| RTSP Server (UDP support)   | ✅ Done (TCP interleaved + UDP unicast transport) |
+| A/V Sync (clock slaving)    | 📝 Future                        |
+| RTMP Source/Sink (4q/4r)    | 📝 Planned                       |
+| Element Bins                | 📝 Planned                       |
 | CI Pipeline                 | 📝 Future                        |
 
 ---

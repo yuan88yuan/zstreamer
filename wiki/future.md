@@ -1,60 +1,49 @@
-# Future
+# Future Work
 
-These features are still planned. See `architecture.md` (Future Direction section) for how they fit into the system architecture, and `implementation-plan.md` for the phased build order.
+This document lists features that are still planned across all phases.
 
-**Implemented already:**
-- ✅ Queue Element — see `src/zst_queue_element.c`
-- ✅ All element implementations (V4L2, ALSA, x264, AAC, MP4 mux, file sink)
+## Element Implementations — Phase 4
 
----
+| Item | Description | Status |
+|------|-------------|--------|
+| 4q — RTMP Source | RTMP/FLV pull client for receiving live streams | 📝 Planned |
+| 4r — RTMP Sink | RTMP push client for publishing live streams | 📝 Planned |
 
-## event bus
-```
-ZST_EVENT_EOS
-ZST_EVENT_ERROR
-ZST_EVENT_STATE_CHANGED
-```
+## Allocator & Pool — Phase 8a
 
-See: Phase 6 in implementation-plan.md
+| Item | Description | Status |
+|------|-------------|--------|
+| DMABUF allocator | Linux dma-buf for zero-copy GPU interop | 📝 Planned |
+| CUDA/Vulkan allocators | Device memory allocators for GPU pipelines | 📝 Planned |
+| Topology-aware pool sizing | Auto-adjust min_buffers based on queue count | 📝 Planned |
+| Pool stress tests | Acquire/recycle loop, timeout, flush tests | 📝 Planned |
 
----
+## Clock — Phase 8b
 
-## caps negotiation
-現在 pipeline 還沒 format negotiation。
+| Item | Description | Status |
+|------|-------------|--------|
+| A/V Sync (clock slaving) | Slave video/audio clocks to pipeline master clock | 📝 Planned |
 
-實際上非常重要：
+## Advanced Features — Phase 8c
 
-```
-NV12 -> YUV420P
-48000 -> 44100
-```
+| Item | Description | Status |
+|------|-------------|--------|
+| Element Bin | Composite sub-pipeline (nested elements, ghost pads) | 📝 Planned |
+| Pad Probes | Buffer interception callbacks on pads | 📝 Planned |
+| Segment Seeking | NPT-based seek within a stream | 📝 Planned |
 
-See: Phase 5 in implementation-plan.md
+## Pipeline & CI — Phases 9-10
 
----
+| Item | Description | Status |
+|------|-------------|--------|
+| CI Pipeline | GitHub Actions: build + test + static analysis | 📝 Planned |
+| Doxygen API Reference | Auto-generated API documentation | 📝 Planned |
+| Tutorials | Getting-started guides, pipeline examples | 📝 Planned |
 
-## allocator API
-做 zero-copy 必備。
+## SRT Transport Protocol
 
-See: Phase 8a in implementation-plan.md
+| Item | Description | Status |
+|------|-------------|--------|
+| SRT source/sink | Secure Reliable Transport protocol (UDT-based) | 📝 Planned |
 
----
-
-## clock
-A/V sync 核心。
-
-See: Phase 8b in implementation-plan.md
-
----
-
-## text rendering
-
-Subtitle / caption / label 文字疊加在 video frame 上。
-
-實際上是 video pipeline 很常見的需求：
-
-```
-v4l2src → queue → text_overlay → queue → h264enc → ...
-```
-
-See: Phase 11 in implementation-plan.md
+> **Note:** The `srt_parser` element (phase 4u) already implements SRT **subtitle** file parsing (`.srt`). The SRT **transport protocol** is a separate feature.
