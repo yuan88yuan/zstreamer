@@ -506,7 +506,7 @@ static zst_element_t* plugin_create_element(const char* name)
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "textsource_plugin",
-        .author = "Antigravity",
+        .author = "zstreamer",
         .version = "1.0.0",
         .init = NULL,
         .deinit = NULL

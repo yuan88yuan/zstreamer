@@ -148,11 +148,15 @@ target_link_libraries(zst_v4l2source PRIVATE zstreamer ${V4L2_LIBRARIES})
 
 add_library(zst_rtspsource SHARED src/rtsp_source.c)
 target_compile_definitions(zst_rtspsource PRIVATE BUILDING_PLUGIN)
-target_link_libraries(zst_rtspsource PRIVATE zstreamer ${AVFORMAT_LIBRARIES} ${AVUTIL_LIBRARIES})
+target_link_libraries(zst_rtspsource PRIVATE zstreamer)
 
 add_library(zst_rtspsink SHARED src/rtsp_sink.c)
 target_compile_definitions(zst_rtspsink PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_rtspsink PRIVATE zstreamer ${AVFORMAT_LIBRARIES} ${AVUTIL_LIBRARIES})
+
+add_library(zst_rtsp_server SHARED src/rtsp_server.c)
+target_compile_definitions(zst_rtsp_server PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_rtsp_server PRIVATE zstreamer)
 
 add_library(zst_alsasource SHARED src/alsa_source.c)
 target_compile_definitions(zst_alsasource PRIVATE BUILDING_PLUGIN)
@@ -226,7 +230,7 @@ add_library(zst_aacdecoder SHARED src/aac_decoder.c)
 target_compile_definitions(zst_aacdecoder PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_aacdecoder PRIVATE zstreamer ${AVCODEC_LIBRARIES} ${AVUTIL_LIBRARIES})
 
-set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_rtspsource zst_rtspsink zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_textsource zst_netsrc zst_netsink zst_h264decoder zst_h265encoder zst_h265decoder zst_aacdecoder)
+set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_rtspsource zst_rtspsink zst_rtsp_server zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_textsource zst_netsrc zst_netsink zst_h264decoder zst_h265encoder zst_h265decoder zst_aacdecoder)
 foreach(plugin ${PLUGIN_TARGETS})
     target_include_directories(${plugin} PRIVATE ${ZSTREAMER_INCLUDE_DIR} PRIVATE ${ELEMENT_INCLUDE_DIRS})
     set_target_properties(${plugin} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")

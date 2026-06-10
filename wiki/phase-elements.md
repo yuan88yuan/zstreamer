@@ -330,6 +330,27 @@ Connects to an RTMP server (or receives RTMP pushes) and demuxes the FLV stream 
 - [ ] Reconnection: auto-reconnect on stream loss, exponential back-off
 - [ ] EOS on RTMP stream end or `deleteStream`
 
+### 4z — RTSP Server (Multi-Session)  (✅ Done)
+
+Full RTSP server element that serves multiple mount points on a single port.
+Each mount point exposes a named pair of sink pads (video/audio).
+Connected clients can DESCRIBE/SETUP/PLAY and receive RTP-over-RTSP interleaved data.
+Designed using patterns from ireader/media-server's librtsp.
+
+- [x] `rtsp_server` element with 2×N sink pads (N sessions, each with video + audio)
+- [x] Multi-session: `zst_rtsp_server_add_session(el, "session0")` → creates `session0_video` + `session0_audio` pads
+- [x] Single-port listener (default 8554) with per-client thread
+- [x] Full RTSP protocol: DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN, OPTIONS
+- [x] URI-based routing: `rtsp://host:8554/session0` → session0's stream
+- [x] RTP packetization: H.264 (RFC 3984 single NAL + FU-A), AAC (RFC 3640 MPEG4-Generic)
+- [x] RTP-over-RTSP TCP interleaved transport (`$` + channel + length + payload)
+- [x] SDP generation per session with correct rtpmap/fmtp
+- [x] RTCP Sender Reports with NTP/RTP timestamps (every 5s)
+- [x] Concurrent client support — multiple clients can stream the same session
+- [x] Per-client RTP state (SSRC, seq, timestamps)
+- [x] H.264 NAL unit scan and fragmentation
+- [x] Dynamic plugin build (`libzst_rtsp_server.so`)
+
 ### 4r — RTMP Sink  (📝 Planned)
 
 Publishes pipeline output to an RTMP ingest endpoint — the standard way to push to YouTube Live, Twitch, Facebook Live, and most CDNs.

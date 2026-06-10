@@ -1,0 +1,62 @@
+/*=============================================================================
+    zst_rtsp_server.h — RTSP server element with multi-session support
+
+    Serves multiple RTSP sessions on a single port, each with its own
+    mount point (URI path). Sessions are mapped to named sink pad pairs.
+
+    Pipeline usage:
+        rtsp_server = zst_rtsp_server_create();
+        zst_rtsp_server_add_session(server, "session0");
+        zst_rtsp_server_add_session(server, "session1");
+
+        // Link sources to session sink pads
+        zst_pad_link(v4l2src_video, zst_element_get_pad(server, "session0_video"));
+        zst_pad_link(alsa_audio,    zst_element_get_pad(server, "session0_audio"));
+        zst_pad_link(other_video,   zst_element_get_pad(server, "session1_video"));
+
+    Client URL:
+        rtsp://host:8554/session0  →  gets session0's video+audio
+        rtsp://host:8554/session1  →  gets session1's video+audio
+=============================================================================*/
+#pragma once
+
+#include "zst_types.h"
+#include "zst_element.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/**
+ * Create an RTSP server element.
+ * Initially has no sessions. Use zst_rtsp_server_add_session() to add
+ * mount points. Each session creates a video and audio sink pad.
+ */
+zst_element_t* zst_rtsp_server_create(void);
+
+/**
+ * Add a session/mount point to the RTSP server.
+ *
+ * @param el     RTSP server element
+ * @param name   Mount point name (e.g., "session0" → rtsp://host:8554/session0)
+ * @return ZST_OK on success, ZST_ERROR if session already exists
+ *
+ * This creates two sink pads:
+ *   "<name>_video" — accepts video/x-h264 or video/x-h265 packets
+ *   "<name>_audio" — accepts audio/aac packets
+ */
+zst_result_t zst_rtsp_server_add_session(zst_element_t* el, const char* name);
+
+/**
+ * Remove a session and its sink pads.
+ */
+zst_result_t zst_rtsp_server_remove_session(zst_element_t* el, const char* name);
+
+/**
+ * Get the number of configured sessions.
+ */
+int zst_rtsp_server_session_count(zst_element_t* el);
+
+#ifdef __cplusplus
+}
+#endif
