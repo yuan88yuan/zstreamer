@@ -218,12 +218,12 @@ Generates video frames with rendered text (no video input). Useful for test patt
 - [x] Useful for test patterns, title cards, and simple slideshows
 - [x] Configurable resolution, framerate, text content, background colour
 
-### 4u — SRT Subtitle Parser  (📝 Planned)
+### 4u — SRT Subtitle Parser  (✅ done)
 
 Parse SRT subtitle format into timed text events and feed them to `text_overlay` at correct PTS.
 
-- [ ] Parse SRT subtitle format into timed text events
-- [ ] Feed parsed text segments to `text_overlay` at correct PTS
+- [x] Parse SRT subtitle format into timed text events
+- [x] Feed parsed text segments to `text_overlay` via `text` sink pad (pts/duration)
 - [ ] Support ASS/SSA format parsing (advanced styling)
 
 ### 4v — H.264 Decoder  (✅ done)

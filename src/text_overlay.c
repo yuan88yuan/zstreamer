@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 #include <ft2build.h>
 #include FT_FREETYPE_H
 
@@ -19,6 +20,13 @@ typedef struct {
 
     zst_pad_t* sinkpad;
     zst_pad_t* srcpad;
+    zst_pad_t* textpad;
+
+    pthread_mutex_t text_lock;
+
+    /* Active subtitle text and expiry (ns) */
+    char subtitle_text[512];
+    zst_time_t subtitle_end_ns;
 
     FT_Library ft;
     FT_Face face;
@@ -50,6 +58,10 @@ text_overlay_open(zst_element_t* el)
 
     FT_Set_Pixel_Sizes(s->face, 0, s->font_size > 0 ? s->font_size : 48);
 
+    pthread_mutex_init(&s->text_lock, NULL);
+    s->subtitle_text[0] = '\0';
+    s->subtitle_end_ns = 0;
+
     return ZST_OK;
 }
 
@@ -65,6 +77,35 @@ text_overlay_close(zst_element_t* el)
         FT_Done_FreeType(s->ft);
         s->ft_initialized = 0;
     }
+    pthread_mutex_destroy(&s->text_lock);
+    return ZST_OK;
+}
+
+static zst_result_t
+text_overlay_text_push(zst_pad_t* pad, zst_buffer_t* buf)
+{
+    if (!pad || !buf) return ZST_ERROR;
+    zst_element_t* el = pad->parent;
+    if (!el) return ZST_ERROR;
+    text_overlay_t* s = el->priv;
+
+    /* Expect text in memory.data as NUL-terminated string; use pts/duration for timing */
+    const char* str = NULL;
+    if (buf->memory.data && buf->memory.size > 0) {
+        str = (const char*)buf->memory.data;
+    } else if (buf->payload) {
+        str = (const char*)buf->payload;
+    }
+
+    if (str) {
+        pthread_mutex_lock(&s->text_lock);
+        strncpy(s->subtitle_text, str, sizeof(s->subtitle_text) - 1);
+        s->subtitle_text[sizeof(s->subtitle_text) - 1] = '\0';
+        s->subtitle_end_ns = buf->pts + buf->duration;
+        pthread_mutex_unlock(&s->text_lock);
+    }
+
+    zst_buffer_unref(buf);
     return ZST_OK;
 }
 
@@ -128,10 +169,23 @@ text_overlay_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
 
     int max_x = vf->width - 10;
 
+    /* Decide which text to render: active subtitle or static text */
+    const char* render_text = s->text;
+    pthread_mutex_lock(&s->text_lock);
+    if (s->subtitle_text[0] != '\0' && in->pts <= s->subtitle_end_ns) {
+        render_text = s->subtitle_text;
+    }
+    /* If subtitle expired, clear it */
+    if (s->subtitle_text[0] != '\0' && in->pts > s->subtitle_end_ns) {
+        s->subtitle_text[0] = '\0';
+        s->subtitle_end_ns = 0;
+    }
+    pthread_mutex_unlock(&s->text_lock);
+
     int i = 0;
-    while (s->text[i] != '\0') {
+    while (render_text[i] != '\0') {
         /* Check for explicit newline */
-        if (s->text[i] == '\n') {
+        if (render_text[i] == '\n') {
             x = start_x;
             y += line_height;
             i++;
@@ -141,8 +195,8 @@ text_overlay_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
         /* Measure next word */
         int word_width = 0;
         int j = i;
-        while (s->text[j] != '\0' && s->text[j] != ' ' && s->text[j] != '\n') {
-            if (FT_Load_Char(s->face, s->text[j], FT_LOAD_DEFAULT) == 0) {
+        while (render_text[j] != '\0' && render_text[j] != ' ' && render_text[j] != '\n') {
+            if (FT_Load_Char(s->face, render_text[j], FT_LOAD_DEFAULT) == 0) {
                 word_width += (s->face->glyph->advance.x >> 6);
             }
             j++;
@@ -155,10 +209,10 @@ text_overlay_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
         }
 
         /* Render word and spaces */
-        while (i < j || (s->text[i] == ' ' && s->text[i] != '\0')) {
-            if (s->text[i] == '\n') break;
+        while (i < j || (render_text[i] == ' ' && render_text[i] != '\0')) {
+            if (render_text[i] == '\n') break;
 
-            if (s->text[i] == ' ') {
+            if (render_text[i] == ' ') {
                 if (FT_Load_Char(s->face, ' ', FT_LOAD_DEFAULT) == 0) {
                     x += (s->face->glyph->advance.x >> 6);
                 } else {
@@ -168,7 +222,7 @@ text_overlay_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
                 continue;
             }
 
-            if (FT_Load_Char(s->face, s->text[i], FT_LOAD_RENDER) == 0) {
+            if (FT_Load_Char(s->face, render_text[i], FT_LOAD_RENDER) == 0) {
                 FT_Bitmap* bmp = &s->face->glyph->bitmap;
                 int draw_x = x + s->face->glyph->bitmap_left;
                 int draw_y = y - s->face->glyph->bitmap_top;
@@ -262,8 +316,12 @@ zst_text_overlay_create(const char* text)
 
     priv->sinkpad = zst_pad_create("sink", ZST_PAD_SINK);
     priv->srcpad  = zst_pad_create("src",  ZST_PAD_SRC);
+    priv->textpad = zst_pad_create("text", ZST_PAD_SINK);
+    /* Override default push callback to handle subtitle text buffers */
+    priv->textpad->push = text_overlay_text_push;
 
     zst_element_add_pad(el, priv->sinkpad);
+    zst_element_add_pad(el, priv->textpad);
     zst_element_add_pad(el, priv->srcpad);
 
     return el;
