@@ -1552,6 +1552,74 @@ test_allocator_pool_nonblock(void)
     PASS();
 }
 
+
+typedef struct {
+    zst_clock_t* reference;
+    zst_time_t   reference_start;
+    zst_time_t   time_start;
+    uint32_t     rate_ppm;
+} test_rate_clock_priv_t;
+
+static zst_time_t
+test_abs_diff_time(zst_time_t a, zst_time_t b)
+{
+    return a > b ? a - b : b - a;
+}
+
+static zst_time_t
+test_rate_clock_get_time(zst_clock_t* clock)
+{
+    test_rate_clock_priv_t* priv = clock->priv;
+    zst_time_t now_ref = zst_clock_get_time(priv->reference);
+    zst_time_t elapsed = now_ref - priv->reference_start;
+    return priv->time_start +
+           (zst_time_t)(((long double)elapsed * (long double)priv->rate_ppm) /
+                        1000000.0L);
+}
+
+static void
+test_rate_clock_wait(zst_clock_t* clock, zst_time_t time)
+{
+    test_rate_clock_priv_t* priv = clock->priv;
+    zst_time_t reference_duration =
+        (zst_time_t)(((long double)time * 1000000.0L) /
+                     (long double)priv->rate_ppm);
+    zst_clock_wait(priv->reference, reference_duration);
+}
+
+static void
+test_rate_clock_destroy(zst_clock_t* clock)
+{
+    test_rate_clock_priv_t* priv = clock->priv;
+    if (priv) {
+        zst_clock_unref(priv->reference);
+        free(priv);
+    }
+}
+
+static zst_clock_t*
+test_rate_clock_create(zst_clock_t* reference, uint32_t rate_ppm)
+{
+    zst_clock_t* clock = calloc(1, sizeof(*clock));
+    assert(clock != NULL);
+
+    test_rate_clock_priv_t* priv = calloc(1, sizeof(*priv));
+    assert(priv != NULL);
+
+    priv->reference = zst_clock_ref(reference);
+    priv->reference_start = zst_clock_get_time(reference);
+    priv->time_start = priv->reference_start;
+    priv->rate_ppm = rate_ppm;
+
+    clock->refcount = 1;
+    clock->get_time = test_rate_clock_get_time;
+    clock->wait = test_rate_clock_wait;
+    clock->destroy = test_rate_clock_destroy;
+    clock->priv = priv;
+
+    return clock;
+}
+
 static void
 test_clock_basic(void)
 {
@@ -1587,18 +1655,39 @@ test_clock_basic(void)
 static void
 test_clock_slaving(void)
 {
-    TEST("clock slaving time advance");
+    TEST("clock slaving follows a faster master clock");
 
     zst_clock_t* sys_clock = zst_clock_system_create();
-    zst_clock_t* master_clock = zst_clock_system_create();
+    zst_clock_t* master_clock = test_rate_clock_create(sys_clock, 1200000);
     zst_clock_t* slave = zst_clock_slave_create(master_clock, sys_clock);
     assert(slave != NULL);
 
-    zst_time_t t1 = zst_clock_get_time(slave);
-    zst_clock_wait(slave, 50000000); // 50 ms
-    zst_time_t t2 = zst_clock_get_time(slave);
+    zst_time_t initial_master = zst_clock_get_time(master_clock);
+    zst_time_t initial_slave = zst_clock_get_time(slave);
+    assert(test_abs_diff_time(initial_master, initial_slave) < 10000000ULL);
 
-    assert(t2 > t1);
+    /* The slave worker samples once per second. Give it enough time to
+       estimate the 20% faster master and re-anchor the slave time. */
+    zst_clock_wait(sys_clock, 1250000000ULL);
+
+    zst_time_t synced_master = zst_clock_get_time(master_clock);
+    zst_time_t synced_slave = zst_clock_get_time(slave);
+    assert(test_abs_diff_time(synced_master, synced_slave) < 100000000ULL);
+
+    zst_time_t ref_before = zst_clock_get_time(sys_clock);
+    zst_time_t slave_before = zst_clock_get_time(slave);
+    zst_clock_wait(sys_clock, 200000000ULL);
+    zst_time_t ref_after = zst_clock_get_time(sys_clock);
+    zst_time_t slave_after = zst_clock_get_time(slave);
+
+    zst_time_t ref_delta = ref_after - ref_before;
+    zst_time_t slave_delta = slave_after - slave_before;
+    assert(slave_delta > ref_delta + 2000000ULL);
+
+    zst_time_t wait_before = zst_clock_get_time(slave);
+    zst_clock_wait(slave, 50000000ULL);
+    zst_time_t wait_after = zst_clock_get_time(slave);
+    assert(wait_after - wait_before >= 45000000ULL);
 
     zst_clock_unref(slave);
     zst_clock_unref(master_clock);
