@@ -1809,6 +1809,164 @@ test_video_test_src(void)
     PASS();
 }
 
+static void
+test_file_source(void)
+{
+    TEST("file_source basic reading, offset, length, chunk-size, and loop");
+
+    const char* filepath = "test_filesrc.txt";
+    FILE* fp = fopen(filepath, "wb");
+    assert(fp != NULL);
+    const char* content = "0123456789abcdefghijklmnopqrstuvwxyz";
+    size_t len = strlen(content);
+    assert(fwrite(content, 1, len, fp) == len);
+    fclose(fp);
+
+    zst_plugin_registry_init();
+    zst_plugin_registry_scan("/workspace/build/plugins");
+
+    // 1. Basic reading test
+    zst_element_t* src = zst_element_factory_make("filesrc");
+    assert(src != NULL);
+
+    zst_element_set_property(src, "path", filepath);
+    zst_element_set_property(src, "chunk-size", "10");
+
+    zst_caps_t* caps = zst_pad_get_caps(zst_element_get_pad(src, "src"));
+    assert(caps != NULL);
+    assert(caps->structs != NULL);
+    assert(strcmp(caps->structs->media_type, "text/plain") == 0);
+    zst_caps_destroy(caps);
+
+    zst_result_t res = zst_element_set_state(src, ZST_STATE_PLAYING);
+    assert(res == ZST_OK);
+
+    zst_pad_t* src_pad = zst_element_get_pad(src, "src");
+    assert(src_pad != NULL);
+
+    zst_buffer_t* buf = NULL;
+    res = src_pad->pull(src_pad, &buf);
+    assert(res == ZST_OK);
+    assert(buf != NULL);
+    assert(buf->memory.size == 10);
+    assert(strncmp((char*)buf->memory.data, "0123456789", 10) == 0);
+    zst_buffer_unref(buf);
+
+    buf = NULL;
+    res = src_pad->pull(src_pad, &buf);
+    assert(res == ZST_OK);
+    assert(buf != NULL);
+    assert(buf->memory.size == 10);
+    assert(strncmp((char*)buf->memory.data, "abcdefghij", 10) == 0);
+    zst_buffer_unref(buf);
+
+    buf = NULL;
+    res = src_pad->pull(src_pad, &buf);
+    assert(res == ZST_OK);
+    assert(buf != NULL);
+    assert(buf->memory.size == 10);
+    assert(strncmp((char*)buf->memory.data, "klmnopqrst", 10) == 0);
+    zst_buffer_unref(buf);
+
+    buf = NULL;
+    res = src_pad->pull(src_pad, &buf);
+    assert(res == ZST_OK);
+    assert(buf != NULL);
+    assert(buf->memory.size == 6);
+    assert(strncmp((char*)buf->memory.data, "uvwxyz", 6) == 0);
+    zst_buffer_unref(buf);
+
+    buf = NULL;
+    res = src_pad->pull(src_pad, &buf);
+    assert(res == ZST_EOF);
+
+    zst_element_set_state(src, ZST_STATE_NULL);
+    zst_element_destroy(src);
+
+    // 2. Offset and length test
+    src = zst_element_factory_make("filesrc");
+    assert(src != NULL);
+    zst_element_set_property(src, "path", filepath);
+    zst_element_set_property(src, "chunk-size", "5");
+    zst_element_set_property(src, "offset", "10");
+    zst_element_set_property(src, "length", "12");
+
+    res = zst_element_set_state(src, ZST_STATE_PLAYING);
+    assert(res == ZST_OK);
+    src_pad = zst_element_get_pad(src, "src");
+
+    buf = NULL;
+    res = src_pad->pull(src_pad, &buf);
+    assert(res == ZST_OK);
+    assert(buf != NULL);
+    assert(buf->memory.size == 5);
+    assert(strncmp((char*)buf->memory.data, "abcde", 5) == 0);
+    zst_buffer_unref(buf);
+
+    buf = NULL;
+    res = src_pad->pull(src_pad, &buf);
+    assert(res == ZST_OK);
+    assert(buf != NULL);
+    assert(buf->memory.size == 5);
+    assert(strncmp((char*)buf->memory.data, "fghij", 5) == 0);
+    zst_buffer_unref(buf);
+
+    buf = NULL;
+    res = src_pad->pull(src_pad, &buf);
+    assert(res == ZST_OK);
+    assert(buf != NULL);
+    assert(buf->memory.size == 2);
+    assert(strncmp((char*)buf->memory.data, "kl", 2) == 0);
+    zst_buffer_unref(buf);
+
+    buf = NULL;
+    res = src_pad->pull(src_pad, &buf);
+    assert(res == ZST_EOF);
+
+    zst_element_set_state(src, ZST_STATE_NULL);
+    zst_element_destroy(src);
+
+    // 3. Loop test
+    src = zst_element_factory_make("filesrc");
+    assert(src != NULL);
+    zst_element_set_property(src, "path", filepath);
+    zst_element_set_property(src, "chunk-size", "20");
+    zst_element_set_property(src, "offset", "30");
+    zst_element_set_property(src, "loop", "true");
+
+    res = zst_element_set_state(src, ZST_STATE_PLAYING);
+    assert(res == ZST_OK);
+    src_pad = zst_element_get_pad(src, "src");
+
+    buf = NULL;
+    res = src_pad->pull(src_pad, &buf);
+    assert(res == ZST_OK);
+    assert(buf != NULL);
+    assert(buf->memory.size == 6);
+    assert(strncmp((char*)buf->memory.data, "uvwxyz", 6) == 0);
+    zst_buffer_unref(buf);
+
+    buf = NULL;
+    res = src_pad->pull(src_pad, &buf);
+    assert(res == ZST_OK);
+    assert(buf != NULL);
+    assert(buf->memory.size == 6);
+    assert(strncmp((char*)buf->memory.data, "uvwxyz", 6) == 0);
+    zst_buffer_unref(buf);
+
+    zst_element_set_property(src, "loop", "false");
+
+    buf = NULL;
+    res = src_pad->pull(src_pad, &buf);
+    assert(res == ZST_EOF);
+
+    zst_element_set_state(src, ZST_STATE_NULL);
+    zst_element_destroy(src);
+
+    remove(filepath);
+    PASS();
+}
+
 /* ═══════════════════════════════════════════════════════════════
    Main
    ═══════════════════════════════════════════════════════════════ */
@@ -1962,6 +2120,9 @@ int main(void)
 
     printf("[video test source]\n");
     test_video_test_src();
+
+    printf("[file source]\n");
+    test_file_source();
 
     /* ── Summary ── */
     printf("\n──────────────────────────────────────────────────\n");

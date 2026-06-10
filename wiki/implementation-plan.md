@@ -5,7 +5,7 @@ All phases are now documented in separate files for easier maintenance.
 | Phase | Document | Lines | Status |
 |-------|----------|-------|--------|
 | 0–3   | [Core Framework](phase-core.md) | ~190 | ✅ Complete |
-| 4     | [Element Implementations](phase-elements.md) | ~220 | ✅ 4a-4h done, 📝 4i-4r planned |
+| 4     | [Element Implementations](phase-elements.md) | ~220 | ✅ 4a-4i done, 📝 4j-4r planned |
 | 5–7   | [Infrastructure](phase-infrastructure.md) | ~58 | ✅ Complete |
 | 8     | [Advanced Features](phase-advanced.md) | ~115 | 🔄 In Progress |
 | 9–11  | [Future Work](phase-future.md) | ~66 | ⬜ Not Started |
@@ -21,7 +21,7 @@ All phases are now documented in separate files for easier maintenance.
 | Scheduler (2) | ✅ Done | Topological sort, push/pull, EOS |
 | Queue Element (3) | ✅ Done | First-class queue with worker thread |
 | Logging (3.5) | ✅ Done | Compile-time log levels, thread-safe |
-| Elements (4) | ✅ 4a-4h, 4n done | 9 elements implemented; 4i-4m, 4o-4r planned |
+| Elements (4) | ✅ 4a-4i, 4n done | 10 elements implemented; 4j-4m, 4o-4r planned |
 | Caps Negotiation (5) | ✅ Done | Intersection, auto-negotiation |
 | Event Bus (6) | ✅ Done | Error/state/EOS notifications |
 | Dynamic Plugins (7) | ✅ Done | dlopen-based loading |

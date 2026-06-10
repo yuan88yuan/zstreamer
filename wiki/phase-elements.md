@@ -1,4 +1,4 @@
-# Element Implementations — Phase 4  (✅ 4a-4h, 4n; 📝 4i-4m, 4o-4r)
+# Element Implementations — Phase 4  (✅ 4a-4i, 4n; 📝 4j-4m, 4o-4r)
 
 Eight elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.
 Nine more are planned: file/network I/O for stream ingestion, RTSP/RTMP for live streaming, test sources for headless benchmarking, and a fake sink for pipeline debugging.
@@ -91,17 +91,17 @@ format mismatches (S16LE ↔ F32LE).
 
 ---
 
-### 4i — File Source  (📝 Planned)
+### 4i — File Source  (✅ done)
 
 Reads raw or containerised media data from a local file and pushes it into the pipeline as a sequence of buffers. Analogous to GStreamer's `filesrc`.
 
-- [ ] `file_source` element with 1 src pad — configurable `path` property
-- [ ] Open file with `fopen`/`open` (O_RDONLY) on state transition to READY
-- [ ] Read chunks into `zst_buffer` pool, push to src pad
-- [ ] Send `EOS` when `feof()` / `read()` returns 0
-- [ ] Configurable `chunk_size` and `loop` (restart from beginning on EOF)
-- [ ] Support for `offset` / `length` to read a subset of the file
-- [ ] Caps negotiation: advertise `text/plain`, `video/x-h264`, `audio/aac`, etc. based on file extension or probe
+- [x] `file_source` element with 1 src pad — configurable `path` property
+- [x] Open file with `fopen`/`open` (O_RDONLY) on state transition to READY
+- [x] Read chunks into `zst_buffer` pool, push to src pad
+- [x] Send `EOS` when `feof()` / `read()` returns 0
+- [x] Configurable `chunk_size` and `loop` (restart from beginning on EOF)
+- [x] Support for `offset` / `length` to read a subset of the file
+- [x] Caps negotiation: advertise `text/plain`, `video/x-h264`, `audio/aac`, etc. based on file extension or probe
 
 ### 4j — Network Source  (📝 Planned)
 
