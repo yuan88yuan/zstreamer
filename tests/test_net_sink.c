@@ -10,6 +10,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <time.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -22,6 +23,16 @@
 
 /* Forward declaration from net_sink.c if linkable directly */
 extern zst_element_t* zst_net_sink_create(void);
+
+static void
+sleep_ms(unsigned int ms)
+{
+    struct timespec ts = {
+        .tv_sec = (time_t)(ms / 1000U),
+        .tv_nsec = (long)((ms % 1000U) * 1000000UL)
+    };
+    nanosleep(&ts, NULL);
+}
 
 /* TCP client test: connect to a listening socket and verify data reception */
 static void*
@@ -74,7 +85,7 @@ test_net_sink_tcp_client(void)
     pthread_create(&server_tid, NULL, tcp_server_thread, &port);
     
     /* Give server time to bind */
-    usleep(100000);
+    sleep_ms(100);
     
     /* Configure sink for TCP client */
     assert(zst_element_set_property(sink, "protocol", "tcp-client") == ZST_OK);
@@ -87,11 +98,12 @@ test_net_sink_tcp_client(void)
     assert(zst_element_set_state(sink, ZST_STATE_READY) == ZST_OK);
     
     /* Create and send a buffer */
-    zst_buffer_t* buf = zst_buffer_create();
+    zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_USER);
     assert(buf != NULL);
     
     const char* test_data = "test_data";
-    zst_buffer_set_data(buf, (uint8_t*)test_data, strlen(test_data));
+    buf->memory.data = (void*)test_data;
+    buf->memory.size = strlen(test_data);
     buf->pts = 0;
     buf->duration = 0;
     
