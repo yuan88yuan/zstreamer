@@ -1,4 +1,4 @@
-# Element Implementations — Phase 4  (✅ 4a-4i, 4l, 4n, 4s; 📝 4j-4k, 4m, 4o-4r, 4t-4u)
+# Element Implementations — Phase 4  (✅ 4a-4i, 4l, 4n, 4s, 4t; 📝 4j-4k, 4m, 4o-4r, 4u)
 
 Twelve elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.
 Nine more are planned: file/network I/O for stream ingestion, RTSP/RTMP for live streaming, test sources for headless benchmarking, a fake sink for pipeline debugging, and text rendering utilities.
@@ -202,13 +202,13 @@ Composites text (subtitles, timestamps, labels) onto raw video frames. Follows t
 - [x] Unit test: property get/set for font size, colour, position
 - [x] Integration test: `v4l2src → text_overlay → filesink` produces video with visible text
 
-### 4t — Text Source  (📝 Planned)
+### 4t — Text Source  (✅ Done)
 
 Generates video frames with rendered text (no video input). Useful for test patterns, title cards, and simple slideshows.
 
-- [ ] `text_source` element: generates video frames with rendered text (no video input)
-- [ ] Useful for test patterns, title cards, and simple slideshows
-- [ ] Configurable resolution, framerate, text content, background colour
+- [x] `text_source` element: generates video frames with rendered text (no video input)
+- [x] Useful for test patterns, title cards, and simple slideshows
+- [x] Configurable resolution, framerate, text content, background colour
 
 ### 4u — SRT Subtitle Parser  (📝 Planned)
 

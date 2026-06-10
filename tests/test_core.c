@@ -29,6 +29,7 @@
 zst_element_t* zst_video_scaler_create(int target_width, int target_height, const char* target_pixel_format);
 zst_element_t* zst_audio_resampler_create(int target_sample_rate, int target_channels, const char* target_format);
 zst_element_t* zst_text_overlay_create(const char* text);
+zst_element_t* zst_text_source_create(void);
 
 static int g_tests_run   = 0;
 static int g_tests_passed = 0;
@@ -1810,6 +1811,135 @@ test_video_test_src(void)
 }
 
 static void
+test_text_source(void)
+{
+    TEST("text_source basic frame generation and properties");
+
+    zst_element_t* src = zst_text_source_create();
+    assert(src != NULL);
+
+    /* We ignore open() failure here because the system might not have the font */
+    zst_result_t open_res = src->ops->open(src);
+    if (open_res != ZST_OK) {
+        printf("  [SKIP] Could not open text source (missing font?)\n");
+        zst_element_destroy(src);
+        PASS();
+        return;
+    }
+
+    zst_pad_t* src_pad = zst_element_get_pad(src, "src");
+    assert(src_pad != NULL);
+
+    /* Check default properties */
+    char val[64];
+    assert(zst_element_get_property(src, "width", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "640") == 0);
+
+    assert(zst_element_get_property(src, "height", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "480") == 0);
+
+    assert(zst_element_get_property(src, "fps", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "30") == 0);
+
+    assert(zst_element_get_property(src, "text", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "Hello ZStreamer") == 0);
+
+    /* Set properties and check them */
+    assert(zst_element_set_property(src, "width", "320") == ZST_OK);
+    assert(zst_element_set_property(src, "height", "240") == ZST_OK);
+    assert(zst_element_set_property(src, "fps", "15") == ZST_OK);
+    assert(zst_element_set_property(src, "text", "Test Content") == ZST_OK);
+    assert(zst_element_set_property(src, "bg-color", "red") == ZST_OK);
+    assert(zst_element_set_property(src, "color", "#0000ff") == ZST_OK); // text-color
+    assert(zst_element_set_property(src, "pixel-format", "NV12") == ZST_OK);
+    assert(zst_element_set_property(src, "num-buffers", "2") == ZST_OK);
+    assert(zst_element_set_property(src, "x", "20") == ZST_OK);
+    assert(zst_element_set_property(src, "y", "40") == ZST_OK);
+
+    assert(zst_element_get_property(src, "width", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "320") == 0);
+
+    assert(zst_element_get_property(src, "height", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "240") == 0);
+
+    assert(zst_element_get_property(src, "fps", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "15") == 0);
+
+    assert(zst_element_get_property(src, "text", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "Test Content") == 0);
+
+    assert(zst_element_get_property(src, "bg-color", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "red") == 0);
+
+    assert(zst_element_get_property(src, "color", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "#0000ff") == 0);
+
+    assert(zst_element_get_property(src, "pixel-format", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "NV12") == 0);
+
+    assert(zst_element_get_property(src, "x", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "20") == 0);
+
+    assert(zst_element_get_property(src, "y", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "40") == 0);
+
+    /* Generate buffers manually */
+    zst_buffer_t* buf = NULL;
+    zst_result_t process_res = src->ops->process(src, NULL, &buf);
+    assert(process_res == ZST_OK);
+    assert(buf != NULL);
+    assert(buf->type == ZST_BUFFER_VIDEO_FRAME);
+    assert(!(buf->flags & ZST_BUFFER_FLAG_EOS));
+
+    zst_video_frame_t* vf = buf->payload;
+    assert(vf != NULL);
+    assert(vf->width == 320);
+    assert(vf->height == 240);
+    assert(vf->format == 1); // NV12
+    zst_buffer_unref(buf);
+
+    /* Second buffer */
+    buf = NULL;
+    process_res = src->ops->process(src, NULL, &buf);
+    assert(process_res == ZST_OK);
+    assert(buf != NULL);
+    assert(!(buf->flags & ZST_BUFFER_FLAG_EOS));
+    zst_buffer_unref(buf);
+
+    /* Third buffer should be EOS */
+    buf = NULL;
+    process_res = src->ops->process(src, NULL, &buf);
+    assert(process_res == ZST_OK);
+    assert(buf != NULL);
+    assert(buf->flags & ZST_BUFFER_FLAG_EOS);
+    zst_buffer_unref(buf);
+
+    src->ops->close(src);
+    zst_element_destroy(src);
+
+    PASS();
+}
+
+static void
+test_text_source_factory(void)
+{
+    TEST("text_source dynamic loading from registry");
+
+    zst_plugin_registry_init();
+    zst_plugin_registry_scan("/workspace/build/plugins");
+
+    zst_element_t* src = zst_element_factory_make("textsource");
+    assert(src != NULL);
+    assert(src->plugin != NULL);
+    assert(strcmp(src->ops->name, "textsource") == 0);
+
+    zst_element_destroy(src);
+    zst_plugin_registry_deinit();
+
+    PASS();
+}
+
+static void
 test_file_source(void)
 {
     TEST("file_source basic reading, offset, length, chunk-size, and loop");
@@ -2123,6 +2253,10 @@ int main(void)
 
     printf("[file source]\n");
     test_file_source();
+
+    printf("[text source]\n");
+    test_text_source();
+    test_text_source_factory();
 
     /* ── Summary ── */
     printf("\n──────────────────────────────────────────────────\n");

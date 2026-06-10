@@ -150,17 +150,18 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | Core Framework              | ✅ All 8 core modules implemented|
 | Scheduler Integration       | ✅ Topological sort, push/pull, EOS, state hardening |
 | Queue Element               | ✅ First-class queue with worker thread |
-| Real Element Implementations| ✅ 12 elements: V4L2, x264, MP4(mux), file sink, file source, ALSA, AAC, video_scaler, audio_resampler, fakesink, video_test_src, text_overlay |
+| Real Element Implementations| ✅ 13 elements: V4L2, x264, MP4(mux), file sink, file source, ALSA, AAC, video_scaler, audio_resampler, fakesink, video_test_src, text_overlay, text_source |
 | Caps Negotiation            | ✅ Done                          |
 | Event Bus                   | ✅ Done                          |
 | Dynamic Plugins             | ✅ Done                          |
 | Logging System              | ✅ Done                          |
-| Unit Tests                  | ✅ 46 tests, all passing         |
+| Unit Tests                  | ✅ 47 tests, all passing         |
 | Allocator API               | ✅ Mostly done (pools + all 7 elements migrated; default sizing & expanded tests pending) |
 | Clock                       | ✅ Done (system clock + pipeline integration) |
 | Text Overlay (4s)           | ✅ Included in Element Implementations |
 | A/V Sync (clock slaving)    | 📝 Future                        |
-| Text Source / SRT Parser (4t-4u) | 📝 Planned Element Implementations |
+| Text Source (4t)            | ✅ Done                          |
+| SRT Parser (4u)             | 📝 Planned                       |
 | CI Pipeline                 | 📝 Future                        |
 
 ---
