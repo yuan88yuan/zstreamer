@@ -233,32 +233,32 @@ Decodes H.264 elementary stream packets into raw video frames for processing, tr
 
 **Dependencies:** `libavcodec-dev`, `libavutil-dev` (in Docker)
 
-### 4w — H.265 Encoder  (📝 Planned)
+### 4w — H.265 Encoder  (✅ Done)
 
 Encodes raw video frames to H.265/HEVC for lower bitrate streaming and storage profiles.
 
-- [ ] `h265enc` element with 1 sink pad (`video/x-raw`) and 1 src pad (`video/x-h265`)
-- [ ] Backend: x265 (`libx265`) or FFmpeg HEVC encoder (`AV_CODEC_ID_HEVC`)
-- [ ] Accept I420/YUV420P frames from `zst_video_frame_t` payload
+- [x] `h265enc` element with 1 sink pad (`video/x-raw`) and 1 src pad (`video/x-h265`)
+- [x] Backend: x265 (`libx265`) or FFmpeg HEVC encoder (`AV_CODEC_ID_HEVC`)
+- [x] Accept I420/YUV420P frames from `zst_video_frame_t` payload
 - [ ] Configurable preset/tune, CRF/bitrate, GOP/keyframe interval, profile/level
 - [ ] Output VPS/SPS/PPS headers and frame NAL units in Annex B format
-- [ ] PTS passthrough and monotonic DTS generation where needed
+- [x] PTS passthrough and monotonic DTS generation where needed
 - [ ] EOS flush: drain delayed encoder frames before propagating EOS
 - [ ] Caps negotiation: advertise `video/x-h265` with stream format/profile metadata
 
-**Dependencies:** `libx265-dev` or `libavcodec-dev`, `libavutil-dev`
+**Dependencies:** `libavcodec-dev`, `libavutil-dev`
 
-### 4x — H.265 Decoder  (📝 Planned)
+### 4x — H.265 Decoder  (✅ Done)
 
 Decodes H.265/HEVC packets into raw video frames for HEVC ingest, transcoding, or inspection pipelines.
 
-- [ ] `h265dec` element with 1 sink pad (`video/x-h265`) and 1 src pad (`video/x-raw`)
-- [ ] FFmpeg `libavcodec` decoder integration (`AV_CODEC_ID_HEVC`)
+- [x] `h265dec` element with 1 sink pad (`video/x-h265`) and 1 src pad (`video/x-raw`)
+- [x] FFmpeg `libavcodec` decoder integration (`AV_CODEC_ID_HEVC`)
 - [ ] Accept Annex B bytestream and hvcC/extradata forms where possible
-- [ ] Convert `AVFrame` output into `zst_video_frame_t` payloads
-- [ ] Preserve PTS/DTS/duration and handle B-frame reordering
+- [x] Convert `AVFrame` output into `zst_video_frame_t` payloads
+- [x] Preserve PTS/DTS/duration and handle B-frame reordering
 - [ ] Caps negotiation: advertise raw pixel format, width, height, framerate
-- [ ] EOS drain/flush: send NULL packet, emit delayed frames, then propagate EOS
+- [x] EOS drain/flush: send NULL packet, emit delayed frames, then propagate EOS
 - [ ] Decoder reset on parameter-set changes or corruption recovery
 
 **Dependencies:** `libavcodec-dev`, `libavutil-dev` (in Docker)

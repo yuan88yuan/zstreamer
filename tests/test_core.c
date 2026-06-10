@@ -1155,6 +1155,26 @@ test_element_factory_refcounting(void)
     assert(h264encoder->plugin != NULL);
     assert(strcmp(h264encoder->ops->name, "h264enc") == 0);
     
+    zst_element_t* h265encoder = zst_element_factory_make("h265enc");
+    assert(h265encoder != NULL);
+    assert(h265encoder->plugin != NULL);
+    assert(strcmp(h265encoder->ops->name, "h265enc") == 0);
+    
+    zst_element_t* h265decoder = zst_element_factory_make("h265dec");
+    assert(h265decoder != NULL);
+    assert(h265decoder->plugin != NULL);
+    assert(strcmp(h265decoder->ops->name, "h265dec") == 0);
+    
+    zst_element_t* h265encoder = zst_element_factory_make("h265enc");
+    assert(h265encoder != NULL);
+    assert(h265encoder->plugin != NULL);
+    assert(strcmp(h265encoder->ops->name, "h265enc") == 0);
+    
+    zst_element_t* h265decoder = zst_element_factory_make("h265dec");
+    assert(h265decoder != NULL);
+    assert(h265decoder->plugin != NULL);
+    assert(strcmp(h265decoder->ops->name, "h265dec") == 0);
+    
     zst_element_t* aacencoder = zst_element_factory_make("aacenc");
     assert(aacencoder != NULL);
     assert(aacencoder->plugin != NULL);
@@ -1164,7 +1184,17 @@ test_element_factory_refcounting(void)
     assert(mp4muxer != NULL);
     assert(mp4muxer->plugin != NULL);
     assert(strcmp(mp4muxer->ops->name, "mp4mux") == 0);
-    
+
+    zst_element_t* h265encoder = zst_element_factory_make("h265enc");
+    assert(h265encoder != NULL);
+    assert(h265encoder->plugin != NULL);
+    assert(strcmp(h265encoder->ops->name, "h265enc") == 0);
+
+    zst_element_t* h265decoder = zst_element_factory_make("h265dec");
+    assert(h265decoder != NULL);
+    assert(h265decoder->plugin != NULL);
+    assert(strcmp(h265decoder->ops->name, "h265dec") == 0);
+
     zst_element_t* videoscaler = zst_element_factory_make("videoscaler");
     assert(videoscaler != NULL);
     assert(videoscaler->plugin != NULL);
@@ -1194,6 +1224,8 @@ test_element_factory_refcounting(void)
     zst_element_destroy(v4l2source);
     zst_element_destroy(alsasource);
     zst_element_destroy(h264encoder);
+    zst_element_destroy(h265encoder);
+    zst_element_destroy(h265decoder);
     zst_element_destroy(aacencoder);
     zst_element_destroy(mp4muxer);
     zst_element_destroy(videoscaler);

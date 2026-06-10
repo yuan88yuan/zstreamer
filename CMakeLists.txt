@@ -190,11 +190,19 @@ add_library(zst_h264decoder SHARED src/h264_decoder.c)
 target_compile_definitions(zst_h264decoder PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_h264decoder PRIVATE zstreamer ${AVCODEC_LIBRARIES} ${AVUTIL_LIBRARIES})
 
+add_library(zst_h265encoder SHARED src/h265_encoder.c)
+target_compile_definitions(zst_h265encoder PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_h265encoder PRIVATE zstreamer ${AVCODEC_LIBRARIES} ${AVUTIL_LIBRARIES})
+
+add_library(zst_h265decoder SHARED src/h265_decoder.c)
+target_compile_definitions(zst_h265decoder PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_h265decoder PRIVATE zstreamer ${AVCODEC_LIBRARIES} ${AVUTIL_LIBRARIES})
+
 add_library(zst_aacdecoder SHARED src/aac_decoder.c)
 target_compile_definitions(zst_aacdecoder PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_aacdecoder PRIVATE zstreamer ${AVCODEC_LIBRARIES} ${AVUTIL_LIBRARIES})
 
-set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay zst_videotestsrc zst_audiotestsrc zst_filesource zst_textsource zst_h264decoder zst_aacdecoder)
+set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay zst_videotestsrc zst_audiotestsrc zst_filesource zst_textsource zst_h264decoder zst_h265encoder zst_h265decoder zst_aacdecoder)
 foreach(plugin ${PLUGIN_TARGETS})
     target_include_directories(${plugin} PRIVATE ${ZSTREAMER_INCLUDE_DIR} PRIVATE ${ELEMENT_INCLUDE_DIRS})
     set_target_properties(${plugin} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
