@@ -5,12 +5,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <libavcodec/avcodec.h>
 #include <libavutil/imgutils.h>
+#include <libavutil/pixfmt.h>
 
 #include "zst_element.h"
+#include "zst_pad.h"
 #include "zst_buffer.h"
 #include "zst_buffer_pool.h"
+#include "zst_caps.h"
 
 typedef struct {
     AVCodecContext* codec_ctx;
@@ -20,7 +24,100 @@ typedef struct {
     uint32_t        width;
     uint32_t        height;
     int             format;
+    zst_pad_t*      sinkpad;
+    zst_pad_t*      srcpad;
 } h265_decoder_t;
+
+static const char*
+h265_pix_fmt_to_string(int fmt)
+{
+    switch ((enum AVPixelFormat)fmt) {
+    case AV_PIX_FMT_YUV420P: return "YUV420P";
+    case AV_PIX_FMT_NV12:    return "NV12";
+    case AV_PIX_FMT_NV21:    return "NV21";
+    case AV_PIX_FMT_YUYV422: return "YUYV422";
+    case AV_PIX_FMT_UYVY422: return "UYVY";
+    case AV_PIX_FMT_RGB24:   return "RGB24";
+    case AV_PIX_FMT_BGR24:   return "BGR24";
+    case AV_PIX_FMT_RGBA:    return "RGBA";
+    case AV_PIX_FMT_BGRA:    return "BGRA";
+    default:                 return "";
+    }
+}
+
+static void
+h265_dec_buf_free(zst_buffer_t* buf)
+{
+    if (buf && buf->payload) {
+        free(buf->payload);
+        buf->payload = NULL;
+    }
+}
+
+static int
+h265_is_annexb(const uint8_t* data, size_t size)
+{
+    if (!data || size < 4) return 0;
+    return (data[0] == 0x00 && data[1] == 0x00 && data[2] == 0x01) ||
+           (data[0] == 0x00 && data[1] == 0x00 && data[2] == 0x00 && data[3] == 0x01);
+}
+
+static int
+h265_hvcc_4byte_lengths_valid(const uint8_t* data, size_t size)
+{
+    size_t pos = 0;
+    int nals = 0;
+    while (pos + 4 <= size) {
+        uint32_t n = ((uint32_t)data[pos] << 24) |
+                     ((uint32_t)data[pos + 1] << 16) |
+                     ((uint32_t)data[pos + 2] << 8) |
+                     (uint32_t)data[pos + 3];
+        pos += 4;
+        if (n == 0 || n > size - pos) return 0;
+        pos += n;
+        nals++;
+    }
+    return pos == size && nals > 0;
+}
+
+static zst_result_t
+h265_packet_from_buffer(zst_buffer_t* in, AVPacket* pkt)
+{
+    if (!pkt || !in) return ZST_ERROR;
+
+    pkt->pts = in->pts;
+    pkt->dts = in->dts;
+    pkt->duration = in->duration;
+
+    const uint8_t* data = (const uint8_t*)in->memory.data;
+    size_t size = in->memory.size;
+    if (!data || size == 0) return ZST_ERROR;
+
+    if (!h265_is_annexb(data, size) && h265_hvcc_4byte_lengths_valid(data, size)) {
+        if (av_new_packet(pkt, (int)size) < 0) return ZST_ERROR;
+        size_t pos = 0;
+        uint8_t* out = pkt->data;
+        while (pos + 4 <= size) {
+            uint32_t n = ((uint32_t)data[pos] << 24) |
+                         ((uint32_t)data[pos + 1] << 16) |
+                         ((uint32_t)data[pos + 2] << 8) |
+                         (uint32_t)data[pos + 3];
+            pos += 4;
+            *out++ = 0x00;
+            *out++ = 0x00;
+            *out++ = 0x00;
+            *out++ = 0x01;
+            memcpy(out, data + pos, n);
+            out += n;
+            pos += n;
+        }
+    } else {
+        pkt->data = (uint8_t*)data;
+        pkt->size = (int)size;
+    }
+
+    return ZST_OK;
+}
 
 static zst_result_t
 h265_open(zst_element_t* el)
@@ -94,7 +191,7 @@ h265_update_pool(h265_decoder_t* s, int width, int height, int format)
         s->pool = NULL;
     }
 
-    int size = av_image_get_buffer_size(format, width, height, 1);
+    int size = av_image_get_buffer_size((enum AVPixelFormat)format, width, height, 1);
     if (size < 0) return ZST_ERROR;
 
     zst_buffer_pool_config_t pool_cfg = {
@@ -106,17 +203,98 @@ h265_update_pool(h265_decoder_t* s, int width, int height, int format)
     s->pool = zst_buffer_pool_create(NULL, &pool_cfg);
     if (!s->pool) return ZST_ERROR;
 
-    s->width = width;
-    s->height = height;
+    s->width = (uint32_t)width;
+    s->height = (uint32_t)height;
     s->format = format;
     return ZST_OK;
+}
+
+static zst_result_t
+h265_emit_buffer(zst_element_t* el, zst_buffer_t* buf, zst_buffer_t** out)
+{
+    if (!buf) return ZST_ERROR;
+
+    if (el->nb_src_pads > 0 && el->src_pads[0]->peer) {
+        zst_result_t ret = zst_pad_push(el->src_pads[0], buf);
+        zst_buffer_unref(buf);
+        return ret;
+    }
+
+    if (out && *out == NULL) {
+        *out = buf;
+        return ZST_OK;
+    }
+
+    zst_buffer_unref(buf);
+    return ZST_OK;
+}
+
+static zst_result_t
+h265_emit_frame(zst_element_t* el, h265_decoder_t* s, zst_buffer_t** out)
+{
+    if (h265_update_pool(s, s->frame->width, s->frame->height, s->frame->format) != ZST_OK) {
+        return ZST_ERROR;
+    }
+
+    zst_buffer_t* vbuf = NULL;
+    if (zst_buffer_pool_acquire(s->pool, &vbuf, 0, 0) != ZST_OK) {
+        return ZST_ERROR;
+    }
+
+    int64_t pts = s->frame->best_effort_timestamp;
+    if (pts == AV_NOPTS_VALUE) pts = s->frame->pts;
+    if (pts != AV_NOPTS_VALUE) {
+        vbuf->pts = (zst_time_t)pts;
+        vbuf->dts = (zst_time_t)pts;
+    }
+    if (s->frame->duration > 0) {
+        vbuf->duration = (zst_time_t)s->frame->duration;
+    }
+
+    zst_video_frame_t* v_frame = vbuf->payload;
+    if (!v_frame) {
+        v_frame = calloc(1, sizeof(*v_frame));
+        if (!v_frame) {
+            zst_buffer_unref(vbuf);
+            return ZST_ERROR;
+        }
+        vbuf->payload = v_frame;
+        vbuf->destroy = h265_dec_buf_free;
+    }
+
+    v_frame->width = (uint32_t)s->frame->width;
+    v_frame->height = (uint32_t)s->frame->height;
+    v_frame->format = (uint32_t)s->frame->format;
+
+    uint8_t* dst_data[4] = {0};
+    int dst_linesize[4] = {0};
+    int fill_ret = av_image_fill_arrays(dst_data, dst_linesize, vbuf->memory.data,
+                                        (enum AVPixelFormat)s->frame->format,
+                                        s->frame->width, s->frame->height, 1);
+    if (fill_ret < 0) {
+        zst_buffer_unref(vbuf);
+        return ZST_ERROR;
+    }
+    vbuf->memory.size = (size_t)fill_ret;
+
+    av_image_copy(dst_data, dst_linesize,
+                  (const uint8_t**)s->frame->data, s->frame->linesize,
+                  (enum AVPixelFormat)s->frame->format,
+                  s->frame->width, s->frame->height);
+
+    for (int i = 0; i < 4; i++) {
+        v_frame->plane[i] = dst_data[i];
+        v_frame->stride[i] = (uint32_t)dst_linesize[i];
+    }
+
+    return h265_emit_buffer(el, vbuf, out);
 }
 
 static zst_result_t
 h265_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
 {
     h265_decoder_t* s = el->priv;
-    *out = NULL;
+    if (out) *out = NULL;
 
     if (!in) {
         return ZST_ERROR;
@@ -127,24 +305,22 @@ h265_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     }
 
     AVPacket* av_pkt = NULL;
-    if (in->flags & ZST_BUFFER_FLAG_EOS) {
-        av_pkt = NULL;
-    } else {
-        av_pkt = av_packet_alloc();
-        if (!av_pkt) return ZST_ERROR;
-        av_pkt->data = in->memory.data;
-        av_pkt->size = in->memory.size;
-        av_pkt->pts = in->pts;
-        av_pkt->dts = in->dts;
+    AVPacket stack_pkt = {0};
+    if (!(in->flags & ZST_BUFFER_FLAG_EOS)) {
+        if (h265_packet_from_buffer(in, &stack_pkt) != ZST_OK) {
+            return ZST_ERROR;
+        }
+        av_pkt = &stack_pkt;
     }
 
     int ret = avcodec_send_packet(s->codec_ctx, av_pkt);
-    if (av_pkt) {
-        av_packet_free(&av_pkt);
+    if (av_pkt && av_pkt->buf) {
+        av_packet_unref(av_pkt);
     }
 
     if (ret < 0 && ret != AVERROR_EOF) {
-        return ZST_ERROR;
+        avcodec_flush_buffers(s->codec_ctx);
+        return ret == AVERROR_INVALIDDATA ? ZST_AGAIN : ZST_ERROR;
     }
 
     while (1) {
@@ -152,80 +328,101 @@ h265_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
         if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
             break;
         } else if (ret < 0) {
-            return ZST_ERROR;
+            avcodec_flush_buffers(s->codec_ctx);
+            return ret == AVERROR_INVALIDDATA ? ZST_AGAIN : ZST_ERROR;
         }
 
-        if (h265_update_pool(s, s->frame->width, s->frame->height, s->frame->format) != ZST_OK) {
-            return ZST_ERROR;
+        zst_result_t emit_ret = h265_emit_frame(el, s, out);
+        av_frame_unref(s->frame);
+        if (emit_ret != ZST_OK) {
+            return emit_ret;
         }
-
-        zst_buffer_t* vbuf = NULL;
-        if (zst_buffer_pool_acquire(s->pool, &vbuf, 0, 0) != ZST_OK) {
-            return ZST_ERROR;
-        }
-
-        vbuf->pts = s->frame->pts;
-        if (s->frame->best_effort_timestamp != AV_NOPTS_VALUE && vbuf->pts == (zst_time_t)AV_NOPTS_VALUE) {
-            vbuf->pts = s->frame->best_effort_timestamp;
-        }
-
-        zst_video_frame_t* v_frame = vbuf->payload;
-        v_frame->width = s->frame->width;
-        v_frame->height = s->frame->height;
-        v_frame->format = s->frame->format;
-
-        uint8_t* dst_data[4] = {0};
-        int dst_linesize[4] = {0};
-        av_image_fill_arrays(dst_data, dst_linesize, vbuf->memory.data, s->frame->format, s->frame->width, s->frame->height, 1);
-        av_image_copy(dst_data, dst_linesize, (const uint8_t**)s->frame->data, s->frame->linesize, s->frame->format, s->frame->width, s->frame->height);
-
-        for (int i = 0; i < 4; i++) {
-            v_frame->plane[i] = dst_data[i];
-            v_frame->stride[i] = dst_linesize[i];
-        }
-
-        zst_pad_push(el->src_pads[0], vbuf);
     }
 
     if (in->flags & ZST_BUFFER_FLAG_EOS) {
         zst_buffer_t* eos_buf = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
-        if (eos_buf) {
-            eos_buf->flags |= ZST_BUFFER_FLAG_EOS;
-            zst_pad_push(el->src_pads[0], eos_buf);
-        }
+        if (!eos_buf) return ZST_ERROR;
+        eos_buf->flags |= ZST_BUFFER_FLAG_EOS;
+        return h265_emit_buffer(el, eos_buf, out);
     }
 
     return ZST_OK;
 }
 
+static zst_result_t
+h265_sink_push(zst_pad_t* pad, zst_buffer_t* buf)
+{
+    if (!pad || !pad->parent || !buf) return ZST_ERROR;
+    zst_buffer_t* out = NULL;
+    zst_result_t ret = h265_process(pad->parent, buf, &out);
+    if (out) {
+        if (pad->parent->nb_src_pads > 0 && pad->parent->src_pads[0]->peer) {
+            zst_result_t push_ret = zst_pad_push(pad->parent->src_pads[0], out);
+            zst_buffer_unref(out);
+            if (ret == ZST_OK) ret = push_ret;
+        } else {
+            zst_buffer_unref(out);
+        }
+    }
+    return ret;
+}
+
+static zst_caps_t*
+h265_get_caps(zst_element_t* el, zst_pad_t* pad, const zst_caps_t* filter)
+{
+    (void)filter;
+    h265_decoder_t* s = el->priv;
+    zst_caps_t* caps = zst_caps_create();
+    if (!caps) return NULL;
+
+    if (pad == s->sinkpad) {
+        zst_caps_append(caps, zst_caps_struct_create_video("video/x-h265", 0, 0, 0.0, ""));
+    } else if (pad == s->srcpad) {
+        zst_caps_append(caps, zst_caps_struct_create_video("video/x-raw",
+                                                           (int)s->width,
+                                                           (int)s->height,
+                                                           0.0,
+                                                           h265_pix_fmt_to_string(s->format)));
+    }
+
+    return caps;
+}
+
 static zst_element_ops_t g_ops = {
-    .name    = "h265dec",
-    .open    = h265_open,
-    .close   = h265_close,
-    .process = h265_process,
+    .name     = "h265dec",
+    .open     = h265_open,
+    .close    = h265_close,
+    .process  = h265_process,
+    .get_caps = h265_get_caps,
 };
 
 zst_element_t*
 zst_h265_decoder_create(void)
 {
-    zst_element_t* el;
-    h265_decoder_t* priv;
-    zst_pad_t* sink;
-    zst_pad_t* src;
+    h265_decoder_t* priv = calloc(1, sizeof(*priv));
+    if (!priv) return NULL;
 
-    priv = calloc(1, sizeof(*priv));
-    el = zst_element_create(&g_ops, priv);
-    sink = zst_pad_create("sink", ZST_PAD_SINK);
-    src  = zst_pad_create("src",  ZST_PAD_SRC);
+    zst_element_t* el = zst_element_create(&g_ops, priv);
+    if (!el) {
+        free(priv);
+        return NULL;
+    }
 
-    zst_element_add_pad(el, sink);
-    zst_element_add_pad(el, src);
+    priv->sinkpad = zst_pad_create("sink", ZST_PAD_SINK);
+    priv->srcpad  = zst_pad_create("src",  ZST_PAD_SRC);
+    if (!priv->sinkpad || !priv->srcpad) {
+        zst_element_destroy(el);
+        return NULL;
+    }
+    priv->sinkpad->push = h265_sink_push;
+
+    zst_element_add_pad(el, priv->sinkpad);
+    zst_element_add_pad(el, priv->srcpad);
     return el;
 }
 
 #ifdef BUILDING_PLUGIN
 #include "zst_plugin.h"
-#include <string.h>
 
 static zst_element_t*
 plugin_create_element(const char* name)

@@ -126,9 +126,18 @@ h265_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
 {
     h265_encoder_t* s = el->priv;
     if (!in || !out) return ZST_ERROR;
+    *out = NULL;
+
+    if (in->flags & ZST_BUFFER_FLAG_EOS) {
+        zst_buffer_t* eos_buf = zst_buffer_create(ZST_BUFFER_VIDEO_PACKET);
+        if (!eos_buf) return ZST_ERROR;
+        eos_buf->flags |= ZST_BUFFER_FLAG_EOS;
+        *out = eos_buf;
+        return ZST_OK;
+    }
 
     zst_video_frame_t* frame = in->payload;
-    if (!frame) return ZST_ERROR;
+    if (!frame || !frame->plane[0] || !frame->plane[1] || !frame->plane[2]) return ZST_ERROR;
 
     if (!s->initialized) {
         if (h265_init_encoder(s, frame->width, frame->height) != ZST_OK) {
@@ -140,6 +149,9 @@ h265_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
         return ZST_ERROR;
     }
 
+    if (av_frame_make_writable(s->frame) < 0) {
+        return ZST_ERROR;
+    }
     s->frame->pts = in->pts;
 
     int y_linesize = s->frame->linesize[0];
@@ -189,6 +201,7 @@ h265_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     }
 
     if ((size_t)av_pkt->size > pkt->memory.size) {
+        zst_buffer_unref(pkt);
         av_packet_free(&av_pkt);
         return ZST_ERROR;
     }

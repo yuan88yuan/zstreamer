@@ -33,6 +33,8 @@ zst_element_t* zst_text_source_create(void);
 zst_element_t* zst_audio_test_src_create(void);
 zst_element_t* zst_h264_encoder_create(void);
 zst_element_t* zst_h264_decoder_create(void);
+zst_element_t* zst_h265_encoder_create(void);
+zst_element_t* zst_h265_decoder_create(void);
 zst_element_t* zst_aac_encoder_create(void);
 zst_element_t* zst_aac_decoder_create(void);
 
@@ -1169,16 +1171,6 @@ test_element_factory_refcounting(void)
     assert(h265decoder->plugin != NULL);
     assert(strcmp(h265decoder->ops->name, "h265dec") == 0);
     
-    zst_element_t* h265encoder = zst_element_factory_make("h265enc");
-    assert(h265encoder != NULL);
-    assert(h265encoder->plugin != NULL);
-    assert(strcmp(h265encoder->ops->name, "h265enc") == 0);
-    
-    zst_element_t* h265decoder = zst_element_factory_make("h265dec");
-    assert(h265decoder != NULL);
-    assert(h265decoder->plugin != NULL);
-    assert(strcmp(h265decoder->ops->name, "h265dec") == 0);
-    
     zst_element_t* aacencoder = zst_element_factory_make("aacenc");
     assert(aacencoder != NULL);
     assert(aacencoder->plugin != NULL);
@@ -1188,16 +1180,6 @@ test_element_factory_refcounting(void)
     assert(mp4muxer != NULL);
     assert(mp4muxer->plugin != NULL);
     assert(strcmp(mp4muxer->ops->name, "mp4mux") == 0);
-
-    zst_element_t* h265encoder = zst_element_factory_make("h265enc");
-    assert(h265encoder != NULL);
-    assert(h265encoder->plugin != NULL);
-    assert(strcmp(h265encoder->ops->name, "h265enc") == 0);
-
-    zst_element_t* h265decoder = zst_element_factory_make("h265dec");
-    assert(h265decoder != NULL);
-    assert(h265decoder->plugin != NULL);
-    assert(strcmp(h265decoder->ops->name, "h265dec") == 0);
 
     zst_element_t* videoscaler = zst_element_factory_make("videoscaler");
     assert(videoscaler != NULL);
@@ -1381,6 +1363,77 @@ test_h264_decoder_roundtrip(void)
 
     zst_buffer_unref(pkt);
     zst_buffer_unref(raw);
+    zst_element_destroy(sink);
+    zst_element_destroy(dec);
+    zst_element_destroy(enc);
+    PASS();
+}
+
+static void
+test_h265_decoder_roundtrip(void)
+{
+    TEST("H.265 decoder roundtrip and caps");
+
+    zst_element_t* enc = zst_h265_encoder_create();
+    zst_element_t* dec = zst_h265_decoder_create();
+    decoder_capture_t* capture = calloc(1, sizeof(*capture));
+    assert(capture != NULL);
+    zst_element_t* sink = decoder_capture_create(capture);
+    assert(enc != NULL && dec != NULL && sink != NULL);
+    assert(strcmp(enc->ops->name, "h265enc") == 0);
+    assert(strcmp(dec->ops->name, "h265dec") == 0);
+    assert(zst_element_set_state(enc, ZST_STATE_READY) == ZST_OK);
+    assert(zst_element_set_state(dec, ZST_STATE_READY) == ZST_OK);
+    assert(zst_pad_link(dec->src_pads[0], sink->sink_pads[0]) == ZST_OK);
+
+    const int width = 64;
+    const int height = 64;
+    zst_buffer_t* pkt = NULL;
+
+    for (int n = 0; n < 8 && !pkt; n++) {
+        zst_buffer_t* raw = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
+        assert(raw != NULL);
+        raw->memory.size = (size_t)width * (size_t)height * 3u / 2u;
+        raw->memory.data = calloc(1, raw->memory.size);
+        raw->payload = calloc(1, sizeof(zst_video_frame_t));
+        raw->destroy = decoder_test_buf_free;
+        assert(raw->memory.data != NULL && raw->payload != NULL);
+        raw->pts = (zst_time_t)n;
+
+        zst_video_frame_t* frame = raw->payload;
+        frame->width = width;
+        frame->height = height;
+        frame->format = 0; /* AV_PIX_FMT_YUV420P */
+        frame->plane[0] = raw->memory.data;
+        frame->plane[1] = (uint8_t*)raw->memory.data + width * height;
+        frame->plane[2] = (uint8_t*)raw->memory.data + width * height + width * height / 4;
+        frame->stride[0] = width;
+        frame->stride[1] = width / 2;
+        frame->stride[2] = width / 2;
+        memset(frame->plane[0], 80 + n, (size_t)width * height);
+        memset(frame->plane[1], 90, (size_t)width * height / 4);
+        memset(frame->plane[2], 100, (size_t)width * height / 4);
+
+        assert(enc->ops->process(enc, raw, &pkt) == ZST_OK);
+        zst_buffer_unref(raw);
+    }
+
+    assert(pkt != NULL && pkt->memory.size > 0);
+    assert(dec->sink_pads[0]->push(dec->sink_pads[0], pkt) == ZST_OK);
+
+    assert(capture->buffers >= 1);
+    assert(capture->last_type == ZST_BUFFER_VIDEO_FRAME);
+    assert(capture->width == (uint32_t)width);
+    assert(capture->height == (uint32_t)height);
+
+    zst_caps_t* caps = zst_pad_get_caps(dec->src_pads[0]);
+    assert(caps != NULL && caps->structs != NULL);
+    assert(strcmp(caps->structs->media_type, "video/x-raw") == 0);
+    assert(caps->structs->video.width == width);
+    assert(caps->structs->video.height == height);
+    zst_caps_destroy(caps);
+
+    zst_buffer_unref(pkt);
     zst_element_destroy(sink);
     zst_element_destroy(dec);
     zst_element_destroy(enc);
@@ -2653,6 +2706,7 @@ int main(void)
     /* ── Decoders (Phase 4v/4y) ── */
     printf("[decoders]\n");
     test_h264_decoder_roundtrip();
+    test_h265_decoder_roundtrip();
     test_aac_decoder_roundtrip();
 
     /* ── Allocator (Phase 8a) ── */

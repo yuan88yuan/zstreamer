@@ -126,6 +126,8 @@ set(ELEMENT_SOURCES
     src/file_source.c
     src/text_source.c
     src/h264_decoder.c
+    src/h265_encoder.c
+    src/h265_decoder.c
     src/aac_decoder.c
 )
 
@@ -220,6 +222,8 @@ if(BUILD_TESTS)
         src/text_source.c
         src/h264_encoder.c
         src/h264_decoder.c
+        src/h265_encoder.c
+        src/h265_decoder.c
         src/aac_encoder.c
         src/aac_decoder.c
         src/audio_test_src.c
