@@ -125,6 +125,8 @@ set(ELEMENT_SOURCES
     src/audio_test_src.c
     src/file_source.c
     src/text_source.c
+    src/h264_decoder.c
+    src/aac_decoder.c
 )
 
 # ── Dynamic Plugins ──────────────────────────────────────────────────────
@@ -184,7 +186,15 @@ add_library(zst_textsource SHARED src/text_source.c)
 target_compile_definitions(zst_textsource PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_textsource PRIVATE zstreamer ${FREETYPE_LIBRARIES})
 
-set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay zst_videotestsrc zst_audiotestsrc zst_filesource zst_textsource)
+add_library(zst_h264decoder SHARED src/h264_decoder.c)
+target_compile_definitions(zst_h264decoder PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_h264decoder PRIVATE zstreamer ${AVCODEC_LIBRARIES} ${AVUTIL_LIBRARIES})
+
+add_library(zst_aacdecoder SHARED src/aac_decoder.c)
+target_compile_definitions(zst_aacdecoder PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_aacdecoder PRIVATE zstreamer ${AVCODEC_LIBRARIES} ${AVUTIL_LIBRARIES})
+
+set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay zst_videotestsrc zst_audiotestsrc zst_filesource zst_textsource zst_h264decoder zst_aacdecoder)
 foreach(plugin ${PLUGIN_TARGETS})
     target_include_directories(${plugin} PRIVATE ${ZSTREAMER_INCLUDE_DIR} PRIVATE ${ELEMENT_INCLUDE_DIRS})
     set_target_properties(${plugin} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
@@ -200,6 +210,8 @@ if(BUILD_TESTS)
         src/audio_resampler.c
         src/text_overlay.c
         src/text_source.c
+    src/h264_decoder.c
+    src/aac_decoder.c
         src/audio_test_src.c
     )
     target_include_directories(test_core
@@ -208,7 +220,7 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_core
         PRIVATE zstreamer
-        PRIVATE ${SWSCALE_LIBRARIES} ${SWRESAMPLE_LIBRARIES} ${AVUTIL_LIBRARIES} ${FREETYPE_LIBRARIES}
+        PRIVATE ${SWSCALE_LIBRARIES} ${SWRESAMPLE_LIBRARIES} ${AVUTIL_LIBRARIES} ${FREETYPE_LIBRARIES} ${AVCODEC_LIBRARIES}
     )
 
     # -- full pipeline example --

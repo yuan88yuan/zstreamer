@@ -218,18 +218,18 @@ Parse SRT subtitle format into timed text events and feed them to `text_overlay`
 - [ ] Feed parsed text segments to `text_overlay` at correct PTS
 - [ ] Support ASS/SSA format parsing (advanced styling)
 
-### 4v — H.264 Decoder  (📝 Planned)
+### 4v — H.264 Decoder  (✅ done)
 
 Decodes H.264 elementary stream packets into raw video frames for processing, transcoding, preview, or analysis pipelines.
 
-- [ ] `h264dec` element with 1 sink pad (`video/x-h264`) and 1 src pad (`video/x-raw`)
-- [ ] FFmpeg `libavcodec` decoder integration (`AV_CODEC_ID_H264`)
-- [ ] Accept Annex B bytestream and AVCC/extradata forms where possible
-- [ ] Convert `AVFrame` output into `zst_video_frame_t` payloads
-- [ ] Preserve PTS/DTS/duration and handle B-frame reordering
-- [ ] Caps negotiation: advertise raw pixel format, width, height, framerate
-- [ ] EOS drain/flush: send NULL packet, emit delayed frames, then propagate EOS
-- [ ] Decoder reset on stream parameter changes or corruption recovery
+- [x] `h264dec` element with 1 sink pad (`video/x-h264`) and 1 src pad (`video/x-raw`)
+- [x] FFmpeg `libavcodec` decoder integration (`AV_CODEC_ID_H264`)
+- [x] Accept Annex B bytestream and AVCC/extradata forms where possible
+- [x] Convert `AVFrame` output into `zst_video_frame_t` payloads
+- [x] Preserve PTS/DTS/duration and handle B-frame reordering
+- [x] Caps negotiation: advertise raw pixel format, width, height, framerate
+- [x] EOS drain/flush: send NULL packet, emit delayed frames, then propagate EOS
+- [x] Decoder reset on stream parameter changes or corruption recovery
 
 **Dependencies:** `libavcodec-dev`, `libavutil-dev` (in Docker)
 
@@ -263,18 +263,18 @@ Decodes H.265/HEVC packets into raw video frames for HEVC ingest, transcoding, o
 
 **Dependencies:** `libavcodec-dev`, `libavutil-dev` (in Docker)
 
-### 4y — AAC Decoder  (📝 Planned)
+### 4y — AAC Decoder  (✅ done)
 
 Decodes AAC packets into raw audio frames for playback, transcoding, waveform analysis, or audio filtering.
 
-- [ ] `aacdec` element with 1 sink pad (`audio/aac`) and 1 src pad (`audio/x-raw`)
-- [ ] FFmpeg `libavcodec` decoder integration (`AV_CODEC_ID_AAC`)
-- [ ] Accept ADTS and AudioSpecificConfig/extradata forms where possible
-- [ ] Convert decoder output to `zst_audio_frame_t` payloads
-- [ ] Optional conversion to interleaved S16LE or F32LE for downstream compatibility
-- [ ] Preserve PTS/DTS/duration and calculate duration from decoded sample count
-- [ ] Caps negotiation: advertise sample rate, channels, and sample format
-- [ ] EOS drain/flush: send NULL packet, emit delayed frames, then propagate EOS
+- [x] `aacdec` element with 1 sink pad (`audio/aac`) and 1 src pad (`audio/x-raw`)
+- [x] FFmpeg `libavcodec` decoder integration (`AV_CODEC_ID_AAC`)
+- [x] Accept ADTS and AudioSpecificConfig/extradata forms where possible
+- [x] Convert decoder output to `zst_audio_frame_t` payloads
+- [x] Optional conversion to interleaved S16LE or F32LE for downstream compatibility
+- [x] Preserve PTS/DTS/duration and calculate duration from decoded sample count
+- [x] Caps negotiation: advertise sample rate, channels, and sample format
+- [x] EOS drain/flush: send NULL packet, emit delayed frames, then propagate EOS
 
 **Dependencies:** `libavcodec-dev`, `libavutil-dev` (in Docker)
 
