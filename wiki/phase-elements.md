@@ -1,7 +1,7 @@
-# Element Implementations — Phase 4  (✅ 4a-4h, 📝 4i-4r)
+# Element Implementations — Phase 4  (✅ 4a-4h, 4n; 📝 4i-4m, 4o-4r)
 
 Eight elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.
-Ten more are planned: file/network I/O for stream ingestion, RTSP/RTMP for live streaming, test sources for headless benchmarking, and a fake sink for pipeline debugging.
+Nine more are planned: file/network I/O for stream ingestion, RTSP/RTMP for live streaming, test sources for headless benchmarking, and a fake sink for pipeline debugging.
 Two more handle format conversion (scaling, resampling) — essential once caps negotiation (Phase 5) requires automatic conversion between mismatched formats.
 
 ### 4a — V4L2 Source  (✅ done)
@@ -161,19 +161,19 @@ Generates synthetic audio test signals without any real hardware input. Useful f
 - [ ] Caps negotiation: advertise `audio/x-raw` with configurable format/channels/rate
 - [ ] Loop mode: restart signal sequence on limit or EOS
 
-### 4n — Fake Sink  (📝 Planned)
+### 4n — Fake Sink  (✅ done)
 
 Consumes and immediately discards incoming buffers without any I/O or processing. Used for headless profiling, throughput testing, and pipeline termination without a real output.
 
 > **Video / Audio distinction?** A single fake sink is sufficient — both video and audio buffers behave identically: `zst_buffer_unref()` discards the buffer (returns it to the pool or frees it). GStreamer also uses a single `fakesink` for all media types. If per-type statistics are needed later (e.g. video fps vs audio latency), the element can count internally by `buffer->type` — no need for separate elements.
 
-- [ ] `fake_sink` element with 1 sink pad
-- [ ] Accept any caps — passthrough negotiation, no format restrictions
-- [ ] On `sink_push`: immediately `zst_buffer_unref()` the buffer (returns it to pool or frees it)
-- [ ] EOS passthrough: count and acknowledge
-- [ ] Optional stats: total buffers received, bytes processed, buffer rate (per second by media type)
-- [ ] Optional `drop-probability` setting: randomly drop packets to simulate packet loss
-- [ ] Zero-copy path: buffer is released without touching payload memory
+- [x] `fake_sink` element with 1 sink pad
+- [x] Accept any caps — passthrough negotiation, no format restrictions
+- [x] On `sink_push`: accumulate stats (total buffers, bytes processed)
+- [x] EOS passthrough: count and acknowledge
+- [x] Optional stats: total buffers received, bytes processed, buffer rate (per second by media type) via `get_property`
+- [x] Optional `drop-probability` setting: randomly drop packets to simulate packet loss
+- [x] Zero-copy path: buffer is released without touching payload memory
 
 ---
 

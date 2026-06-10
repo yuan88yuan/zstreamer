@@ -150,7 +150,7 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | Core Framework              | ✅ All 8 core modules implemented|
 | Scheduler Integration       | ✅ Topological sort, push/pull, EOS, state hardening |
 | Queue Element               | ✅ First-class queue with worker thread |
-| Real Element Implementations| ✅ All 8 elements: V4L2, x264, MP4(mux), file, ALSA, AAC, video_scaler, audio_resampler |
+| Real Element Implementations| ✅ 9 elements: V4L2, x264, MP4(mux), file, ALSA, AAC, video_scaler, audio_resampler, fakesink |
 | Caps Negotiation            | ✅ Done                          |
 | Event Bus                   | ✅ Done                          |
 | Dynamic Plugins             | ✅ Done                          |
