@@ -44,7 +44,7 @@ zst_scheduler_create(const zst_scheduler_config_t* cfg)
 
     sched_priv_t* p = calloc(1, sizeof(*p));
     if (!p) { free(sched); return NULL; }
-    p->running    = 0;
+    __atomic_store_n(&p->running, 0, __ATOMIC_RELEASE);
     p->threads    = NULL;
     p->nb_threads = 0;
     sched->priv   = p;
@@ -59,7 +59,7 @@ zst_scheduler_destroy(zst_scheduler_t* sched)
 
     sched_priv_t* p = sched->priv;
     if (p) {
-        if (p->running)
+        if (__atomic_load_n(&p->running, __ATOMIC_ACQUIRE))
             zst_scheduler_stop(sched);
         free(p->threads);
         free(p);
@@ -85,13 +85,13 @@ worker_loop(void* arg)
     uint32_t worker_id = ctx->worker_id;
     uint32_t nb_threads = p->nb_threads;
 
-    while (p->running) {
+    while (__atomic_load_n(&p->running, __ATOMIC_ACQUIRE)) {
         int activity = 0;
         zst_pipeline_t* pipe = sched->pipeline;
         if (pipe) {
             for (uint32_t i = worker_id; i < pipe->nb_elements; i += nb_threads) {
                 zst_element_t* el = pipe->elements[i];
-                if (el->state != ZST_STATE_PLAYING) continue;
+                if (__atomic_load_n(&el->state, __ATOMIC_ACQUIRE) != ZST_STATE_PLAYING) continue;
 
                 if (el->nb_sink_pads == 0) {
                     // Source element: process (produce)
@@ -113,7 +113,7 @@ worker_loop(void* arg)
                             }
                             zst_buffer_unref(eos_buf);
                         }
-                        el->state = ZST_STATE_READY;
+                        __atomic_store_n(&el->state, ZST_STATE_READY, __ATOMIC_RELEASE);
                     } else if (ret != ZST_TIMEOUT && ret != ZST_AGAIN) {
                         if (el->bus) {
                             zst_event_t* err_ev = zst_event_new_error(el, ret, "Source process failed");
@@ -145,13 +145,13 @@ zst_scheduler_run(zst_scheduler_t* sched)
 
     sched_priv_t* p = sched->priv;
     if (!p) return ZST_ERROR;
-    if (p->running) return ZST_OK;
+    if (__atomic_load_n(&p->running, __ATOMIC_ACQUIRE)) return ZST_OK;
 
     if (sched->pipeline) {
         zst_pipeline_topological_sort(sched->pipeline);
     }
 
-    p->running = 1;
+    __atomic_store_n(&p->running, 1, __ATOMIC_RELEASE);
 
     uint32_t n = 1;
     if (sched->config.mode == ZST_SCHEDULER_MULTI_THREAD) {
@@ -180,9 +180,9 @@ zst_scheduler_stop(zst_scheduler_t* sched)
 
     sched_priv_t* p = sched->priv;
     if (!p) return ZST_ERROR;
-    if (!p->running) return ZST_OK;
+    if (!__atomic_load_n(&p->running, __ATOMIC_ACQUIRE)) return ZST_OK;
 
-    p->running = 0;
+    __atomic_store_n(&p->running, 0, __ATOMIC_RELEASE);
 
     if (p->threads) {
         for (uint32_t i = 0; i < p->nb_threads; i++) {
