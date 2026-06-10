@@ -25,7 +25,7 @@ All phases are now documented in separate files for easier maintenance.
 | Caps Negotiation (5) | ✅ Done | Intersection, auto-negotiation |
 | Event Bus (6) | ✅ Done | Error/state/EOS notifications |
 | Dynamic Plugins (7) | ✅ Done | dlopen-based loading |
-| Allocator API (8a) | ✅ Done | CPU allocator + buffer pools + non-blocking acquire |
+| Allocator API (8a) | ✅ Mostly done | Pool + elements migration done; default sizing & tests pending |
 | Clock (8b) | ✅ Done | System clock, pipeline integration |
 | Text Rendering (11a) | ✅ Done | Text overlay via libfreetype |
 | Testing & CI (9) | ⬜ Planned | CI pipeline, stress tests, static analysis |

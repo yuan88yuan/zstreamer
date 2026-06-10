@@ -5,7 +5,7 @@
 - [x] Default CPU allocator (malloc/free)
 - [ ] DMABUF allocator (Linux dma-buf)
 - [ ] CUDA / Vulkan device memory allocators
-- [ ] Buffer pools to eliminate per-frame allocation
+- [x] Buffer pools to eliminate per-frame allocation ✅
 
   **`zst_buffer_pool_t` — a recyclable pool of pre-allocated buffers**
 
@@ -84,18 +84,20 @@
     remain agnostic of the pipeline they live in (important once Phase 8c's Element
     Bin allows nested pipelines).
 
-    - [x] Implement `zst_pipeline_count_elements_of_type(pipeline, type_name)`
-    - [x] Implement `zst_pool_config_default_size()` helper
-    - [x] Wire into pipeline start sequence or provide a convenience wrapper
+    - [ ] Implement `zst_pipeline_count_elements_of_type(pipeline, type_name)`
+    - [ ] Implement `zst_pool_config_default_size()` helper
+    - [ ] Wire into pipeline start sequence or provide a convenience wrapper
 
   **Test deliverables:**
-  - [x] Unit test: acquire/recycle loop (N buffers, M cycles, no net allocation)
-  - [x] Unit test: acquire blocks when pool exhausted, unblocks on release
-  - [x] Unit test: acquire with timeout returns NULL on expiry
-  - [x] Unit test: pool-backed buffer unref returns buffer to pool
-  - [x] Unit test: pool flush frees all cached buffers
-  - [x] Integration test: `v4l2src → queue → filesink` with pool, verify zero
+  - [ ] Unit test: acquire/recycle loop (N buffers, M cycles, no net allocation)
+  - [ ] Unit test: acquire blocks when pool exhausted, unblocks on release
+  - [ ] Unit test: acquire with timeout returns NULL on expiry
+  - [ ] Unit test: pool-backed buffer unref returns buffer to pool
+  - [ ] Unit test: pool flush frees all cached buffers
+  - [ ] Integration test: `v4l2src → queue → filesink` with pool, verify zero
         calls to `malloc` after warm-up phase
+    - [x] Unit test: basic allocator create/alloc/free/destroy
+    - [x] Unit test: nonblock acquire with `ZST_POOL_ACQUIRE_NONBLOCK` flag
 
 ## 8b — Clock  (from `wiki/future.md`)  (✅ done)
 - [x] `zst_clock_t` interface: `get_time`, `wait`
