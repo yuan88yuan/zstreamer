@@ -1,4 +1,4 @@
-# Element Implementations — Phase 4  (✅ 4a-4i, 4l-4n, 4s, 4t; 📝 4j-4k, 4o-4r, 4u-4y)
+# Element Implementations — Phase 4  (✅ 4a-4j, 4l-4n, 4s, 4t; 📝 4k, 4o-4r, 4u-4y)
 
 Fourteen elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.
 Additional elements are planned: network I/O for stream ingestion, RTSP/RTMP for live streaming, subtitle parsing utilities, and expanded codec coverage.
@@ -103,21 +103,21 @@ Reads raw or containerised media data from a local file and pushes it into the p
 - [x] Support for `offset` / `length` to read a subset of the file
 - [x] Caps negotiation: advertise `text/plain`, `video/x-h264`, `audio/aac`, etc. based on file extension or probe
 
-### 4j — Network Source  (📝 Planned)
+### 4j — Network Source  (✅ done)
 
 Receives raw byte streams over TCP or Unix sockets and feeds them into the pipeline as buffers.
 
 > **Protocol layering note:** This is a **raw transport** element. It reads bytes from a socket without understanding any application-layer protocol (RTSP, RTMP, HTTP, SRT, etc.). It outputs opaque byte buffers — not demuxed video/audio pads. For protocol-aware streaming with automatic demuxing and caps negotiation, use **4o (RTSP Source)** or **4q (RTMP Source)** instead.
 
-- [ ] `net_source` element with 1 src pad — outputs raw byte buffers
-- [ ] TCP client mode: connect to remote host:port, read stream into buffers
-- [ ] TCP server mode: accept incoming connections, read from first connected client
-- [ ] Unix socket support for local IPC
-- [ ] Configurable `host`, `port`, `protocol` (tcp-client, tcp-server, unix)
-- [ ] Reconnection with exponential back-off on connection loss
-- [ ] Buffer size / read timeout configuration
-- [ ] EOS on clean disconnect; error recovery on unexpected disconnect
-- [ ] Caps negotiation: fixed `text/plain` caps or none (passthrough)
+- [x] `net_source` element with 1 src pad — outputs raw byte buffers
+- [x] TCP client mode: connect to remote host:port, read stream into buffers
+- [x] TCP server mode: accept incoming connections, read from first connected client
+- [x] Unix socket support for local IPC
+- [x] Configurable `host`, `port`, `protocol` (tcp-client, tcp-server, unix)
+- [x] Reconnection with exponential back-off on connection loss
+- [x] Buffer size / read timeout configuration
+- [x] EOS on clean disconnect; error recovery on unexpected disconnect
+- [x] Caps negotiation: fixed `text/plain` caps or none (passthrough)
 
 ### 4k — Network Sink  (📝 Planned)
 
