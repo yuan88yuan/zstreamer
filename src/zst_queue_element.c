@@ -28,7 +28,7 @@ queue_el_worker(void* arg)
     zst_element_t* el = arg;
     queue_el_priv_t* priv = el->priv;
 
-    while (priv->running) {
+    while (__atomic_load_n(&priv->running, __ATOMIC_ACQUIRE)) {
         zst_buffer_t* buf = NULL;
         /* Pop with a small timeout (50ms) to allow checking priv->running */
         zst_result_t ret = zst_queue_pop(priv->queue, &buf, 50);
@@ -124,9 +124,9 @@ static zst_result_t
 queue_el_start(zst_element_t* el)
 {
     queue_el_priv_t* priv = el->priv;
-    priv->running = 1;
+    __atomic_store_n(&priv->running, 1, __ATOMIC_RELEASE);
     if (pthread_create(&priv->thread, NULL, queue_el_worker, el) != 0) {
-        priv->running = 0;
+        __atomic_store_n(&priv->running, 0, __ATOMIC_RELEASE);
         return ZST_ERROR;
     }
     return ZST_OK;
@@ -136,7 +136,7 @@ static zst_result_t
 queue_el_stop(zst_element_t* el)
 {
     queue_el_priv_t* priv = el->priv;
-    priv->running = 0;
+    __atomic_store_n(&priv->running, 0, __ATOMIC_RELEASE);
     /* Flush the queue to unblock the worker thread */
     if (priv->queue) {
         zst_queue_flush(priv->queue);

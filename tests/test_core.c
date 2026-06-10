@@ -1015,8 +1015,8 @@ test_bus_handler_cb(zst_bus_t* bus, zst_event_t* event, void* user_data)
 {
     (void)bus;
     (void)user_data;
-    g_handler_called++;
-    g_last_event_type = event->type;
+    __atomic_fetch_add(&g_handler_called, 1, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&g_last_event_type, event->type, __ATOMIC_SEQ_CST);
 }
 
 static void
@@ -1027,7 +1027,7 @@ test_bus_async_dispatch(void)
     zst_bus_t* bus = zst_bus_create();
     assert(bus != NULL);
     
-    g_handler_called = 0;
+    __atomic_store_n(&g_handler_called, 0, __ATOMIC_SEQ_CST);
     
     zst_result_t r = zst_bus_set_handler(bus, test_bus_handler_cb, NULL);
     assert(r == ZST_OK);
@@ -1040,8 +1040,8 @@ test_bus_async_dispatch(void)
     struct timespec ts = { .tv_sec = 0, .tv_nsec = 50000000 }; /* 50 ms */
     nanosleep(&ts, NULL);
     
-    assert(g_handler_called == 1);
-    assert(g_last_event_type == ZST_EVENT_EOS);
+    assert(__atomic_load_n(&g_handler_called, __ATOMIC_SEQ_CST) == 1);
+    assert(__atomic_load_n(&g_last_event_type, __ATOMIC_SEQ_CST) == ZST_EVENT_EOS);
     
     /* Remove handler (stops thread) */
     r = zst_bus_set_handler(bus, NULL, NULL);

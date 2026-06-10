@@ -18,7 +18,7 @@ zst_element_create(const zst_element_ops_t* ops, void* priv)
     if (!el) return NULL;
 
     el->ops          = ops;
-    el->state        = ZST_STATE_NULL;
+    __atomic_store_n(&el->state, ZST_STATE_NULL, __ATOMIC_RELEASE);
     el->src_pads     = NULL;
     el->nb_src_pads  = 0;
     el->sink_pads    = NULL;
@@ -67,48 +67,48 @@ zst_element_set_state(zst_element_t* el, zst_state_t state)
         return ZST_ERROR;
     }
 
-    if (el->state == state) return ZST_OK;
+    zst_state_t current_state = __atomic_load_n(&el->state, __ATOMIC_ACQUIRE);
+    if (current_state == state) return ZST_OK;
 
     /* Call the appropriate lifecycle hook */
     zst_result_t ret = ZST_OK;
 
     /* Transition NULL -> READY */
-    if (el->state < ZST_STATE_READY && state >= ZST_STATE_READY) {
+    if (current_state < ZST_STATE_READY && state >= ZST_STATE_READY) {
         if (el->ops->open)
             ret = el->ops->open(el);
         if (ret != ZST_OK) return ret;
     }
 
     /* Transition READY -> PAUSED */
-    if (el->state < ZST_STATE_PAUSED && state >= ZST_STATE_PAUSED) {
+    if (current_state < ZST_STATE_PAUSED && state >= ZST_STATE_PAUSED) {
         /* no default action */
     }
 
     /* Transition PAUSED -> PLAYING */
-    if (el->state < ZST_STATE_PLAYING && state >= ZST_STATE_PLAYING) {
+    if (current_state < ZST_STATE_PLAYING && state >= ZST_STATE_PLAYING) {
         if (el->ops->start)
             ret = el->ops->start(el);
         if (ret != ZST_OK) return ret;
     }
 
     /* Transition PLAYING -> PAUSED */
-    if (el->state >= ZST_STATE_PLAYING && state < ZST_STATE_PLAYING) {
+    if (current_state >= ZST_STATE_PLAYING && state < ZST_STATE_PLAYING) {
         if (el->ops->stop)
             ret = el->ops->stop(el);
         if (ret != ZST_OK) return ret;
     }
 
     /* Transition PAUSED / READY -> NULL */
-    if (el->state >= ZST_STATE_READY && state < ZST_STATE_READY) {
+    if (current_state >= ZST_STATE_READY && state < ZST_STATE_READY) {
         if (el->ops->close)
             ret = el->ops->close(el);
         if (ret != ZST_OK) return ret;
     }
 
-    zst_state_t old_state = el->state;
-    el->state = state;
-    if (el->state != old_state && el->bus) {
-        zst_event_t* ev = zst_event_new_state_changed(el, old_state, el->state);
+    __atomic_store_n(&el->state, state, __ATOMIC_RELEASE);
+    if (state != current_state && el->bus) {
+        zst_event_t* ev = zst_event_new_state_changed(el, current_state, state);
         zst_bus_post(el->bus, ev);
     }
     return ret;

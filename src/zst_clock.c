@@ -40,7 +40,7 @@ slave_clock_worker(void* arg)
     zst_time_t last_master = zst_clock_get_time(priv->master);
     zst_time_t last_ref    = zst_clock_get_time(priv->reference);
 
-    while (priv->running) {
+    while (__atomic_load_n(&priv->running, __ATOMIC_ACQUIRE)) {
         struct timespec ts = { .tv_sec = 1, .tv_nsec = 0 };
         nanosleep(&ts, NULL);
 
@@ -105,8 +105,8 @@ slave_clock_destroy(zst_clock_t* clock)
 {
     slave_clock_priv_t* priv = clock->priv;
     if (priv) {
-        if (priv->running) {
-            priv->running = 0;
+        if (__atomic_load_n(&priv->running, __ATOMIC_ACQUIRE)) {
+            __atomic_store_n(&priv->running, 0, __ATOMIC_RELEASE);
             pthread_join(priv->thread, NULL);
         }
         if (priv->master) {
@@ -152,9 +152,9 @@ zst_clock_slave_create(zst_clock_t* master, zst_clock_t* reference)
     clock->destroy  = slave_clock_destroy;
     clock->priv     = priv;
 
-    priv->running = 1;
+    __atomic_store_n(&priv->running, 1, __ATOMIC_RELEASE);
     if (pthread_create(&priv->thread, NULL, slave_clock_worker, clock) != 0) {
-        priv->running = 0;
+        __atomic_store_n(&priv->running, 0, __ATOMIC_RELEASE);
         zst_clock_unref(priv->master);
         zst_clock_unref(priv->reference);
         pthread_mutex_destroy(&priv->lock);
