@@ -121,6 +121,7 @@ set(ELEMENT_SOURCES
     src/video_scaler.c
     src/audio_resampler.c
     src/text_overlay.c
+    src/video_test_src.c
 )
 
 # ── Dynamic Plugins ──────────────────────────────────────────────────────
@@ -164,7 +165,11 @@ add_library(zst_textoverlay SHARED src/text_overlay.c)
 target_compile_definitions(zst_textoverlay PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_textoverlay PRIVATE zstreamer ${FREETYPE_LIBRARIES})
 
-set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay)
+add_library(zst_videotestsrc SHARED src/video_test_src.c)
+target_compile_definitions(zst_videotestsrc PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_videotestsrc PRIVATE zstreamer)
+
+set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay zst_videotestsrc)
 foreach(plugin ${PLUGIN_TARGETS})
     target_include_directories(${plugin} PRIVATE ${ZSTREAMER_INCLUDE_DIR} PRIVATE ${ELEMENT_INCLUDE_DIRS})
     set_target_properties(${plugin} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")

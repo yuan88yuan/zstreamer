@@ -136,18 +136,18 @@ Sends raw byte buffers over TCP or Unix sockets. Enables local IPC and custom bi
 
 ---
 
-### 4l — Video Test Source  (📝 Planned)
+### 4l — Video Test Source  (✅ done)
 
 Generates synthetic video test patterns without any real hardware input. Useful for pipeline testing, benchmarking, and demo scenarios where no camera is available.
 
-- [ ] `video_test_src` element with 1 src pad
-- [ ] Configurable resolution (`width` x `height`), framerate, pixel format
-- [ ] Test pattern options: colour bars (SMPTE/EBU), moving gradients, checkerboard, white noise, black/silent
-- [ ] Timestamp generation: `pts` set from pipeline clock at capture rate
-- [ ] EOS on `stop` state transition or configurable frame limit
-- [ ] Caps negotiation: advertise `video/x-raw` with configurable resolution/formats
+- [x] `video_test_src` element with 1 src pad
+- [x] Configurable resolution (`width` x `height`), framerate, pixel format
+- [x] Test pattern options: colour bars (SMPTE/EBU), moving gradients, checkerboard, white noise, black/silent
+- [x] Timestamp generation: `pts` set from pipeline clock at capture rate
+- [x] EOS on `stop` state transition or configurable frame limit
+- [x] Caps negotiation: advertise `video/x-raw` with configurable resolution/formats
 - [ ] Optional YUV420P → NV12 / RGB conversion in software
-- [ ] Loop mode: restart pattern sequence on frame limit or EOS
+- [x] Loop mode: restart pattern sequence on frame limit or EOS
 
 ### 4m — Audio Test Source  (📝 Planned)
 
