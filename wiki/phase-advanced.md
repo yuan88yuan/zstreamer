@@ -51,7 +51,7 @@
   **Auto-configuration from caps:**
   - [x] `zst_buffer_pool_config_from_caps(caps)` — derive `buffer_size` from
         resolution × pixel format (video) or sample_rate × channels × format (audio)
-  - [ ] **Default pool sizing** — topology-aware `min_buffers` adjustment
+  - [x] **Default pool sizing** — topology-aware `min_buffers` adjustment
 
     **Problem:** `zst_buffer_pool_config_from_caps()` only receives caps and has no
     access to the pipeline topology. Elements themselves don't (and shouldn't) hold a
@@ -84,17 +84,17 @@
     remain agnostic of the pipeline they live in (important once Phase 8c's Element
     Bin allows nested pipelines).
 
-    - [ ] Implement `zst_pipeline_count_elements_of_type(pipeline, type_name)`
-    - [ ] Implement `zst_pool_config_default_size()` helper
-    - [ ] Wire into pipeline start sequence or provide a convenience wrapper
+    - [x] Implement `zst_pipeline_count_elements_of_type(pipeline, type_name)`
+    - [x] Implement `zst_pool_config_default_size()` helper
+    - [x] Wire into pipeline start sequence or provide a convenience wrapper
 
   **Test deliverables:**
-  - [ ] Unit test: acquire/recycle loop (N buffers, M cycles, no net allocation)
-  - [ ] Unit test: acquire blocks when pool exhausted, unblocks on release
-  - [ ] Unit test: acquire with timeout returns NULL on expiry
-  - [ ] Unit test: pool-backed buffer unref returns buffer to pool
-  - [ ] Unit test: pool flush frees all cached buffers
-  - [ ] Integration test: `v4l2src → queue → filesink` with pool, verify zero
+  - [x] Unit test: acquire/recycle loop (N buffers, M cycles, no net allocation)
+  - [x] Unit test: acquire blocks when pool exhausted, unblocks on release
+  - [x] Unit test: acquire with timeout returns NULL on expiry
+  - [x] Unit test: pool-backed buffer unref returns buffer to pool
+  - [x] Unit test: pool flush frees all cached buffers
+  - [x] Integration test: `v4l2src → queue → filesink` with pool, verify zero
         calls to `malloc` after warm-up phase
 
 ## 8b — Clock  (from `wiki/future.md`)  (✅ done)
