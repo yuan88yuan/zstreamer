@@ -30,6 +30,7 @@ zst_element_t* zst_video_scaler_create(int target_width, int target_height, cons
 zst_element_t* zst_audio_resampler_create(int target_sample_rate, int target_channels, const char* target_format);
 zst_element_t* zst_text_overlay_create(const char* text);
 zst_element_t* zst_text_source_create(void);
+zst_element_t* zst_audio_test_src_create(void);
 
 static int g_tests_run   = 0;
 static int g_tests_passed = 0;
@@ -1174,6 +1175,11 @@ test_element_factory_refcounting(void)
     assert(audioresampler->plugin != NULL);
     assert(strcmp(audioresampler->ops->name, "audioresampler") == 0);
 
+    zst_element_t* audiotestsrc = zst_element_factory_make("audiotestsrc");
+    assert(audiotestsrc != NULL);
+    assert(audiotestsrc->plugin != NULL);
+    assert(strcmp(audiotestsrc->ops->name, "audiotestsrc") == 0);
+
     zst_plugin_t* filesink_plugin = filesink->plugin;
     assert(filesink_plugin->refcount == 2);
     
@@ -1192,6 +1198,7 @@ test_element_factory_refcounting(void)
     zst_element_destroy(mp4muxer);
     zst_element_destroy(videoscaler);
     zst_element_destroy(audioresampler);
+    zst_element_destroy(audiotestsrc);
     
     zst_plugin_registry_deinit();
     
@@ -1811,6 +1818,126 @@ test_video_test_src(void)
 }
 
 static void
+test_audio_test_src(void)
+{
+    TEST("audio_test_src generation, properties, caps, EOS");
+
+    zst_element_t* src = zst_audio_test_src_create();
+    assert(src != NULL);
+    assert(strcmp(src->ops->name, "audiotestsrc") == 0);
+
+    char val[64];
+    assert(zst_element_get_property(src, "sample-rate", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "44100") == 0);
+    assert(zst_element_get_property(src, "channels", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "2") == 0);
+    assert(zst_element_get_property(src, "sample-format", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "S16LE") == 0);
+    assert(zst_element_get_property(src, "wave", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "sine") == 0);
+
+    assert(zst_element_set_property(src, "sample-rate", "48000") == ZST_OK);
+    assert(zst_element_set_property(src, "channels", "1") == ZST_OK);
+    assert(zst_element_set_property(src, "sample-format", "F32LE") == ZST_OK);
+    assert(zst_element_set_property(src, "wave", "silence") == ZST_OK);
+    assert(zst_element_set_property(src, "frequency", "1000") == ZST_OK);
+    assert(zst_element_set_property(src, "samples-per-buffer", "512") == ZST_OK);
+    assert(zst_element_set_property(src, "num-samples", "800") == ZST_OK);
+
+    assert(zst_element_get_property(src, "sample-rate", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "48000") == 0);
+    assert(zst_element_get_property(src, "channels", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "1") == 0);
+    assert(zst_element_get_property(src, "sample-format", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "F32LE") == 0);
+
+    zst_caps_t* caps = zst_pad_get_caps(zst_element_get_pad(src, "src"));
+    assert(caps != NULL);
+    assert(caps->structs != NULL);
+    assert(strcmp(caps->structs->media_type, "audio/x-raw") == 0);
+    assert(caps->structs->audio.channels == 1);
+    assert(caps->structs->audio.sample_rate == 48000);
+    assert(strcmp(caps->structs->audio.format, "F32LE") == 0);
+    zst_caps_destroy(caps);
+
+    assert(zst_element_set_state(src, ZST_STATE_PLAYING) == ZST_OK);
+
+    zst_buffer_t* buf = NULL;
+    assert(src->ops->process(src, NULL, &buf) == ZST_OK);
+    assert(buf != NULL);
+    assert(buf->type == ZST_BUFFER_AUDIO_FRAME);
+    assert(!(buf->flags & ZST_BUFFER_FLAG_EOS));
+    assert(buf->memory.size == 512 * sizeof(float));
+    assert(buf->pts == 0);
+    assert(buf->duration == 512ULL * 1000000000ULL / 48000ULL);
+
+    zst_audio_frame_t* af = buf->payload;
+    assert(af != NULL);
+    assert(af->sample_rate == 48000);
+    assert(af->channels == 1);
+    assert(af->format == 3); /* F32LE */
+    assert(af->nb_samples == 512);
+    float* f32 = af->data;
+    assert(f32 != NULL);
+    for (int i = 0; i < 512; i++) {
+        assert(f32[i] == 0.0f);
+    }
+    zst_buffer_unref(buf);
+
+    buf = NULL;
+    assert(src->ops->process(src, NULL, &buf) == ZST_OK);
+    assert(buf != NULL);
+    assert(!(buf->flags & ZST_BUFFER_FLAG_EOS));
+    af = buf->payload;
+    assert(af != NULL);
+    assert(af->nb_samples == 288);
+    assert(buf->memory.size == 288 * sizeof(float));
+    assert(buf->pts == 512ULL * 1000000000ULL / 48000ULL);
+    zst_buffer_unref(buf);
+
+    buf = NULL;
+    assert(src->ops->process(src, NULL, &buf) == ZST_OK);
+    assert(buf != NULL);
+    assert(buf->flags & ZST_BUFFER_FLAG_EOS);
+    zst_buffer_unref(buf);
+
+    assert(zst_element_set_state(src, ZST_STATE_NULL) == ZST_OK);
+    zst_element_destroy(src);
+
+    /* Check S16LE signal generation and loop mode. */
+    src = zst_audio_test_src_create();
+    assert(src != NULL);
+    assert(zst_element_set_property(src, "wave", "square") == ZST_OK);
+    assert(zst_element_set_property(src, "samples-per-buffer", "4") == ZST_OK);
+    assert(zst_element_set_property(src, "num-buffers", "1") == ZST_OK);
+    assert(zst_element_set_property(src, "loop", "true") == ZST_OK);
+    assert(zst_element_set_state(src, ZST_STATE_PLAYING) == ZST_OK);
+
+    buf = NULL;
+    assert(src->ops->process(src, NULL, &buf) == ZST_OK);
+    assert(buf != NULL);
+    af = buf->payload;
+    assert(af != NULL);
+    assert(af->format == 0); /* S16LE */
+    assert(af->nb_samples == 4);
+    int16_t* s16 = af->data;
+    assert(s16 != NULL);
+    assert(s16[0] > 0);
+    zst_buffer_unref(buf);
+
+    buf = NULL;
+    assert(src->ops->process(src, NULL, &buf) == ZST_OK);
+    assert(buf != NULL);
+    assert(!(buf->flags & ZST_BUFFER_FLAG_EOS));
+    zst_buffer_unref(buf);
+
+    assert(zst_element_set_state(src, ZST_STATE_NULL) == ZST_OK);
+    zst_element_destroy(src);
+
+    PASS();
+}
+
+static void
 test_text_source(void)
 {
     TEST("text_source basic frame generation and properties");
@@ -2250,6 +2377,9 @@ int main(void)
 
     printf("[video test source]\n");
     test_video_test_src();
+
+    printf("[audio test source]\n");
+    test_audio_test_src();
 
     printf("[file source]\n");
     test_file_source();

@@ -1,0 +1,629 @@
+/*=============================================================================
+    audio_test_src.c — Synthetic audio test signal source
+=============================================================================*/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "zst_element.h"
+#include "zst_buffer.h"
+#include "zst_buffer_pool.h"
+#include "zst_clock.h"
+
+#define ZST_AUDIO_FMT_S16LE 0u
+#define ZST_AUDIO_FMT_F32LE 3u
+
+typedef enum {
+    WAVE_SINE,
+    WAVE_SQUARE,
+    WAVE_WHITE_NOISE,
+    WAVE_PINK_NOISE,
+    WAVE_SILENCE
+} audio_wave_t;
+
+typedef struct {
+    uint32_t sample_rate;
+    uint32_t channels;
+    uint32_t samples_per_buffer;
+    char sample_format[32];
+    audio_wave_t wave;
+    double frequency;
+    double volume;
+    int64_t num_samples;
+    int64_t num_buffers;
+    bool loop;
+
+    uint64_t sample_count;
+    uint64_t buffer_count;
+    bool stopped;
+    double phase;
+    uint32_t rng_state;
+
+    /* Pink-noise filter state (Paul Kellet style approximation). */
+    double pink_b0;
+    double pink_b1;
+    double pink_b2;
+    double pink_b3;
+    double pink_b4;
+    double pink_b5;
+    double pink_b6;
+
+    zst_buffer_pool_t* pool;
+} audio_test_src_t;
+
+static double
+zst_abs_double(double x)
+{
+    return x < 0.0 ? -x : x;
+}
+
+static double
+fast_sine_from_phase(double phase)
+{
+    /* phase is one cycle in [0, 1). Use a compact approximation to avoid libm. */
+    const double pi = 3.14159265358979323846;
+    const double two_pi = 6.28318530717958647692;
+    double x = phase * two_pi;
+    if (x > pi) x -= two_pi;
+
+    const double b = 4.0 / pi;
+    const double c = -4.0 / (pi * pi);
+    const double p = 0.225;
+
+    double y = b * x + c * x * zst_abs_double(x);
+    y = p * (y * zst_abs_double(y) - y) + y;
+    return y;
+}
+
+static uint32_t
+lcg_next(audio_test_src_t* s)
+{
+    s->rng_state = s->rng_state * 1664525u + 1013904223u;
+    return s->rng_state;
+}
+
+static double
+white_noise_sample(audio_test_src_t* s)
+{
+    uint32_t v = lcg_next(s);
+    return ((double)v / 2147483648.0) - 1.0;
+}
+
+static double
+pink_noise_sample(audio_test_src_t* s)
+{
+    double white = white_noise_sample(s);
+
+    s->pink_b0 = 0.99886 * s->pink_b0 + white * 0.0555179;
+    s->pink_b1 = 0.99332 * s->pink_b1 + white * 0.0750759;
+    s->pink_b2 = 0.96900 * s->pink_b2 + white * 0.1538520;
+    s->pink_b3 = 0.86650 * s->pink_b3 + white * 0.3104856;
+    s->pink_b4 = 0.55000 * s->pink_b4 + white * 0.5329522;
+    s->pink_b5 = -0.7616 * s->pink_b5 - white * 0.0168980;
+
+    double pink = s->pink_b0 + s->pink_b1 + s->pink_b2 + s->pink_b3 +
+                  s->pink_b4 + s->pink_b5 + s->pink_b6 + white * 0.5362;
+    s->pink_b6 = white * 0.115926;
+
+    /* The filter has gain > 1. Scale and clamp to a stable [-1, 1] range. */
+    pink *= 0.11;
+    if (pink > 1.0) pink = 1.0;
+    if (pink < -1.0) pink = -1.0;
+    return pink;
+}
+
+static uint32_t
+format_code_from_string(const char* format)
+{
+    if (format && (strcmp(format, "F32LE") == 0 || strcmp(format, "F32") == 0)) {
+        return ZST_AUDIO_FMT_F32LE;
+    }
+    return ZST_AUDIO_FMT_S16LE;
+}
+
+static size_t
+bytes_per_sample_for_format(const char* format)
+{
+    if (format && (strcmp(format, "F32LE") == 0 || strcmp(format, "F32") == 0)) {
+        return sizeof(float);
+    }
+    return sizeof(int16_t);
+}
+
+static const char*
+wave_to_string(audio_wave_t wave)
+{
+    switch (wave) {
+        case WAVE_SINE: return "sine";
+        case WAVE_SQUARE: return "square";
+        case WAVE_WHITE_NOISE: return "white-noise";
+        case WAVE_PINK_NOISE: return "pink-noise";
+        case WAVE_SILENCE: return "silence";
+    }
+    return "sine";
+}
+
+static bool
+string_to_wave(const char* value, audio_wave_t* out)
+{
+    if (strcmp(value, "sine") == 0) {
+        *out = WAVE_SINE;
+    } else if (strcmp(value, "square") == 0) {
+        *out = WAVE_SQUARE;
+    } else if (strcmp(value, "white-noise") == 0 || strcmp(value, "white_noise") == 0 || strcmp(value, "noise") == 0) {
+        *out = WAVE_WHITE_NOISE;
+    } else if (strcmp(value, "pink-noise") == 0 || strcmp(value, "pink_noise") == 0) {
+        *out = WAVE_PINK_NOISE;
+    } else if (strcmp(value, "silence") == 0 || strcmp(value, "silent") == 0) {
+        *out = WAVE_SILENCE;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+static void
+audio_test_src_reset_signal_state(audio_test_src_t* s)
+{
+    s->phase = 0.0;
+    s->rng_state = 0x12345678u;
+    s->pink_b0 = 0.0;
+    s->pink_b1 = 0.0;
+    s->pink_b2 = 0.0;
+    s->pink_b3 = 0.0;
+    s->pink_b4 = 0.0;
+    s->pink_b5 = 0.0;
+    s->pink_b6 = 0.0;
+}
+
+static size_t
+audio_test_src_buffer_size(const audio_test_src_t* s)
+{
+    return (size_t)s->samples_per_buffer * s->channels * bytes_per_sample_for_format(s->sample_format);
+}
+
+static zst_result_t
+audio_test_src_create_pool(audio_test_src_t* s)
+{
+    zst_buffer_pool_config_t pool_cfg = {
+        .min_buffers = 4,
+        .max_buffers = 8,
+        .buffer_size = audio_test_src_buffer_size(s),
+        .buffer_type = ZST_BUFFER_AUDIO_FRAME
+    };
+    s->pool = zst_buffer_pool_create(NULL, &pool_cfg);
+    return s->pool ? ZST_OK : ZST_ERROR;
+}
+
+static zst_result_t
+audio_test_src_recreate_pool_if_open(audio_test_src_t* s)
+{
+    if (!s->pool) return ZST_OK;
+    zst_buffer_pool_destroy(s->pool);
+    s->pool = NULL;
+    return audio_test_src_create_pool(s);
+}
+
+static void
+audio_test_src_buf_free(zst_buffer_t* buf)
+{
+    if (buf && buf->payload) {
+        free(buf->payload);
+        buf->payload = NULL;
+    }
+}
+
+static zst_result_t
+audio_test_src_open(zst_element_t* el)
+{
+    audio_test_src_t* s = el->priv;
+
+    s->sample_count = 0;
+    s->buffer_count = 0;
+    s->stopped = false;
+    audio_test_src_reset_signal_state(s);
+
+    if (s->pool) {
+        zst_buffer_pool_destroy(s->pool);
+        s->pool = NULL;
+    }
+
+    return audio_test_src_create_pool(s);
+}
+
+static zst_result_t
+audio_test_src_close(zst_element_t* el)
+{
+    audio_test_src_t* s = el->priv;
+    if (s->pool) {
+        zst_buffer_pool_destroy(s->pool);
+        s->pool = NULL;
+    }
+    return ZST_OK;
+}
+
+static zst_result_t
+audio_test_src_start(zst_element_t* el)
+{
+    audio_test_src_t* s = el->priv;
+    s->stopped = false;
+    return ZST_OK;
+}
+
+static zst_result_t
+audio_test_src_stop(zst_element_t* el)
+{
+    audio_test_src_t* s = el->priv;
+    s->stopped = true;
+    return ZST_OK;
+}
+
+static zst_buffer_t*
+audio_test_src_create_eos(void)
+{
+    zst_buffer_t* eos_buf = zst_buffer_create(ZST_BUFFER_AUDIO_FRAME);
+    if (eos_buf) eos_buf->flags |= ZST_BUFFER_FLAG_EOS;
+    return eos_buf;
+}
+
+static double
+audio_test_src_next_sample(audio_test_src_t* s)
+{
+    double sample = 0.0;
+
+    switch (s->wave) {
+        case WAVE_SINE:
+            sample = fast_sine_from_phase(s->phase);
+            break;
+        case WAVE_SQUARE:
+            sample = s->phase < 0.5 ? 1.0 : -1.0;
+            break;
+        case WAVE_WHITE_NOISE:
+            sample = white_noise_sample(s);
+            break;
+        case WAVE_PINK_NOISE:
+            sample = pink_noise_sample(s);
+            break;
+        case WAVE_SILENCE:
+            sample = 0.0;
+            break;
+    }
+
+    double step = s->sample_rate > 0 ? s->frequency / (double)s->sample_rate : 0.0;
+    s->phase += step;
+    while (s->phase >= 1.0) s->phase -= 1.0;
+    while (s->phase < 0.0) s->phase += 1.0;
+
+    sample *= s->volume;
+    if (sample > 1.0) sample = 1.0;
+    if (sample < -1.0) sample = -1.0;
+    return sample;
+}
+
+static zst_result_t
+audio_test_src_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
+{
+    (void)in;
+    audio_test_src_t* s = el->priv;
+    if (!out) return ZST_ERROR;
+    *out = NULL;
+
+    if (s->stopped) {
+        *out = audio_test_src_create_eos();
+        return *out ? ZST_OK : ZST_ERROR;
+    }
+
+    bool hit_buffer_limit = s->num_buffers >= 0 && s->buffer_count >= (uint64_t)s->num_buffers;
+    bool hit_sample_limit = s->num_samples >= 0 && s->sample_count >= (uint64_t)s->num_samples;
+    if (hit_buffer_limit || hit_sample_limit) {
+        if (s->loop) {
+            s->sample_count = 0;
+            s->buffer_count = 0;
+            audio_test_src_reset_signal_state(s);
+        } else {
+            *out = audio_test_src_create_eos();
+            return *out ? ZST_OK : ZST_ERROR;
+        }
+    }
+
+    uint32_t nb_samples = s->samples_per_buffer;
+    if (s->num_samples >= 0) {
+        uint64_t remaining = (uint64_t)s->num_samples - s->sample_count;
+        if (remaining < nb_samples) nb_samples = (uint32_t)remaining;
+        if (nb_samples == 0) {
+            *out = audio_test_src_create_eos();
+            return *out ? ZST_OK : ZST_ERROR;
+        }
+    }
+
+    zst_buffer_t* buf = zst_buffer_create_with_pool(s->pool);
+    if (!buf) return ZST_ERROR;
+
+    uint8_t* raw_data = buf->memory.data;
+    size_t bytes_per_sample = bytes_per_sample_for_format(s->sample_format);
+    size_t data_size = (size_t)nb_samples * s->channels * bytes_per_sample;
+    buf->memory.size = data_size;
+
+    zst_audio_frame_t* frame = buf->payload;
+    if (!frame) {
+        frame = calloc(1, sizeof(*frame));
+        if (!frame) {
+            zst_buffer_unref(buf);
+            return ZST_ERROR;
+        }
+        buf->payload = frame;
+        buf->destroy = audio_test_src_buf_free;
+    }
+
+    frame->sample_rate = s->sample_rate;
+    frame->channels = s->channels;
+    frame->format = format_code_from_string(s->sample_format);
+    frame->nb_samples = nb_samples;
+    frame->data = raw_data;
+
+    if (frame->format == ZST_AUDIO_FMT_F32LE) {
+        float* pcm = (float*)raw_data;
+        for (uint32_t i = 0; i < nb_samples; i++) {
+            float sample = (float)audio_test_src_next_sample(s);
+            for (uint32_t ch = 0; ch < s->channels; ch++) {
+                pcm[i * s->channels + ch] = sample;
+            }
+        }
+    } else {
+        int16_t* pcm = (int16_t*)raw_data;
+        for (uint32_t i = 0; i < nb_samples; i++) {
+            double sample = audio_test_src_next_sample(s);
+            int16_t q = (int16_t)(sample * 32767.0);
+            for (uint32_t ch = 0; ch < s->channels; ch++) {
+                pcm[i * s->channels + ch] = q;
+            }
+        }
+    }
+
+    uint64_t start_sample = s->sample_count;
+    s->sample_count += nb_samples;
+    s->buffer_count++;
+
+    if (el->clock) {
+        buf->pts = zst_clock_get_time(el->clock);
+    } else {
+        buf->pts = start_sample * 1000000000ULL / s->sample_rate;
+    }
+    buf->duration = (uint64_t)nb_samples * 1000000000ULL / s->sample_rate;
+
+    *out = buf;
+    return ZST_OK;
+}
+
+static zst_caps_t*
+audio_test_src_get_caps(zst_element_t* el, zst_pad_t* pad, const zst_caps_t* filter)
+{
+    (void)pad;
+    (void)filter;
+    audio_test_src_t* s = el->priv;
+    zst_caps_t* caps = zst_caps_create();
+    if (!caps) return NULL;
+    zst_caps_append(caps, zst_caps_struct_create_audio("audio/x-raw", (int)s->channels, (int)s->sample_rate, s->sample_format));
+    return caps;
+}
+
+static zst_result_t
+audio_test_src_set_property(zst_element_t* el, const char* name, const char* value)
+{
+    audio_test_src_t* s = el->priv;
+
+    if (strcmp(name, "sample-rate") == 0 || strcmp(name, "rate") == 0) {
+        int v = atoi(value);
+        if (v <= 0) return ZST_ERROR;
+        s->sample_rate = (uint32_t)v;
+        return ZST_OK;
+    } else if (strcmp(name, "channels") == 0) {
+        int v = atoi(value);
+        if (v <= 0) return ZST_ERROR;
+        s->channels = (uint32_t)v;
+        return audio_test_src_recreate_pool_if_open(s);
+    } else if (strcmp(name, "sample-format") == 0 || strcmp(name, "format") == 0) {
+        if (strcmp(value, "S16LE") != 0 && strcmp(value, "S16") != 0 &&
+            strcmp(value, "F32LE") != 0 && strcmp(value, "F32") != 0) {
+            return ZST_ERROR;
+        }
+        snprintf(s->sample_format, sizeof(s->sample_format), "%s",
+                 (strcmp(value, "S16") == 0) ? "S16LE" : ((strcmp(value, "F32") == 0) ? "F32LE" : value));
+        return audio_test_src_recreate_pool_if_open(s);
+    } else if (strcmp(name, "wave") == 0 || strcmp(name, "signal") == 0) {
+        audio_wave_t wave;
+        if (!string_to_wave(value, &wave)) return ZST_ERROR;
+        s->wave = wave;
+        return ZST_OK;
+    } else if (strcmp(name, "frequency") == 0 || strcmp(name, "freq") == 0) {
+        double v = atof(value);
+        if (v < 0.0) return ZST_ERROR;
+        s->frequency = v;
+        return ZST_OK;
+    } else if (strcmp(name, "volume") == 0 || strcmp(name, "amplitude") == 0) {
+        double v = atof(value);
+        if (v < 0.0) v = 0.0;
+        if (v > 1.0) v = 1.0;
+        s->volume = v;
+        return ZST_OK;
+    } else if (strcmp(name, "samples-per-buffer") == 0 || strcmp(name, "block-size") == 0) {
+        int v = atoi(value);
+        if (v <= 0) return ZST_ERROR;
+        s->samples_per_buffer = (uint32_t)v;
+        return audio_test_src_recreate_pool_if_open(s);
+    } else if (strcmp(name, "num-samples") == 0) {
+        s->num_samples = atoll(value);
+        if (s->num_samples < -1) return ZST_ERROR;
+        return ZST_OK;
+    } else if (strcmp(name, "num-buffers") == 0) {
+        s->num_buffers = atoll(value);
+        if (s->num_buffers < -1) return ZST_ERROR;
+        return ZST_OK;
+    } else if (strcmp(name, "loop") == 0) {
+        s->loop = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcmp(value, "yes") == 0);
+        return ZST_OK;
+    }
+
+    return ZST_ERROR;
+}
+
+static zst_result_t
+audio_test_src_get_property(zst_element_t* el, const char* name, char* value_out, size_t max_len)
+{
+    audio_test_src_t* s = el->priv;
+
+    if (strcmp(name, "sample-rate") == 0 || strcmp(name, "rate") == 0) {
+        snprintf(value_out, max_len, "%u", s->sample_rate);
+        return ZST_OK;
+    } else if (strcmp(name, "channels") == 0) {
+        snprintf(value_out, max_len, "%u", s->channels);
+        return ZST_OK;
+    } else if (strcmp(name, "sample-format") == 0 || strcmp(name, "format") == 0) {
+        snprintf(value_out, max_len, "%s", s->sample_format);
+        return ZST_OK;
+    } else if (strcmp(name, "wave") == 0 || strcmp(name, "signal") == 0) {
+        snprintf(value_out, max_len, "%s", wave_to_string(s->wave));
+        return ZST_OK;
+    } else if (strcmp(name, "frequency") == 0 || strcmp(name, "freq") == 0) {
+        snprintf(value_out, max_len, "%g", s->frequency);
+        return ZST_OK;
+    } else if (strcmp(name, "volume") == 0 || strcmp(name, "amplitude") == 0) {
+        snprintf(value_out, max_len, "%g", s->volume);
+        return ZST_OK;
+    } else if (strcmp(name, "samples-per-buffer") == 0 || strcmp(name, "block-size") == 0) {
+        snprintf(value_out, max_len, "%u", s->samples_per_buffer);
+        return ZST_OK;
+    } else if (strcmp(name, "num-samples") == 0) {
+        snprintf(value_out, max_len, "%lld", (long long)s->num_samples);
+        return ZST_OK;
+    } else if (strcmp(name, "num-buffers") == 0) {
+        snprintf(value_out, max_len, "%lld", (long long)s->num_buffers);
+        return ZST_OK;
+    } else if (strcmp(name, "loop") == 0) {
+        snprintf(value_out, max_len, "%s", s->loop ? "true" : "false");
+        return ZST_OK;
+    }
+
+    return ZST_ERROR;
+}
+
+static zst_time_t
+audio_test_src_clock_get_time(zst_clock_t* clock)
+{
+    audio_test_src_t* s = clock->priv;
+    if (!s || s->sample_rate == 0) return 0;
+    return s->sample_count * 1000000000ULL / s->sample_rate;
+}
+
+static void
+audio_test_src_clock_wait(zst_clock_t* clock, zst_time_t time)
+{
+    (void)clock;
+    (void)time;
+}
+
+static void
+audio_test_src_clock_destroy(zst_clock_t* clock)
+{
+    (void)clock;
+}
+
+static zst_clock_t*
+audio_test_src_provide_clock(zst_element_t* el)
+{
+    audio_test_src_t* s = el->priv;
+    zst_clock_t* clock = calloc(1, sizeof(*clock));
+    if (!clock) return NULL;
+
+    clock->refcount = 1;
+    clock->get_time = audio_test_src_clock_get_time;
+    clock->wait = audio_test_src_clock_wait;
+    clock->destroy = audio_test_src_clock_destroy;
+    clock->priv = s;
+    return clock;
+}
+
+static zst_element_ops_t g_ops = {
+    .name = "audiotestsrc",
+    .open = audio_test_src_open,
+    .close = audio_test_src_close,
+    .start = audio_test_src_start,
+    .stop = audio_test_src_stop,
+    .process = audio_test_src_process,
+    .get_caps = audio_test_src_get_caps,
+    .provide_clock = audio_test_src_provide_clock,
+    .set_property = audio_test_src_set_property,
+    .get_property = audio_test_src_get_property,
+};
+
+zst_element_t*
+zst_audio_test_src_create(void)
+{
+    audio_test_src_t* priv = calloc(1, sizeof(*priv));
+    if (!priv) return NULL;
+
+    priv->sample_rate = 44100;
+    priv->channels = 2;
+    priv->samples_per_buffer = 1024;
+    snprintf(priv->sample_format, sizeof(priv->sample_format), "%s", "S16LE");
+    priv->wave = WAVE_SINE;
+    priv->frequency = 440.0;
+    priv->volume = 0.8;
+    priv->num_samples = -1;
+    priv->num_buffers = -1;
+    priv->loop = false;
+    audio_test_src_reset_signal_state(priv);
+
+    zst_element_t* el = zst_element_create(&g_ops, priv);
+    if (!el) {
+        free(priv);
+        return NULL;
+    }
+
+    zst_pad_t* src = zst_pad_create("src", ZST_PAD_SRC);
+    if (!src || zst_element_add_pad(el, src) != ZST_OK) {
+        if (src) zst_pad_destroy(src);
+        zst_element_destroy(el);
+        return NULL;
+    }
+
+    return el;
+}
+
+#ifdef BUILDING_PLUGIN
+#include "zst_plugin.h"
+
+static zst_element_t*
+plugin_create_element(const char* name)
+{
+    if (strcmp(name, "audiotestsrc") == 0 || strcmp(name, "audio_test_src") == 0) {
+        return zst_audio_test_src_create();
+    }
+    return NULL;
+}
+
+static zst_plugin_t g_plugin = {
+    .desc = {
+        .name = "audiotestsrc_plugin",
+        .author = "Antigravity",
+        .version = "1.0.0",
+        .init = NULL,
+        .deinit = NULL
+    },
+    .create_element = plugin_create_element
+};
+
+ZST_PLUGIN_EXPORT
+zst_plugin_t*
+zst_get_plugin(void)
+{
+    zst_plugin_t* p = malloc(sizeof(*p));
+    if (p) {
+        *p = g_plugin;
+    }
+    return p;
+}
+#endif
