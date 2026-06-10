@@ -218,8 +218,10 @@ if(BUILD_TESTS)
         src/audio_resampler.c
         src/text_overlay.c
         src/text_source.c
-    src/h264_decoder.c
-    src/aac_decoder.c
+        src/h264_encoder.c
+        src/h264_decoder.c
+        src/aac_encoder.c
+        src/aac_decoder.c
         src/audio_test_src.c
     )
     target_include_directories(test_core
@@ -228,7 +230,7 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_core
         PRIVATE zstreamer
-        PRIVATE ${SWSCALE_LIBRARIES} ${SWRESAMPLE_LIBRARIES} ${AVUTIL_LIBRARIES} ${FREETYPE_LIBRARIES} ${AVCODEC_LIBRARIES}
+        PRIVATE ${SWSCALE_LIBRARIES} ${SWRESAMPLE_LIBRARIES} ${AVUTIL_LIBRARIES} ${FREETYPE_LIBRARIES} ${AVCODEC_LIBRARIES} ${X264_LIBRARIES}
     )
 
     # -- full pipeline example --

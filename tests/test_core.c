@@ -31,6 +31,10 @@ zst_element_t* zst_audio_resampler_create(int target_sample_rate, int target_cha
 zst_element_t* zst_text_overlay_create(const char* text);
 zst_element_t* zst_text_source_create(void);
 zst_element_t* zst_audio_test_src_create(void);
+zst_element_t* zst_h264_encoder_create(void);
+zst_element_t* zst_h264_decoder_create(void);
+zst_element_t* zst_aac_encoder_create(void);
+zst_element_t* zst_aac_decoder_create(void);
 
 static int g_tests_run   = 0;
 static int g_tests_passed = 0;
@@ -1210,6 +1214,16 @@ test_element_factory_refcounting(void)
     assert(audiotestsrc->plugin != NULL);
     assert(strcmp(audiotestsrc->ops->name, "audiotestsrc") == 0);
 
+    zst_element_t* h264decoder = zst_element_factory_make("h264dec");
+    assert(h264decoder != NULL);
+    assert(h264decoder->plugin != NULL);
+    assert(strcmp(h264decoder->ops->name, "h264dec") == 0);
+
+    zst_element_t* aacdecoder = zst_element_factory_make("aacdec");
+    assert(aacdecoder != NULL);
+    assert(aacdecoder->plugin != NULL);
+    assert(strcmp(aacdecoder->ops->name, "aacdec") == 0);
+
     zst_plugin_t* filesink_plugin = filesink->plugin;
     assert(filesink_plugin->refcount == 2);
     
@@ -1231,9 +1245,256 @@ test_element_factory_refcounting(void)
     zst_element_destroy(videoscaler);
     zst_element_destroy(audioresampler);
     zst_element_destroy(audiotestsrc);
+    zst_element_destroy(h264decoder);
+    zst_element_destroy(aacdecoder);
     
     zst_plugin_registry_deinit();
     
+    PASS();
+}
+
+typedef struct {
+    int buffers;
+    uint32_t last_type;
+    uint32_t width;
+    uint32_t height;
+    uint32_t sample_rate;
+    uint32_t channels;
+    uint32_t nb_samples;
+    uint32_t format;
+    zst_time_t duration;
+} decoder_capture_t;
+
+static zst_result_t
+decoder_capture_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
+{
+    (void)out;
+    decoder_capture_t* c = el->priv;
+    assert(c != NULL);
+    assert(in != NULL);
+
+    c->buffers++;
+    c->last_type = in->type;
+    c->duration = in->duration;
+
+    if (!(in->flags & ZST_BUFFER_FLAG_EOS) && in->payload) {
+        if (in->type == ZST_BUFFER_VIDEO_FRAME) {
+            zst_video_frame_t* frame = in->payload;
+            c->width = frame->width;
+            c->height = frame->height;
+            c->format = frame->format;
+            assert(frame->plane[0] != NULL);
+        } else if (in->type == ZST_BUFFER_AUDIO_FRAME) {
+            zst_audio_frame_t* frame = in->payload;
+            c->sample_rate = frame->sample_rate;
+            c->channels = frame->channels;
+            c->nb_samples = frame->nb_samples;
+            c->format = frame->format;
+            assert(frame->data != NULL);
+        }
+    }
+
+    return ZST_OK;
+}
+
+static zst_element_ops_t g_decoder_capture_ops = {
+    .name = "decoder_capture",
+    .process = decoder_capture_process,
+};
+
+static zst_element_t*
+decoder_capture_create(decoder_capture_t* capture)
+{
+    zst_element_t* el = zst_element_create(&g_decoder_capture_ops, capture);
+    assert(el != NULL);
+    zst_pad_t* sink = zst_pad_create("sink", ZST_PAD_SINK);
+    assert(sink != NULL);
+    assert(zst_element_add_pad(el, sink) == ZST_OK);
+    return el;
+}
+
+static void
+decoder_test_buf_free(zst_buffer_t* buf)
+{
+    if (buf) {
+        free(buf->memory.data);
+        free(buf->payload);
+    }
+}
+
+static void
+test_h264_decoder_roundtrip(void)
+{
+    TEST("H.264 decoder (Phase 4v) roundtrip and caps");
+
+    zst_element_t* enc = zst_h264_encoder_create();
+    zst_element_t* dec = zst_h264_decoder_create();
+    decoder_capture_t* capture = calloc(1, sizeof(*capture));
+    assert(capture != NULL);
+    zst_element_t* sink = decoder_capture_create(capture);
+    assert(enc != NULL && dec != NULL && sink != NULL);
+    assert(strcmp(dec->ops->name, "h264dec") == 0);
+    assert(zst_element_set_state(enc, ZST_STATE_READY) == ZST_OK);
+    assert(zst_element_set_state(dec, ZST_STATE_READY) == ZST_OK);
+    assert(zst_pad_link(dec->src_pads[0], sink->sink_pads[0]) == ZST_OK);
+
+    const int width = 64;
+    const int height = 64;
+    zst_buffer_t* raw = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
+    assert(raw != NULL);
+    raw->memory.size = (size_t)width * (size_t)height * 3u / 2u;
+    raw->memory.data = calloc(1, raw->memory.size);
+    raw->payload = calloc(1, sizeof(zst_video_frame_t));
+    raw->destroy = decoder_test_buf_free;
+    assert(raw->memory.data != NULL && raw->payload != NULL);
+
+    zst_video_frame_t* frame = raw->payload;
+    frame->width = width;
+    frame->height = height;
+    frame->format = 0; /* AV_PIX_FMT_YUV420P */
+    frame->plane[0] = raw->memory.data;
+    frame->plane[1] = (uint8_t*)raw->memory.data + width * height;
+    frame->plane[2] = (uint8_t*)raw->memory.data + width * height + width * height / 4;
+    frame->stride[0] = width;
+    frame->stride[1] = width / 2;
+    frame->stride[2] = width / 2;
+    memset(frame->plane[0], 80, (size_t)width * height);
+    memset(frame->plane[1], 90, (size_t)width * height / 4);
+    memset(frame->plane[2], 100, (size_t)width * height / 4);
+
+    zst_buffer_t* pkt = NULL;
+    assert(enc->ops->process(enc, raw, &pkt) == ZST_OK);
+    assert(pkt != NULL && pkt->memory.size > 0);
+    assert(dec->sink_pads[0]->push(dec->sink_pads[0], pkt) == ZST_OK);
+
+    assert(capture->buffers >= 1);
+    assert(capture->last_type == ZST_BUFFER_VIDEO_FRAME);
+    assert(capture->width == (uint32_t)width);
+    assert(capture->height == (uint32_t)height);
+
+    zst_caps_t* caps = zst_pad_get_caps(dec->src_pads[0]);
+    assert(caps != NULL && caps->structs != NULL);
+    assert(strcmp(caps->structs->media_type, "video/x-raw") == 0);
+    assert(caps->structs->video.width == width);
+    assert(caps->structs->video.height == height);
+    zst_caps_destroy(caps);
+
+    zst_buffer_unref(pkt);
+    zst_buffer_unref(raw);
+    zst_element_destroy(sink);
+    zst_element_destroy(dec);
+    zst_element_destroy(enc);
+    PASS();
+}
+
+static int
+aac_test_freq_index(int sample_rate)
+{
+    switch (sample_rate) {
+    case 96000: return 0;
+    case 88200: return 1;
+    case 64000: return 2;
+    case 48000: return 3;
+    case 44100: return 4;
+    case 32000: return 5;
+    case 24000: return 6;
+    case 22050: return 7;
+    case 16000: return 8;
+    case 12000: return 9;
+    case 11025: return 10;
+    case 8000:  return 11;
+    default:    return 4;
+    }
+}
+
+static void
+aac_test_write_adts(uint8_t* h, int payload_len, int sample_rate, int channels)
+{
+    int profile = 1; /* AAC LC */
+    int freq_idx = aac_test_freq_index(sample_rate);
+    int frame_len = payload_len + 7;
+    h[0] = 0xff;
+    h[1] = 0xf1;
+    h[2] = (uint8_t)(((profile & 3) << 6) | ((freq_idx & 15) << 2) | ((channels >> 2) & 1));
+    h[3] = (uint8_t)(((channels & 3) << 6) | ((frame_len >> 11) & 3));
+    h[4] = (uint8_t)((frame_len >> 3) & 0xff);
+    h[5] = (uint8_t)(((frame_len & 7) << 5) | 0x1f);
+    h[6] = 0xfc;
+}
+
+static void
+test_aac_decoder_roundtrip(void)
+{
+    TEST("AAC decoder (Phase 4y) ADTS decode and caps");
+
+    zst_element_t* enc = zst_aac_encoder_create();
+    zst_element_t* dec = zst_aac_decoder_create();
+    decoder_capture_t* capture = calloc(1, sizeof(*capture));
+    assert(capture != NULL);
+    zst_element_t* sink = decoder_capture_create(capture);
+    assert(enc != NULL && dec != NULL && sink != NULL);
+    assert(strcmp(dec->ops->name, "aacdec") == 0);
+    assert(zst_element_set_state(enc, ZST_STATE_READY) == ZST_OK);
+    assert(zst_element_set_state(dec, ZST_STATE_READY) == ZST_OK);
+    assert(zst_pad_link(dec->src_pads[0], sink->sink_pads[0]) == ZST_OK);
+
+    zst_buffer_t* pkt = NULL;
+    for (int n = 0; n < 5 && !pkt; n++) {
+        zst_buffer_t* raw = zst_buffer_create(ZST_BUFFER_AUDIO_FRAME);
+        assert(raw != NULL);
+        raw->memory.size = 1024u * 2u * sizeof(int16_t);
+        raw->memory.data = calloc(1, raw->memory.size);
+        raw->payload = calloc(1, sizeof(zst_audio_frame_t));
+        raw->destroy = decoder_test_buf_free;
+        assert(raw->memory.data != NULL && raw->payload != NULL);
+
+        zst_audio_frame_t* frame = raw->payload;
+        frame->sample_rate = 44100;
+        frame->channels = 2;
+        frame->format = 0; /* project S16LE code */
+        frame->nb_samples = 1024;
+        frame->data = raw->memory.data;
+        int16_t* pcm = raw->memory.data;
+        for (int i = 0; i < 1024 * 2; i++) {
+            pcm[i] = (int16_t)((i % 100) - 50);
+        }
+
+        assert(enc->ops->process(enc, raw, &pkt) == ZST_OK);
+        zst_buffer_unref(raw);
+    }
+    assert(pkt != NULL && pkt->memory.size > 0);
+
+    zst_buffer_t* adts_pkt = zst_buffer_create(ZST_BUFFER_AUDIO_PACKET);
+    assert(adts_pkt != NULL);
+    adts_pkt->memory.size = pkt->memory.size + 7;
+    adts_pkt->memory.data = malloc(adts_pkt->memory.size);
+    adts_pkt->destroy = decoder_test_buf_free;
+    assert(adts_pkt->memory.data != NULL);
+    aac_test_write_adts(adts_pkt->memory.data, (int)pkt->memory.size, 44100, 2);
+    memcpy((uint8_t*)adts_pkt->memory.data + 7, pkt->memory.data, pkt->memory.size);
+    adts_pkt->pts = pkt->pts;
+    adts_pkt->dts = pkt->dts;
+
+    assert(dec->sink_pads[0]->push(dec->sink_pads[0], adts_pkt) == ZST_OK);
+    assert(capture->buffers >= 1);
+    assert(capture->last_type == ZST_BUFFER_AUDIO_FRAME);
+    assert(capture->sample_rate == 44100);
+    assert(capture->channels == 2);
+    assert(capture->nb_samples > 0);
+    assert(capture->duration > 0);
+
+    zst_caps_t* caps = zst_pad_get_caps(dec->src_pads[0]);
+    assert(caps != NULL && caps->structs != NULL);
+    assert(strcmp(caps->structs->media_type, "audio/x-raw") == 0);
+    assert(caps->structs->audio.sample_rate == 44100);
+    assert(caps->structs->audio.channels == 2);
+    zst_caps_destroy(caps);
+
+    zst_buffer_unref(adts_pkt);
+    zst_buffer_unref(pkt);
+    zst_element_destroy(sink);
+    zst_element_destroy(dec);
+    zst_element_destroy(enc);
     PASS();
 }
 
@@ -2388,6 +2649,11 @@ int main(void)
     printf("[conversion elements]\n");
     test_video_scaler();
     test_audio_resampler();
+
+    /* ── Decoders (Phase 4v/4y) ── */
+    printf("[decoders]\n");
+    test_h264_decoder_roundtrip();
+    test_aac_decoder_roundtrip();
 
     /* ── Allocator (Phase 8a) ── */
     printf("[allocator]\n");
