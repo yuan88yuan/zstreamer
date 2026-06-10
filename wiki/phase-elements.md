@@ -295,18 +295,18 @@ Receives live or on-demand streaming media from an RTSP server (DESCRIBE/SETUP/P
 - [ ] RTSP keep-alive: OPTIONS pings to prevent server timeout
 - [ ] EOS on RTSP BYE or TEARDOWN
 
-### 4p — RTSP Sink  (📝 Planned)
+### 4p — RTSP Sink  (✅ Done)
 
 Acts as an RTSP server element that accepts incoming RTP streams and makes them available for RTSP clients to connect and consume (pull model). Enables live relay scenarios where zstreamer is the streaming source.
 
-- [ ] `rtsp_sink` element with 2+ sink pads (video, audio)
-- [ ] Built-in lightweight RTSP server: listen on configurable port, handle DESCRIBE/SETUP/PLAY
-- [ ] SDP generation from input caps: generate SDP body from pad caps on all pads ready
-- [ ] RTP/RTCP transport: UDP unicast per connected client, TCP interleaved fallback
+- [x] `rtsp_sink` element with 2+ sink pads (video, audio)
+- [x] Built-in lightweight RTSP server: listen on configurable port, handle DESCRIBE/SETUP/PLAY
+- [x] SDP generation from input caps: generate SDP body from pad caps on all pads ready
+- [x] RTP/RTCP transport: UDP unicast per connected client, TCP interleaved fallback
 - [ ] Multiple concurrent client support — each client gets its own RTP stream
-- [ ] RTP packetisation: H.264 (RFC 3984), AAC (RFC 3640), generic payload wrapping
+- [x] RTP packetisation: H.264 (RFC 3984), AAC (RFC 3640), generic payload wrapping
 - [ ] RTCP sender reports: generate SR packets with NTP/RTP timestamps
-- [ ] Configurable `listen_port`, `mount_point`, `max_clients`, `transport`
+- [x] Configurable `listen_port`, `mount_point`, `max_clients`, `transport`
 
 ### 4q — RTMP Source  (📝 Planned)
 
