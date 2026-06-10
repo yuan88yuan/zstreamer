@@ -51,8 +51,42 @@
   **Auto-configuration from caps:**
   - [x] `zst_buffer_pool_config_from_caps(caps)` — derive `buffer_size` from
         resolution × pixel format (video) or sample_rate × channels × format (audio)
-  - [ ] Default pool sizing: `min_buffers` = number of queue elements in pipeline + 2
-        (so there's always a spare buffer circulating)
+  - [ ] **Default pool sizing** — topology-aware `min_buffers` adjustment
+
+    **Problem:** `zst_buffer_pool_config_from_caps()` only receives caps and has no
+    access to the pipeline topology. Elements themselves don't (and shouldn't) hold a
+    `zst_pipeline_t*` reference, making it impossible to count queue elements from
+    inside an element's `open()` callback.
+
+    **Design decision — two-step configuration:**
+
+    1. **Format sizing** (existing, unchanged): `config_from_caps(caps)` sets
+       `buffer_size` from resolution/sample rate, with `min_buffers=2, max_buffers=8`.
+
+    2. **Topology sizing** (new, at pipeline-build time): a pipeline-level helper
+       queries the element graph and adjusts pool configs before `start()`:
+
+    ```c
+    void zst_pool_config_default_size(zst_buffer_pool_config_t* config,
+                                       zst_pipeline_t* pipeline)
+    {
+        int n_queues = zst_pipeline_count_elements_of_type(pipeline, "queue");
+        if (n_queues > 0 && config->min_buffers < n_queues + 2) {
+            config->min_buffers = n_queues + 2;
+            if (config->max_buffers < config->min_buffers)
+                config->max_buffers = config->min_buffers * 2;
+        }
+    }
+    ```
+
+    Called via `zst_pipeline_foreach_element()` before the pipeline transitions to
+    PLAYING. This keeps topology decisions at the composition layer — elements
+    remain agnostic of the pipeline they live in (important once Phase 8c's Element
+    Bin allows nested pipelines).
+
+    - [ ] Implement `zst_pipeline_count_elements_of_type(pipeline, type_name)`
+    - [ ] Implement `zst_pool_config_default_size()` helper
+    - [ ] Wire into pipeline start sequence or provide a convenience wrapper
 
   **Test deliverables:**
   - [ ] Unit test: acquire/recycle loop (N buffers, M cycles, no net allocation)
