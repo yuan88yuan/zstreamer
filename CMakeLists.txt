@@ -115,6 +115,7 @@ set(ELEMENT_SOURCES
     src/h264_encoder.c
     src/mp4_muxer.c
     src/file_sink.c
+    src/fake_sink.c
     src/alsa_source.c
     src/aac_encoder.c
     src/video_scaler.c
@@ -126,6 +127,10 @@ set(ELEMENT_SOURCES
 add_library(zst_filesink SHARED src/file_sink.c)
 target_compile_definitions(zst_filesink PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_filesink PRIVATE zstreamer)
+
+add_library(zst_fakesink SHARED src/fake_sink.c)
+target_compile_definitions(zst_fakesink PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_fakesink PRIVATE zstreamer)
 
 add_library(zst_v4l2source SHARED src/v4l2_source.c)
 target_compile_definitions(zst_v4l2source PRIVATE BUILDING_PLUGIN)
@@ -159,7 +164,7 @@ add_library(zst_textoverlay SHARED src/text_overlay.c)
 target_compile_definitions(zst_textoverlay PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_textoverlay PRIVATE zstreamer ${FREETYPE_LIBRARIES})
 
-set(PLUGIN_TARGETS zst_filesink zst_v4l2source zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay)
+set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay)
 foreach(plugin ${PLUGIN_TARGETS})
     target_include_directories(${plugin} PRIVATE ${ZSTREAMER_INCLUDE_DIR} PRIVATE ${ELEMENT_INCLUDE_DIRS})
     set_target_properties(${plugin} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")

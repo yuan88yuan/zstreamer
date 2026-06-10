@@ -1132,6 +1132,11 @@ test_element_factory_refcounting(void)
     assert(filesink != NULL);
     assert(filesink->plugin != NULL);
     assert(strcmp(filesink->ops->name, "filesink") == 0);
+
+    zst_element_t* fakesink = zst_element_factory_make("fakesink");
+    assert(fakesink != NULL);
+    assert(fakesink->plugin != NULL);
+    assert(strcmp(fakesink->ops->name, "fakesink") == 0);
     
     zst_element_t* v4l2source = zst_element_factory_make("v4l2src");
     assert(v4l2source != NULL);
@@ -1174,6 +1179,11 @@ test_element_factory_refcounting(void)
     zst_element_destroy(filesink);
     assert(filesink_plugin->refcount == 1);
     
+    zst_plugin_t* fakesink_plugin = fakesink->plugin;
+    assert(fakesink_plugin->refcount == 2);
+    zst_element_destroy(fakesink);
+    assert(fakesink_plugin->refcount == 1);
+
     zst_element_destroy(v4l2source);
     zst_element_destroy(alsasource);
     zst_element_destroy(h264encoder);
@@ -1650,6 +1660,88 @@ test_text_overlay(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   Fake Sink Tests
+   ═══════════════════════════════════════════════════════════════ */
+static void
+test_fakesink(void)
+{
+    TEST("fake_sink basics and stats");
+    zst_plugin_registry_init();
+
+    const char* ppath = getenv("ZSTREAMER_TEST_PLUGIN_PATH");
+    if (!ppath) {
+        ppath = "/workspace/build/plugins";
+        if (access("/app/build/plugins", R_OK) == 0) {
+            ppath = "/app/build/plugins";
+        }
+    }
+    zst_plugin_registry_scan(ppath);
+
+    zst_element_t* fakesink = zst_element_factory_make("fakesink");
+    assert(fakesink != NULL);
+    assert(strcmp(fakesink->ops->name, "fakesink") == 0);
+
+    zst_element_set_state(fakesink, ZST_STATE_PLAYING);
+
+    char val[64];
+    zst_element_get_property(fakesink, "drop-probability", val, sizeof(val));
+    assert(atof(val) == 0.0);
+
+    zst_element_set_property(fakesink, "drop-probability", "0.0");
+
+    zst_pad_t* sink_pad = zst_element_get_pad(fakesink, "sink");
+    assert(sink_pad != NULL);
+
+    zst_buffer_t* buf1 = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
+    buf1->memory.data = (void*)0xDEADBEEF;
+    buf1->memory.size = 100;
+
+    /* In actual code we push on the src pad peer, but here we can manually call the sink push function */
+    zst_result_t ret = sink_pad->push(sink_pad, buf1);
+    assert(ret == ZST_OK);
+
+    zst_element_get_property(fakesink, "total-buffers", val, sizeof(val));
+    assert(strcmp(val, "1") == 0);
+    zst_element_get_property(fakesink, "total-bytes", val, sizeof(val));
+    assert(strcmp(val, "100") == 0);
+
+    zst_buffer_t* buf2 = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
+    buf2->memory.data = (void*)0xCAFEBABE;
+    buf2->memory.size = 50;
+
+    ret = sink_pad->push(sink_pad, buf2);
+    assert(ret == ZST_OK);
+
+    zst_element_get_property(fakesink, "total-buffers", val, sizeof(val));
+    assert(strcmp(val, "2") == 0);
+    zst_element_get_property(fakesink, "total-bytes", val, sizeof(val));
+    assert(strcmp(val, "150") == 0);
+
+    /* Clean up the unreffed buffers (simulating caller behavior since fakesink does not unref) */
+    zst_buffer_unref(buf1);
+    zst_buffer_unref(buf2);
+
+    /* Test drop probability 1.0 */
+    zst_element_set_property(fakesink, "drop-probability", "1.0");
+    zst_buffer_t* buf3 = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
+    buf3->memory.data = (void*)0xCAFEBABE;
+    buf3->memory.size = 200;
+
+    ret = sink_pad->push(sink_pad, buf3);
+    assert(ret == ZST_OK);
+
+    zst_element_get_property(fakesink, "total-buffers", val, sizeof(val));
+    assert(strcmp(val, "2") == 0); /* Still 2 because dropped */
+
+    zst_buffer_unref(buf3);
+
+    zst_element_set_state(fakesink, ZST_STATE_NULL);
+    zst_element_destroy(fakesink);
+
+    PASS();
+}
+
+/* ═══════════════════════════════════════════════════════════════
    Main
    ═══════════════════════════════════════════════════════════════ */
 static void
@@ -1796,6 +1888,9 @@ int main(void)
     printf("[text overlay]\n");
     test_text_overlay();
     test_text_overlay_multiline();
+
+    printf("[fakesink]\n");
+    test_fakesink();
 
     /* ── Summary ── */
     printf("\n──────────────────────────────────────────────────\n");
