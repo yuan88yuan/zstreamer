@@ -1,7 +1,7 @@
-# Element Implementations — Phase 4  (✅ 4a-4h, 📝 4i-4k)
+# Element Implementations — Phase 4  (✅ 4a-4h, 📝 4i-4n)
 
 Eight elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.
-Three more (file source, network source, network sink) are planned for stream ingestion and distribution.
+Six more are planned: file/network I/O for stream ingestion, test sources for headless benchmarking, and a fake sink for pipeline debugging.
 Two more handle format conversion (scaling, resampling) — essential once caps negotiation (Phase 5) requires automatic conversion between mismatched formats.
 
 ### 4a — V4L2 Source  (✅ done)
@@ -129,3 +129,44 @@ Sends pipeline output data over TCP, Unix sockets, or streaming protocols. Enabl
 - [ ] Reconnection with exponential back-off on connection loss
 - [ ] Write timeout and buffer drain on disconnect
 - [ ] EOS passthrough: flush remaining data before closing connection
+
+---
+
+### 4l — Video Test Source  (📝 Planned)
+
+Generates synthetic video test patterns without any real hardware input. Useful for pipeline testing, benchmarking, and demo scenarios where no camera is available.
+
+- [ ] `video_test_src` element with 1 src pad
+- [ ] Configurable resolution (`width` x `height`), framerate, pixel format
+- [ ] Test pattern options: colour bars (SMPTE/EBU), moving gradients, checkerboard, white noise, black/silent
+- [ ] Timestamp generation: `pts` set from pipeline clock at capture rate
+- [ ] EOS on `stop` state transition or configurable frame limit
+- [ ] Caps negotiation: advertise `video/x-raw` with configurable resolution/formats
+- [ ] Optional YUV420P → NV12 / RGB conversion in software
+- [ ] Loop mode: restart pattern sequence on frame limit or EOS
+
+### 4m — Audio Test Source  (📝 Planned)
+
+Generates synthetic audio test signals without any real hardware input. Useful for pipeline testing, latency measurement, and audio chain verification.
+
+- [ ] `audio_test_src` element with 1 src pad
+- [ ] Configurable sample rate, channels, sample format (S16LE, F32LE)
+- [ ] Signal options: sine wave (configurable frequency), square wave, pink/white noise, silence
+- [ ] Timestamp generation: `pts` set from pipeline clock based on `nb_samples`
+- [ ] EOS on `stop` or configurable sample limit
+- [ ] Caps negotiation: advertise `audio/x-raw` with configurable format/channels/rate
+- [ ] Loop mode: restart signal sequence on limit or EOS
+
+### 4n — Fake Sink  (📝 Planned)
+
+Consumes and immediately discards incoming buffers without any I/O or processing. Used for headless profiling, throughput testing, and pipeline termination without a real output.
+
+> **Video / Audio distinction?** 一個 fake sink 就夠了 — 不管是 video 還是 audio buffer，行為都一樣：把 buffer unref 丟棄（回 pool 或 free）。GStreamer 也是單一 `fakesink`。如果之後需要區分統計（如 video fps vs audio latency），可以在 element 內部依 `buffer->type` 分別計數，不需要拆成兩個 element。
+
+- [ ] `fake_sink` element with 1 sink pad
+- [ ] Accept any caps — passthrough negotiation, no format restrictions
+- [ ] On `sink_push`: immediately `zst_buffer_unref()` the buffer (returns it to pool or frees it)
+- [ ] EOS passthrough: count and acknowledge
+- [ ] Optional stats: total buffers received, bytes processed, buffer rate (per second by media type)
+- [ ] Optional `drop-probability` setting: randomly drop packets to simulate packet loss
+- [ ] Zero-copy path: buffer is released without touching payload memory

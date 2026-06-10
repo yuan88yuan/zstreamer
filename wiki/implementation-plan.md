@@ -5,7 +5,7 @@ All phases are now documented in separate files for easier maintenance.
 | Phase | Document | Lines | Status |
 |-------|----------|-------|--------|
 | 0–3   | [Core Framework](phase-core.md) | ~190 | ✅ Complete |
-| 4     | [Element Implementations](phase-elements.md) | ~130 | ✅ 4a-4h done, 📝 4i-4k planned |
+| 4     | [Element Implementations](phase-elements.md) | ~170 | ✅ 4a-4h done, 📝 4i-4n planned |
 | 5–7   | [Infrastructure](phase-infrastructure.md) | ~58 | ✅ Complete |
 | 8     | [Advanced Features](phase-advanced.md) | ~115 | 🔄 In Progress |
 | 9–11  | [Future Work](phase-future.md) | ~66 | ⬜ Not Started |
