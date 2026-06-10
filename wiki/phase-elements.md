@@ -1,7 +1,7 @@
-# Element Implementations — Phase 4  (✅ 4a-4h, 📝 4i-4n)
+# Element Implementations — Phase 4  (✅ 4a-4h, 📝 4i-4r)
 
 Eight elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.
-Six more are planned: file/network I/O for stream ingestion, test sources for headless benchmarking, and a fake sink for pipeline debugging.
+Ten more are planned: file/network I/O for stream ingestion, RTSP/RTMP for live streaming, test sources for headless benchmarking, and a fake sink for pipeline debugging.
 Two more handle format conversion (scaling, resampling) — essential once caps negotiation (Phase 5) requires automatic conversion between mismatched formats.
 
 ### 4a — V4L2 Source  (✅ done)
@@ -170,3 +170,61 @@ Consumes and immediately discards incoming buffers without any I/O or processing
 - [ ] Optional stats: total buffers received, bytes processed, buffer rate (per second by media type)
 - [ ] Optional `drop-probability` setting: randomly drop packets to simulate packet loss
 - [ ] Zero-copy path: buffer is released without touching payload memory
+
+---
+
+### 4o — RTSP Source  (📝 Planned)
+
+Receives live or on-demand streaming media from an RTSP server (DESCRIBE/SETUP/PLAY), demuxes RTP streams into separate video/audio source pads, and feeds them into the pipeline. The de-facto standard for IP camera ingestion.
+
+- [ ] `rtsp_source` element with 2+ src pads (video, audio, metadata)
+- [ ] RTSP control: DESCRIBE (SDP parsing), SETUP (transport negotiation), PLAY/PAUSE/TEARDOWN
+- [ ] RTP/RTCP transport: UDP (unicast + multicast), TCP interleaved mode
+- [ ] SDP → caps negotiation: map payload types (PT) to `video/x-h264`, `audio/aac`, etc.
+- [ ] RTSP authentication: Basic, Digest
+- [ ] Reconnection: automatic re-SETUP on transport loss, exponential back-off
+- [ ] NTP timestamp correlation: map RTP timestamps → pipeline clock via RTCP SR
+- [ ] Configurable `rtsp_url`, `username`, `password`, `transport` (udp/tcp), `buffer_size`
+- [ ] RTSP keep-alive: OPTIONS pings to prevent server timeout
+- [ ] EOS on RTSP BYE or TEARDOWN
+
+### 4p — RTSP Sink  (📝 Planned)
+
+Acts as an RTSP server element that accepts incoming RTP streams and makes them available for RTSP clients to connect and consume (pull model). Enables live relay scenarios where zstreamer is the streaming source.
+
+- [ ] `rtsp_sink` element with 2+ sink pads (video, audio)
+- [ ] Built-in lightweight RTSP server: listen on configurable port, handle DESCRIBE/SETUP/PLAY
+- [ ] SDP generation from input caps: generate SDP body from pad caps on all pads ready
+- [ ] RTP/RTCP transport: UDP unicast per connected client, TCP interleaved fallback
+- [ ] Multiple concurrent client support — each client gets its own RTP stream
+- [ ] RTP packetisation: H.264 (RFC 3984), AAC (RFC 3640), generic payload wrapping
+- [ ] RTCP sender reports: generate SR packets with NTP/RTP timestamps
+- [ ] Configurable `listen_port`, `mount_point`, `max_clients`, `transport`
+
+### 4q — RTMP Source  (📝 Planned)
+
+Connects to an RTMP server (or receives RTMP pushes) and demuxes the FLV stream into video/audio buffers. Essential for consuming from live streaming platforms, OBS pushes, and legacy IP cameras.
+
+- [ ] `rtmp_source` element with 2 src pads (video, audio)
+- [ ] RTMP handshake + connect: `connect("rtmp://host/live/streamkey")`, `createStream`, `play`
+- [ ] FLV demuxing: parse FLV tag headers, extract video (H.264/HEVC/AV1) and audio (AAC/MP3)
+- [ ] AMF0/AMF3 metadata parsing: extract `onMetaData` (width, height, framerate, samplerate)
+- [ ] Timestamp mapping: FLV timestamps → pipeline clock PTS
+- [ ] Configurable `rtmp_url`, `live` (true/false for live vs VOD), `buffer_time`, `swf_url`
+- [ ] Authentication: `rtmp://user:pass@host/app/streamkey`
+- [ ] Reconnection: auto-reconnect on stream loss, exponential back-off
+- [ ] EOS on RTMP stream end or `deleteStream`
+
+### 4r — RTMP Sink  (📝 Planned)
+
+Publishes pipeline output to an RTMP ingest endpoint — the standard way to push to YouTube Live, Twitch, Facebook Live, and most CDNs.
+
+- [ ] `rtmp_sink` element with 2 sink pads (video, audio)
+- [ ] RTMP handshake + publish: `connect(...)`, `publish("streamkey")`
+- [ ] FLV muxing: wrap incoming H.264/AAC buffers into FLV tags, maintain correct tag boundaries
+- [ ] AMF0 metadata injection: `@setDataFrame("onMetaData")` with `width`, `height`, `framerate`, `videocodecid`, `audiocodecid`, `duration`
+- [ ] Timestamp generation: pipeline clock → FLV timestamps (milliseconds, monotonically increasing)
+- [ ] Configurable `rtmp_url`, `live` (true = no buffer, low latency)
+- [ ] Authentication: `rtmp://user:pass@host/app/streamkey`
+- [ ] Reconnection: auto-reconnect on publish failure, exponential back-off
+- [ ] EOS passthrough: send `FCUnpublish` on stream end, clean disconnect
