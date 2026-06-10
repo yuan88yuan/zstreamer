@@ -105,9 +105,11 @@ Reads raw or containerised media data from a local file and pushes it into the p
 
 ### 4j — Network Source  (📝 Planned)
 
-Receives media data over TCP, Unix sockets, or higher-level streaming protocols (SRT, RTMP) and feeds buffers into the pipeline.
+Receives raw byte streams over TCP or Unix sockets and feeds them into the pipeline as buffers.
 
-- [ ] `net_source` element with 1+ src pads
+> **Protocol layering note:** This is a **raw transport** element. It reads bytes from a socket without understanding any application-layer protocol (RTSP, RTMP, HTTP, SRT, etc.). It outputs opaque byte buffers — not demuxed video/audio pads. For protocol-aware streaming with automatic demuxing and caps negotiation, use **4o (RTSP Source)** or **4q (RTMP Source)** instead.
+
+- [ ] `net_source` element with 1 src pad — outputs raw byte buffers
 - [ ] TCP client mode: connect to remote host:port, read stream into buffers
 - [ ] TCP server mode: accept incoming connections, read from first connected client
 - [ ] Unix socket support for local IPC
@@ -115,13 +117,15 @@ Receives media data over TCP, Unix sockets, or higher-level streaming protocols 
 - [ ] Reconnection with exponential back-off on connection loss
 - [ ] Buffer size / read timeout configuration
 - [ ] EOS on clean disconnect; error recovery on unexpected disconnect
-- [ ] Caps negotiation based on stream content type
+- [ ] Caps negotiation: fixed `text/plain` caps or none (passthrough)
 
 ### 4k — Network Sink  (📝 Planned)
 
-Sends pipeline output data over TCP, Unix sockets, or streaming protocols. Enables live streaming to ingest endpoints (RTMP servers, SRT targets) or local IPC consumption.
+Sends raw byte buffers over TCP or Unix sockets. Enables local IPC and custom binary protocol output.
 
-- [ ] `net_sink` element with 1 sink pad
+> **Protocol layering note:** This is a **raw transport** element. It writes bytes to a socket without understanding any application-layer protocol (RTSP, RTMP, HTTP, SRT, etc.). It accepts a single raw byte buffer on its sink pad — not demuxed video/audio streams. For protocol-aware streaming output with proper muxing, use **4p (RTSP Sink)** or **4r (RTMP Sink)** instead.
+
+- [ ] `net_sink` element with 1 sink pad — accepts raw byte buffers
 - [ ] TCP client mode: connect to remote host:port and write buffers
 - [ ] TCP server mode: listen, accept, and stream to connected clients
 - [ ] Unix socket support for local IPC
@@ -161,7 +165,7 @@ Generates synthetic audio test signals without any real hardware input. Useful f
 
 Consumes and immediately discards incoming buffers without any I/O or processing. Used for headless profiling, throughput testing, and pipeline termination without a real output.
 
-> **Video / Audio distinction?** 一個 fake sink 就夠了 — 不管是 video 還是 audio buffer，行為都一樣：把 buffer unref 丟棄（回 pool 或 free）。GStreamer 也是單一 `fakesink`。如果之後需要區分統計（如 video fps vs audio latency），可以在 element 內部依 `buffer->type` 分別計數，不需要拆成兩個 element。
+> **Video / Audio distinction?** A single fake sink is sufficient — both video and audio buffers behave identically: `zst_buffer_unref()` discards the buffer (returns it to the pool or frees it). GStreamer also uses a single `fakesink` for all media types. If per-type statistics are needed later (e.g. video fps vs audio latency), the element can count internally by `buffer->type` — no need for separate elements.
 
 - [ ] `fake_sink` element with 1 sink pad
 - [ ] Accept any caps — passthrough negotiation, no format restrictions
