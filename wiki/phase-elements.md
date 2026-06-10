@@ -1,8 +1,8 @@
-# Element Implementations — Phase 4  (✅ 4a-4i, 4n; 📝 4j-4m, 4o-4r)
+# Element Implementations — Phase 4  (✅ 4a-4i, 4l, 4n, 4s; 📝 4j-4k, 4m, 4o-4r, 4t-4u)
 
-Eight elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.
-Nine more are planned: file/network I/O for stream ingestion, RTSP/RTMP for live streaming, test sources for headless benchmarking, and a fake sink for pipeline debugging.
-Two more handle format conversion (scaling, resampling) — essential once caps negotiation (Phase 5) requires automatic conversion between mismatched formats.
+Twelve elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.
+Nine more are planned: file/network I/O for stream ingestion, RTSP/RTMP for live streaming, test sources for headless benchmarking, a fake sink for pipeline debugging, and text rendering utilities.
+Two handle format conversion (scaling, resampling) — essential once caps negotiation (Phase 5) requires automatic conversion between mismatched formats.
 
 ### 4a — V4L2 Source  (✅ done)
 - [x] Open `/dev/video0` with O_RDWR | O_NONBLOCK
@@ -174,6 +174,49 @@ Consumes and immediately discards incoming buffers without any I/O or processing
 - [x] Optional stats: total buffers received, bytes processed, buffer rate (per second by media type) via `get_property`
 - [x] Optional `drop-probability` setting: randomly drop packets to simulate packet loss
 - [x] Zero-copy path: buffer is released without touching payload memory
+
+---
+
+### 4s — Text Overlay  (✅ done)
+
+Composites text (subtitles, timestamps, labels) onto raw video frames. Follows the same element pattern as other processing elements: single sink pad (raw video in), single src pad (raw video with text out).
+
+- [x] `text_overlay` element with 1 sink pad (video/x-raw) + 1 src pad (video/x-raw)
+- [x] Configurable text string (via element property or secondary text sink pad)
+- [x] Backend: `libfreetype` for font rasterization (glyph bitmap generation)
+- [x] Text layout: multi-line support with word wrapping
+- [x] Configurable font family, size, colour, outline/shadow
+- [x] Configurable position: absolute (x, y) or relative (centre, top-left, bottom-right)
+- [x] Alpha blending of text bitmap onto YUV420P / NV12 frames
+- [x] PTS passthrough (text overlay preserves video timestamps)
+- [x] EOS passthrough
+- [x] Caps negotiation: accept/caps on sink pad, same caps on src pad (passthrough)
+
+**Dependencies:** `libfreetype-dev`
+
+**Test deliverables:**
+- [x] Unit test: render text onto a known frame, verify pixels at expected positions
+- [x] Unit test: multi-line text wrapping
+- [x] Unit test: EOS passthrough
+- [x] Unit test: caps negotiation
+- [x] Unit test: property get/set for font size, colour, position
+- [x] Integration test: `v4l2src → text_overlay → filesink` produces video with visible text
+
+### 4t — Text Source  (📝 Planned)
+
+Generates video frames with rendered text (no video input). Useful for test patterns, title cards, and simple slideshows.
+
+- [ ] `text_source` element: generates video frames with rendered text (no video input)
+- [ ] Useful for test patterns, title cards, and simple slideshows
+- [ ] Configurable resolution, framerate, text content, background colour
+
+### 4u — SRT Subtitle Parser  (📝 Planned)
+
+Parse SRT subtitle format into timed text events and feed them to `text_overlay` at correct PTS.
+
+- [ ] Parse SRT subtitle format into timed text events
+- [ ] Feed parsed text segments to `text_overlay` at correct PTS
+- [ ] Support ASS/SSA format parsing (advanced styling)
 
 ---
 

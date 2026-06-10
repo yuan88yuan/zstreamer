@@ -150,16 +150,17 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | Core Framework              | ✅ All 8 core modules implemented|
 | Scheduler Integration       | ✅ Topological sort, push/pull, EOS, state hardening |
 | Queue Element               | ✅ First-class queue with worker thread |
-| Real Element Implementations| ✅ 10 elements: V4L2, x264, MP4(mux), file sink, file source, ALSA, AAC, video_scaler, audio_resampler, fakesink |
+| Real Element Implementations| ✅ 12 elements: V4L2, x264, MP4(mux), file sink, file source, ALSA, AAC, video_scaler, audio_resampler, fakesink, video_test_src, text_overlay |
 | Caps Negotiation            | ✅ Done                          |
 | Event Bus                   | ✅ Done                          |
 | Dynamic Plugins             | ✅ Done                          |
 | Logging System              | ✅ Done                          |
-| Unit Tests                  | ✅ 35 tests, all passing         |
+| Unit Tests                  | ✅ 46 tests, all passing         |
 | Allocator API               | ✅ Mostly done (pools + all 7 elements migrated; default sizing & expanded tests pending) |
 | Clock                       | ✅ Done (system clock + pipeline integration) |
-| Text Rendering              | ✅ Partially implemented (Phase 11a) |
+| Text Overlay (4s)           | ✅ Included in Element Implementations |
 | A/V Sync (clock slaving)    | 📝 Future                        |
+| Text Source / SRT Parser (4t-4u) | 📝 Planned Element Implementations |
 | CI Pipeline                 | 📝 Future                        |
 
 ---
@@ -181,10 +182,10 @@ When working on this project, the most important files to read first:
 3. `wiki/architecture.md` — Full architectural understanding
 4. `wiki/implementation-plan.md` — Top-level plan index; sub-plans:
    - [`wiki/phase-core.md`](phase-core.md) — Phases 0–3 (scaffolding, framework, scheduler, queue)
-   - [`wiki/phase-elements.md`](phase-elements.md) — Phase 4 (8 element implementations)
+   - [`wiki/phase-elements.md`](phase-elements.md) — Phase 4 (12+ element implementations)
    - [`wiki/phase-infrastructure.md`](phase-infrastructure.md) — Phases 5–7 (caps, bus, plugins)
    - [`wiki/phase-advanced.md`](phase-advanced.md) — Phase 8 (allocator, clock, advanced)
-   - [`wiki/phase-future.md`](phase-future.md) — Phases 9–11 (CI, docs, text rendering)
+   - [`wiki/phase-future.md`](phase-future.md) — Phases 9–10 (CI, docs)
 5. `CMakeLists.txt` — Build targets and dependencies
 6. `src/zst_queue_element.c` — Queue element implementation
 7. `src/v4l2_source.c` — Real V4L2 capture (reference for HW element pattern)
