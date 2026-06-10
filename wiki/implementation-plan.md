@@ -30,5 +30,5 @@ All phases are now documented in separate files for easier maintenance.
 | Text Rendering (11a) | ✅ Done | Text overlay via libfreetype |
 | Testing & CI (9) | ⬜ Planned | CI pipeline, stress tests, static analysis |
 | Documentation (10) | ⬜ Planned | Doxygen API ref, tutorials |
-| Advanced Features (8c) | ⬜ Planned | Element bin, probes, seeking |
+| Advanced Features (8c) | 📝 Planned | Element bin, pad probes, segment seeking |
 | Text Source (11b-c) | ⬜ Stretch | Text source element, SRT parser |
