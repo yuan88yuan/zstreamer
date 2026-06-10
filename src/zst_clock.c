@@ -25,7 +25,8 @@ typedef struct {
     volatile int running;
 
     double       alpha;
-    zst_time_t   beta;
+    zst_time_t   base_master;
+    zst_time_t   base_ref;
 
     pthread_mutex_t lock;
 } slave_clock_priv_t;
@@ -55,18 +56,8 @@ slave_clock_worker(void* arg)
             pthread_mutex_lock(&priv->lock);
             priv->alpha = priv->alpha * 0.9 + ratio * 0.1;
 
-            /* To avoid precision loss on large now_ref, we calculate beta differently:
-               current_time = (now_ref - base_ref) * alpha + base_master
-               where base_ref is the time when the slave clock started.
-               We can express beta as: beta = base_master - (base_ref * alpha) + drift_correction
-               But actually, the standard way is:
-               beta = now_master - (now_ref * alpha).
-               Wait, doing `now_ref * alpha` with now_ref in ns drops precision.
-               Instead, let's just let alpha and beta adjust.
-               Wait, the review said: "massive time discontinuity will cause the pipeline's wait queues to freeze"
-               because alpha is 0.0 at the start. So let's initialize alpha to 1.0.
-            */
-            priv->beta = now_master - (zst_time_t)((double)now_ref * priv->alpha);
+            priv->base_master = now_master;
+            priv->base_ref    = now_ref;
             pthread_mutex_unlock(&priv->lock);
         }
 
@@ -85,11 +76,12 @@ slave_clock_get_time(zst_clock_t* clock)
 
     pthread_mutex_lock(&priv->lock);
     double alpha = priv->alpha;
-    zst_time_t beta = priv->beta;
+    zst_time_t base_master = priv->base_master;
+    zst_time_t base_ref = priv->base_ref;
     pthread_mutex_unlock(&priv->lock);
 
-    /* Use long double to avoid precision loss on 64-bit nanosecond values */
-    return (zst_time_t)((long double)now_ref * (long double)alpha) + beta;
+    int64_t diff_ref = (int64_t)now_ref - (int64_t)base_ref;
+    return base_master + (int64_t)((long double)diff_ref * (long double)alpha);
 }
 
 static void
@@ -99,9 +91,12 @@ slave_clock_wait(zst_clock_t* clock, zst_time_t time)
 
     pthread_mutex_lock(&priv->lock);
     double alpha = priv->alpha;
+    zst_time_t base_master = priv->base_master;
+    zst_time_t base_ref = priv->base_ref;
     pthread_mutex_unlock(&priv->lock);
 
-    zst_time_t ref_time = (zst_time_t)(time / alpha);
+    int64_t diff_master = (int64_t)time - (int64_t)base_master;
+    zst_time_t ref_time = base_ref + (int64_t)((long double)diff_master / (long double)alpha);
     zst_clock_wait(priv->reference, ref_time);
 }
 
@@ -142,11 +137,12 @@ zst_clock_slave_create(zst_clock_t* master, zst_clock_t* reference)
     priv->master = zst_clock_ref(master);
     priv->reference = zst_clock_ref(reference);
 
-    /* Initialize with 1.0 and correct beta to avoid jump at 1 second */
+    /* Initialize with 1.0 to avoid jump at 1 second */
     priv->alpha = 1.0;
     zst_time_t now_master = zst_clock_get_time(master);
     zst_time_t now_ref = zst_clock_get_time(reference);
-    priv->beta = now_master - (zst_time_t)((long double)now_ref * (long double)priv->alpha);
+    priv->base_master = now_master;
+    priv->base_ref = now_ref;
 
     pthread_mutex_init(&priv->lock, NULL);
 
