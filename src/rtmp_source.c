@@ -54,9 +54,14 @@ rtmp_source_thread(void* user_data)
         }
 
         if (pad && pad->peer) {
-            zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_USER);
+            int btype = (pkt->stream_index == s->video_stream_idx)
+                      ? ZST_BUFFER_VIDEO_PACKET : ZST_BUFFER_AUDIO_PACKET;
+            zst_buffer_t* buf = zst_buffer_create(btype);
             if (buf) {
-                buf->memory.data = malloc(pkt->size); buf->memory.size = pkt->size; buf->memory.release = free;
+                buf->memory.data = malloc(pkt->size);
+                buf->memory.size = pkt->size;
+                buf->memory.priv = buf->memory.data;
+                buf->memory.release = free;
                 memcpy(buf->memory.data, pkt->data, pkt->size);
 
                 AVRational tb = s->fc->streams[pkt->stream_index]->time_base;
@@ -134,30 +139,25 @@ rtmp_source_start(zst_element_t* el)
         if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && s->video_stream_idx < 0) {
             s->video_stream_idx = i;
             if (s->video_pad) {
-                zst_caps_t caps;
-caps.structs = calloc(1, sizeof(zst_caps_struct_t));
-                if (st->codecpar->codec_id == AV_CODEC_ID_H264) {
-                    snprintf(caps.structs->media_type, sizeof(caps.structs->media_type), "video/x-h264");
-                } else if (st->codecpar->codec_id == AV_CODEC_ID_HEVC) {
-                    snprintf(caps.structs->media_type, sizeof(caps.structs->media_type), "video/x-h265");
-                } else {
-                    snprintf(caps.structs->media_type, sizeof(caps.structs->media_type), "video/x-raw");
-                }
-                zst_pad_set_caps(s->video_pad, &caps);
-                free(caps.structs);
+                const char* vmt = "video/x-raw";
+                if (st->codecpar->codec_id == AV_CODEC_ID_H264)
+                    vmt = "video/x-h264";
+                else if (st->codecpar->codec_id == AV_CODEC_ID_HEVC)
+                    vmt = "video/x-h265";
+                zst_caps_t* vcaps = zst_caps_create();
+                zst_caps_append(vcaps, zst_caps_struct_create_video(vmt, 0, 0, 0, ""));
+                zst_pad_set_caps(s->video_pad, vcaps);
+                zst_caps_destroy(vcaps);
             }
         } else if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO && s->audio_stream_idx < 0) {
             s->audio_stream_idx = i;
             if (s->audio_pad) {
-                zst_caps_t caps;
-caps.structs = calloc(1, sizeof(zst_caps_struct_t));
-                if (st->codecpar->codec_id == AV_CODEC_ID_AAC) {
-                    snprintf(caps.structs->media_type, sizeof(caps.structs->media_type), "audio/aac");
-                } else {
-                    snprintf(caps.structs->media_type, sizeof(caps.structs->media_type), "audio/x-raw");
-                }
-                zst_pad_set_caps(s->audio_pad, &caps);
-                free(caps.structs);
+                const char* amt = (st->codecpar->codec_id == AV_CODEC_ID_AAC)
+                                ? "audio/aac" : "audio/x-raw";
+                zst_caps_t* acaps = zst_caps_create();
+                zst_caps_append(acaps, zst_caps_struct_create_audio(amt, 0, 0, ""));
+                zst_pad_set_caps(s->audio_pad, acaps);
+                zst_caps_destroy(acaps);
             }
         }
     }
