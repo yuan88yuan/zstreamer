@@ -320,15 +320,15 @@ Acts as an RTSP server element that accepts incoming RTP streams and makes them 
 
 Connects to an RTMP server (or receives RTMP pushes) and demuxes the FLV stream into video/audio buffers. Essential for consuming from live streaming platforms, OBS pushes, and legacy IP cameras.
 
-- [ ] `rtmp_source` element with 2 src pads (video, audio)
-- [ ] RTMP handshake + connect: `connect("rtmp://host/live/streamkey")`, `createStream`, `play`
-- [ ] FLV demuxing: parse FLV tag headers, extract video (H.264/HEVC/AV1) and audio (AAC/MP3)
-- [ ] AMF0/AMF3 metadata parsing: extract `onMetaData` (width, height, framerate, samplerate)
-- [ ] Timestamp mapping: FLV timestamps → pipeline clock PTS
+- [x] `rtmp_source` element with 2 src pads (video, audio)
+- [x] RTMP handshake + connect: `connect("rtmp://host/live/streamkey")`, `createStream`, `play`
+- [x] FLV demuxing: parse FLV tag headers, extract video (H.264/HEVC/AV1) and audio (AAC/MP3)
+- [x] AMF0/AMF3 metadata parsing: extract `onMetaData` (width, height, framerate, samplerate)
+- [x] Timestamp mapping: FLV timestamps → pipeline clock PTS
 - [ ] Configurable `rtmp_url`, `live` (true/false for live vs VOD), `buffer_time`, `swf_url`
 - [ ] Authentication: `rtmp://user:pass@host/app/streamkey`
 - [ ] Reconnection: auto-reconnect on stream loss, exponential back-off
-- [ ] EOS on RTMP stream end or `deleteStream`
+- [x] EOS on RTMP stream end or `deleteStream`
 
 ### 4z — RTSP Server (Multi-Session)  (✅ Done)
 
@@ -355,12 +355,12 @@ Designed using patterns from ireader/media-server's librtsp.
 
 Publishes pipeline output to an RTMP ingest endpoint — the standard way to push to YouTube Live, Twitch, Facebook Live, and most CDNs.
 
-- [ ] `rtmp_sink` element with 2 sink pads (video, audio)
-- [ ] RTMP handshake + publish: `connect(...)`, `publish("streamkey")`
-- [ ] FLV muxing: wrap incoming H.264/AAC buffers into FLV tags, maintain correct tag boundaries
-- [ ] AMF0 metadata injection: `@setDataFrame("onMetaData")` with `width`, `height`, `framerate`, `videocodecid`, `audiocodecid`, `duration`
-- [ ] Timestamp generation: pipeline clock → FLV timestamps (milliseconds, monotonically increasing)
+- [x] `rtmp_sink` element with 2 sink pads (video, audio)
+- [x] RTMP handshake + publish: `connect(...)`, `publish("streamkey")`
+- [x] FLV muxing: wrap incoming H.264/AAC buffers into FLV tags, maintain correct tag boundaries
+- [x] AMF0 metadata injection: `@setDataFrame("onMetaData")` with `width`, `height`, `framerate`, `videocodecid`, `audiocodecid`, `duration`
+- [x] Timestamp generation: pipeline clock → FLV timestamps (milliseconds, monotonically increasing)
 - [ ] Configurable `rtmp_url`, `live` (true = no buffer, low latency)
 - [ ] Authentication: `rtmp://user:pass@host/app/streamkey`
 - [ ] Reconnection: auto-reconnect on publish failure, exponential back-off
-- [ ] EOS passthrough: send `FCUnpublish` on stream end, clean disconnect
+- [x] EOS passthrough: send `FCUnpublish` on stream end, clean disconnect

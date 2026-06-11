@@ -174,12 +174,12 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | Core Framework              | ✅ All 8 core modules implemented|
 | Scheduler Integration       | ✅ Topological sort, push/pull, EOS, state hardening |
 | Queue Element               | ✅ First-class queue with worker thread |
-| Real Element Implementations| ✅ 24 elements: v4l2_source, alsa_source, h264_encoder, h264_decoder, h265_encoder, h265_decoder, aac_encoder, aac_decoder, mp4_muxer, file_sink, file_source, fake_sink, video_scaler, audio_resampler, video_test_src, audio_test_src, text_overlay, text_source, srt_parser, net_source, net_sink, rtsp_source, rtsp_sink, rtsp_server |
+| Real Element Implementations| ✅ 26 elements: v4l2_source, alsa_source, h264_encoder, h264_decoder, h265_encoder, h265_decoder, aac_encoder, aac_decoder, mp4_muxer, file_sink, file_source, fake_sink, video_scaler, audio_resampler, video_test_src, audio_test_src, text_overlay, text_source, srt_parser, net_source, net_sink, rtsp_source, rtsp_sink, rtsp_server, rtmp_source, rtmp_sink |
 | Caps Negotiation            | ✅ Done                          |
 | Event Bus                   | ✅ Done                          |
 | Dynamic Plugins             | ✅ Done                          |
 | Logging System              | ✅ Done                          |
-| Unit Tests                  | ✅ 52 core tests + test_net_source + test_net_sink, all passing |
+| Unit Tests                  | ✅ 53 core tests + test_net_source + test_net_sink, all passing |
 | Allocator API + Pool        | ✅ Mostly done (allocator interface, pool, elements migrated; topology sizing & tests pending) |
 | Clock                       | ✅ Done (system clock + pipeline integration) |
 | Element Public API (8d)     | ✅ Done (Descriptor ABI, plugin introspection, typed properties, official metadata, convenience headers, library & installation layout) |
@@ -195,7 +195,7 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | RTSP Source (UDP support)   | ✅ Done (TCP interleaved + UDP unicast transport) |
 | RTSP Sink (4p)              | ✅ Done                          |
 | RTSP Server (UDP support)   | ✅ Done (TCP interleaved + UDP unicast transport) |
-| RTMP Source/Sink (4q/4r)    | 📝 Planned                       |
+| RTMP Source/Sink (4q/4r)    | ✅ Done                          |
 | Element Bins                | 📝 Planned                       |
 | CI Pipeline                 | 📝 Future                        |
 

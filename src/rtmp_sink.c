@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <libavcodec/avcodec.h>
+#include <libavcodec/version.h>
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
 #include <libavutil/dict.h>
@@ -49,29 +50,62 @@ rtmp_sink_write_header(zst_element_t* el)
         return ZST_ERROR;
     }
 
+    zst_pad_t* video_pad = zst_element_get_pad(el, "video");
+    zst_pad_t* audio_pad = zst_element_get_pad(el, "audio");
+
     int stream_count = 0;
 
-    if (s->video_linked) {
+    if (s->video_linked && video_pad) {
         AVStream* st = avformat_new_stream(s->fc, NULL);
-        if (!st) return ZST_ERROR;
+        if (!st) goto fail;
         st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
-        st->codecpar->codec_id = AV_CODEC_ID_H264;
+        st->codecpar->codec_id = AV_CODEC_ID_H264; // default
+
+        if (video_pad->caps && video_pad->caps->structs) {
+            const zst_caps_struct_t* caps = video_pad->caps->structs;
+            if (strcmp(caps->media_type, "video/x-h265") == 0) {
+                st->codecpar->codec_id = AV_CODEC_ID_HEVC;
+            }
+            if (caps->video.width > 0) {
+                st->codecpar->width = caps->video.width;
+            }
+            if (caps->video.height > 0) {
+                st->codecpar->height = caps->video.height;
+            }
+        }
+
         st->time_base = (AVRational){1, 1000};
         s->video_stream_idx = stream_count++;
     }
 
-    if (s->audio_linked) {
+    if (s->audio_linked && audio_pad) {
         AVStream* st = avformat_new_stream(s->fc, NULL);
-        if (!st) return ZST_ERROR;
+        if (!st) goto fail;
         st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
-        st->codecpar->codec_id = AV_CODEC_ID_AAC;
+        st->codecpar->codec_id = AV_CODEC_ID_AAC; // default
+
+        if (audio_pad->caps && audio_pad->caps->structs) {
+            const zst_caps_struct_t* caps = audio_pad->caps->structs;
+            if (caps->audio.sample_rate > 0) {
+                st->codecpar->sample_rate = caps->audio.sample_rate;
+            }
+            if (caps->audio.channels > 0) {
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(59, 37, 100)
+                av_channel_layout_default(&st->codecpar->ch_layout, caps->audio.channels);
+#else
+                st->codecpar->channels = caps->audio.channels;
+                st->codecpar->channel_layout = caps->audio.channels == 1 ? AV_CH_LAYOUT_MONO : AV_CH_LAYOUT_STEREO;
+#endif
+            }
+        }
+
         st->time_base = (AVRational){1, 1000};
         s->audio_stream_idx = stream_count++;
     }
 
     if (avformat_write_header(s->fc, NULL) < 0) {
         ZST_LOG_ERROR("rtmpsink", "Failed to write header to RTMP stream");
-        return ZST_ERROR;
+        goto fail;
     }
 
     s->header_written = 1;
@@ -79,6 +113,16 @@ rtmp_sink_write_header(zst_element_t* el)
     s->audio_eos = 0;
     ZST_LOG_INFO("rtmpsink", "Started RTMP stream to %s", s->url);
     return ZST_OK;
+
+fail:
+    if (s->fc) {
+        if (s->fc->pb) {
+            avio_closep(&s->fc->pb);
+        }
+        avformat_free_context(s->fc);
+        s->fc = NULL;
+    }
+    return ZST_ERROR;
 }
 
 static zst_result_t
@@ -104,7 +148,9 @@ rtmp_sink_write(zst_element_t* el, zst_buffer_t* buf, int stream_idx)
     pkt->duration = av_rescale_q(buf->duration, (AVRational){1, 1000000000}, s->fc->streams[stream_idx]->time_base);
     pkt->stream_index = stream_idx;
 
-    if (av_interleaved_write_frame(s->fc, pkt) < 0) {
+    int ret = av_interleaved_write_frame(s->fc, pkt);
+    if (ret < 0) {
+        ZST_LOG_ERROR("rtmpsink", "Failed to write frame to RTMP stream (error %d)", ret);
         av_packet_free(&pkt);
         return ZST_ERROR;
     }
@@ -121,8 +167,14 @@ rtmp_sink_check_eos(zst_element_t* el)
     if (s->video_linked && !s->video_eos) all_eos = 0;
     if (s->audio_linked && !s->audio_eos) all_eos = 0;
 
-    if (all_eos && el->bus) {
-        zst_bus_post(el->bus, zst_event_new_eos(el));
+    if (all_eos) {
+        if (s->fc && s->header_written) {
+            av_write_trailer(s->fc);
+            s->header_written = 0;
+        }
+        if (el->bus) {
+            zst_bus_post(el->bus, zst_event_new_eos(el));
+        }
     }
 }
 
@@ -174,6 +226,7 @@ static zst_result_t
 rtmp_sink_start(zst_element_t* el)
 {
     rtmp_sink_t* s = el->priv;
+    if (!s) return ZST_ERROR;
     if (s->url[0] == '\0') {
         ZST_LOG_ERROR("rtmpsink", "RTMP URL not set");
         return ZST_ERROR;
@@ -195,6 +248,7 @@ static zst_result_t
 rtmp_sink_stop(zst_element_t* el)
 {
     rtmp_sink_t* s = el->priv;
+    if (!s) return ZST_ERROR;
     if (s->fc && s->header_written) {
         av_write_trailer(s->fc);
     }
@@ -213,6 +267,7 @@ rtmp_sink_stop(zst_element_t* el)
 static zst_result_t
 rtmp_sink_set_property(zst_element_t* el, const char* name, const char* value)
 {
+    if (!el || !el->priv || !name || !value) return ZST_ERROR;
     rtmp_sink_t* s = el->priv;
     if (strcmp(name, "url") == 0) {
         snprintf(s->url, sizeof(s->url), "%s", value);
@@ -224,6 +279,7 @@ rtmp_sink_set_property(zst_element_t* el, const char* name, const char* value)
 static zst_result_t
 rtmp_sink_get_property(zst_element_t* el, const char* name, char* value_out, size_t max_len)
 {
+    if (!el || !el->priv || !name || !value_out || max_len == 0) return ZST_ERROR;
     rtmp_sink_t* s = el->priv;
     if (strcmp(name, "url") == 0) {
         snprintf(value_out, max_len, "%s", s->url);
@@ -232,34 +288,77 @@ rtmp_sink_get_property(zst_element_t* el, const char* name, char* value_out, siz
     return ZST_ERROR;
 }
 
+static zst_caps_t*
+rtmp_sink_get_caps(zst_element_t* el, zst_pad_t* pad, const zst_caps_t* filter)
+{
+    (void)el;
+    (void)filter;
+    if (!pad) return NULL;
+
+    zst_caps_t* caps = zst_caps_create();
+    if (!caps) return NULL;
+
+    if (strcmp(pad->name, "video") == 0) {
+        zst_caps_append(caps, zst_caps_struct_create_video("video/x-h264", 0, 0, 0.0, ""));
+        zst_caps_append(caps, zst_caps_struct_create_video("video/x-h265", 0, 0, 0.0, ""));
+        return caps;
+    }
+
+    if (strcmp(pad->name, "audio") == 0) {
+        zst_caps_append(caps, zst_caps_struct_create_audio("audio/aac", 0, 0, ""));
+        return caps;
+    }
+
+    zst_caps_destroy(caps);
+    return NULL;
+}
+
 static zst_element_ops_t g_ops = {
     .name  = "rtmpsink",
     .start = rtmp_sink_start,
     .stop  = rtmp_sink_stop,
     .set_property = rtmp_sink_set_property,
     .get_property = rtmp_sink_get_property,
+    .get_caps = rtmp_sink_get_caps,
 };
 
 zst_element_t*
 zst_rtmp_sink_create(void)
 {
-    zst_element_t* el;
-    rtmp_sink_t* priv;
-    zst_pad_t* video;
-    zst_pad_t* audio;
+    rtmp_sink_t* priv = calloc(1, sizeof(*priv));
+    if (!priv) return NULL;
 
-    priv = calloc(1, sizeof(*priv));
+    zst_element_t* el = zst_element_create(&g_ops, priv);
+    if (!el) {
+        free(priv);
+        return NULL;
+    }
 
-    el = zst_element_create(&g_ops, priv);
+    zst_pad_t* video = zst_pad_create("video", ZST_PAD_SINK);
+    zst_pad_t* audio = zst_pad_create("audio", ZST_PAD_SINK);
 
-    video = zst_pad_create("video", ZST_PAD_SINK);
-    audio = zst_pad_create("audio", ZST_PAD_SINK);
+    if (!video || !audio) {
+        if (video) zst_pad_destroy(video);
+        if (audio) zst_pad_destroy(audio);
+        zst_element_destroy(el);
+        return NULL;
+    }
 
     video->push = rtmp_sink_video_push;
     audio->push = rtmp_sink_audio_push;
 
-    zst_element_add_pad(el, video);
-    zst_element_add_pad(el, audio);
+    if (zst_element_add_pad(el, video) != ZST_OK) {
+        zst_pad_destroy(video);
+        zst_pad_destroy(audio);
+        zst_element_destroy(el);
+        return NULL;
+    }
+
+    if (zst_element_add_pad(el, audio) != ZST_OK) {
+        zst_pad_destroy(audio);
+        zst_element_destroy(el);
+        return NULL;
+    }
 
     return el;
 }
@@ -277,8 +376,12 @@ plugin_create_element(const char* name)
 }
 
 static const zst_pad_template_t g_rtmpsink_pads[] = {
-    { "video", ZST_PAD_SINK, "video/x-h264" },
-    { "audio", ZST_PAD_SINK, "audio/aac" }
+    { "video", ZST_PAD_SINK, "ANY" },
+    { "audio", ZST_PAD_SINK, "ANY" }
+};
+
+static const zst_property_spec_t g_rtmpsink_properties[] = {
+    { "url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "RTMP Destination URL" }
 };
 
 static const zst_element_desc_t g_rtmpsink_elements[] = {
@@ -288,8 +391,8 @@ static const zst_element_desc_t g_rtmpsink_elements[] = {
         .category = "Sink/Network",
         .description = "Publishes audio/video to an RTMP endpoint",
         .author = "zstreamer",
-        .properties = NULL,
-        .nb_properties = 0,
+        .properties = g_rtmpsink_properties,
+        .nb_properties = sizeof(g_rtmpsink_properties) / sizeof(g_rtmpsink_properties[0]),
         .pads = g_rtmpsink_pads,
         .nb_pads = sizeof(g_rtmpsink_pads) / sizeof(g_rtmpsink_pads[0]),
         .create = NULL

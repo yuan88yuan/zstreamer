@@ -28,6 +28,8 @@
 #include "zst_clock.h"
 #include "zstreamer/elements/zst_file_source.h"
 #include "zstreamer/elements/zst_file_sink.h"
+#include "zstreamer/elements/zst_rtmp_source.h"
+#include "zstreamer/elements/zst_rtmp_sink.h"
 #include "zstreamer/elements/zst_fake_sink.h"
 
 zst_element_t* zst_video_scaler_create(int target_width, int target_height, const char* target_pixel_format);
@@ -2818,6 +2820,45 @@ test_text_overlay_multiline(void)
     PASS();
 }
 
+static void test_rtmp_elements(void)
+{
+    TEST("rtmp source/sink properties and caps");
+
+    zst_element_t* rtmpsrc = zst_rtmp_source_create("rtmp://localhost/live/stream");
+    assert(rtmpsrc != NULL);
+    char val[256];
+    assert(zst_element_get_property(rtmpsrc, "url", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "rtmp://localhost/live/stream") == 0);
+    
+    assert(zst_element_set_property(rtmpsrc, "url", "rtmp://127.0.0.1/live/test") == ZST_OK);
+    assert(zst_element_get_property(rtmpsrc, "url", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "rtmp://127.0.0.1/live/test") == 0);
+
+    zst_pad_t* vpad = zst_element_get_pad(rtmpsrc, "video");
+    assert(vpad != NULL);
+    zst_caps_t* vcaps = zst_pad_get_caps(vpad);
+    assert(vcaps != NULL);
+    zst_caps_destroy(vcaps);
+    
+    zst_element_destroy(rtmpsrc);
+
+    zst_element_t* rtmpsink = zst_rtmp_sink_create();
+    assert(rtmpsink != NULL);
+    assert(zst_element_set_property(rtmpsink, "url", "rtmp://localhost/live/out") == ZST_OK);
+    assert(zst_element_get_property(rtmpsink, "url", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "rtmp://localhost/live/out") == 0);
+
+    zst_pad_t* sink_vpad = zst_element_get_pad(rtmpsink, "video");
+    assert(sink_vpad != NULL);
+    zst_caps_t* sink_vcaps = zst_pad_get_caps(sink_vpad);
+    assert(sink_vcaps != NULL);
+    zst_caps_destroy(sink_vcaps);
+
+    zst_element_destroy(rtmpsink);
+    PASS();
+}
+
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -2933,6 +2974,9 @@ int main(void)
     printf("[text source]\n");
     test_text_source();
     test_text_source_factory();
+
+    printf("[rtmp source/sink]\n");
+    test_rtmp_elements();
 
     /* ── Summary ── */
     printf("\n──────────────────────────────────────────────────\n");

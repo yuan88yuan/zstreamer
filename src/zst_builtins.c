@@ -56,7 +56,7 @@ zst_element_t* zst_net_sink_create(void);
 zst_element_t* zst_rtsp_source_create(const char* url);
 zst_element_t* zst_rtsp_sink_create(void);
 zst_element_t* zst_rtsp_server_create(void);
-zst_element_t* zst_rtmp_source_create(void);
+zst_element_t* zst_rtmp_source_create(const char* url);
 zst_element_t* zst_rtmp_sink_create(void);
 
 /*──────────────────────────────────────────────────────────────────────────
@@ -115,6 +115,14 @@ static const zst_property_spec_t g_builtin_fakesink_props[] = {
     { "total-bytes", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE, "0", "Number of bytes received since open" }
 };
 
+static const zst_property_spec_t g_builtin_rtmpsrc_props[] = {
+    { "url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "RTMP Endpoint URL" }
+};
+
+static const zst_property_spec_t g_builtin_rtmpsink_props[] = {
+    { "url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "RTMP Destination URL" }
+};
+
 /*──────────────────────────────────────────────────────────────────────────
   create_element callback — constructs an element by name using direct
   constructor calls (no weak symbols).
@@ -148,7 +156,7 @@ create_builtin_element(const char* name)
     if (strcmp(name, "rtspsrc") == 0)      return zst_rtsp_source_create(NULL);
     if (strcmp(name, "rtspsink") == 0)     return zst_rtsp_sink_create();
     if (strcmp(name, "rtsp_server") == 0)  return zst_rtsp_server_create();
-    if (strcmp(name, "rtmpsrc") == 0)      return zst_rtmp_source_create();
+    if (strcmp(name, "rtmpsrc") == 0)      return zst_rtmp_source_create(NULL);
     if (strcmp(name, "rtmpsink") == 0)     return zst_rtmp_sink_create();
     return NULL;
 }
@@ -185,8 +193,8 @@ static const zst_element_desc_t g_builtin_descs[] = {
     DESC("rtspsrc", "RTSP Source",      "Source/Network","Receives audio/video from an RTSP endpoint",                                                                          NULL,                           0, g_pad_rtsp_src),
     DESC("rtspsink", "RTSP Sink",       "Sink/Network", "Publishes audio/video to an RTSP endpoint",                                                                             NULL,                           0, g_pad_rtsp_sink),
     DESC("rtsp_server", "RTSP Server",  "Sink/Network", "Serves RTP streams over RTSP",                                                                                         NULL,                           0, g_pad_rtsp_server),
-    DESC("rtmpsrc",  "RTMP Source",      "Source/Network","Receives audio/video from an RTMP endpoint",                                                                          NULL,                           0, g_pad_rtmp_src),
-    DESC("rtmpsink", "RTMP Sink",        "Sink/Network", "Publishes audio/video to an RTMP endpoint",                                                                             NULL,                           0, g_pad_rtmp_sink)
+    DESC("rtmpsrc",  "RTMP Source",      "Source/Network","Receives audio/video from an RTMP endpoint",                                                                          g_builtin_rtmpsrc_props,        sizeof(g_builtin_rtmpsrc_props) / sizeof(g_builtin_rtmpsrc_props[0]), g_pad_rtmp_src),
+    DESC("rtmpsink", "RTMP Sink",        "Sink/Network", "Publishes audio/video to an RTMP endpoint",                                                                             g_builtin_rtmpsink_props,       sizeof(g_builtin_rtmpsink_props) / sizeof(g_builtin_rtmpsink_props[0]), g_pad_rtmp_sink)
 };
 
 /*──────────────────────────────────────────────────────────────────────────

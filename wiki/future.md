@@ -6,8 +6,8 @@ This document lists features that are still planned across all phases.
 
 | Item | Description | Status |
 |------|-------------|--------|
-| 4q — RTMP Source | RTMP/FLV pull client for receiving live streams | 📝 Planned |
-| 4r — RTMP Sink | RTMP push client for publishing live streams | 📝 Planned |
+| 4q — RTMP Source | RTMP/FLV pull client for receiving live streams | ✅ Done |
+| 4r — RTMP Sink | RTMP push client for publishing live streams | ✅ Done |
 
 ## Allocator & Pool — Phase 8a
 

@@ -351,7 +351,7 @@ gcc my_app.c $(pkg-config --cflags --libs zstreamer-elements) -o my_app
 | Allocator & buffer pool | ✅ Complete |
 | Element public API (factory, descriptors, typed properties) | ✅ Complete |
 | Installation (pkg-config, CMake export) | ✅ Complete |
-| RTMP source / sink | 📝 Planned |
+| RTMP source / sink | ✅ Complete |
 | Element bins | 📝 Planned |
 | CI pipeline | 📝 Planned |
 
