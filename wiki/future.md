@@ -22,7 +22,7 @@ This document lists features that are still planned across all phases.
 
 | Item | Description | Status |
 |------|-------------|--------|
-| A/V Sync (clock slaving) | Slave video/audio clocks to pipeline master clock | 📝 Planned |
+| A/V Sync (clock slaving) | Slave video/audio clocks to pipeline master clock | ✅ Done |
 
 ## Advanced Features — Phase 8c
 

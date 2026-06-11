@@ -100,6 +100,13 @@ worker_loop(void* arg)
                     if (ret == ZST_OK && out_buf) {
                         activity = 1;
                         if (el->nb_src_pads > 0) {
+                            /* Scheduler clock integration: wait until PTS is reached before delivering */
+                            if (el->clock && out_buf->pts > 0 && !(out_buf->flags & (ZST_BUFFER_FLAG_EOS | ZST_BUFFER_FLAG_DROP))) {
+                                zst_time_t current = zst_clock_get_time(el->clock);
+                                if (out_buf->pts > current + 5000000ULL) { /* 5ms early threshold */
+                                    zst_clock_wait(el->clock, out_buf->pts - current);
+                                }
+                            }
                             zst_pad_push(el->src_pads[0], out_buf);
                             zst_buffer_unref(out_buf);
                         }

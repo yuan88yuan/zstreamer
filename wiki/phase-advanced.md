@@ -292,7 +292,7 @@ Add built-in registration so official elements and dynamic plugins are available
 - [x] Add `zst_register_builtin_elements()` or equivalent initialization hook
 - [x] Register built-in official elements into the same factory registry as dynamic plugins
 - [x] Ensure `zst_element_factory_make()` does not care whether an element is built-in or plugin-backed
-- [ ] Install plugin `.so` files to a stable plugin directory and continue supporting `ZSTREAMER_PLUGIN_PATH`
+- [x] Install plugin `.so` files to a stable plugin directory and continue supporting `ZSTREAMER_PLUGIN_PATH`
 
 Candidate usage:
 
@@ -372,21 +372,21 @@ lib/zstreamer/plugins/*.so   dynamic plugins
 include/zstreamer/...        public headers
 ```
 
-- [ ] Decide whether official elements live in `libzstreamer`, `libzstreamer-elements`, plugins, or a supported combination
-- [ ] Install public headers and optional convenience headers
-- [ ] Install official plugin `.so` files to a stable plugin directory
-- [ ] Add CMake/pkg-config metadata so users can link core and official elements cleanly
+- [x] Decide whether official elements live in `libzstreamer`, `libzstreamer-elements`, plugins, or a supported combination
+- [x] Install public headers and optional convenience headers
+- [x] Install official plugin `.so` files to a stable plugin directory
+- [x] Add CMake/pkg-config metadata so users can link core and official elements cleanly
 
 ### Test Deliverables
 
 - [x] Existing plugin ABI loads during transition
-- [ ] Registry lists built-in elements
+- [x] Registry lists built-in elements
 - [x] Registry lists dynamically loaded plugin elements
 - [x] Descriptors for official elements contain expected properties and pads (covered for `filesrc`, `filesink`, `fakesink`)
 - [x] `zst_element_factory_make()` creates the same element whether backed by built-in registration or plugin registration
 - [x] Typed property helpers set/get values correctly
 - [x] Typed helper validation rejects wrong property types where metadata is available
-- [ ] Public convenience headers compile and link from an external-style test target
+- [x] Public convenience headers compile and link from an external-style test target
 - [ ] Third-party test plugin descriptors are discoverable
 
 ### User-Facing Examples

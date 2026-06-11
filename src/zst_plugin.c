@@ -393,18 +393,23 @@ zst_result_t
 zst_plugin_registry_scan_env(void)
 {
     const char* env = getenv("ZSTREAMER_PLUGIN_PATH");
-    if (!env) return ZST_OK;
+    if (env) {
+        char* env_copy = strdup(env);
+        if (!env_copy) return ZST_ERROR;
 
-    char* env_copy = strdup(env);
-    if (!env_copy) return ZST_ERROR;
+        char* token = strtok(env_copy, ":");
+        while (token) {
+            zst_plugin_registry_scan(token);
+            token = strtok(NULL, ":");
+        }
 
-    char* token = strtok(env_copy, ":");
-    while (token) {
-        zst_plugin_registry_scan(token);
-        token = strtok(NULL, ":");
+        free(env_copy);
     }
-
-    free(env_copy);
+#ifdef ZSTREAMER_DEFAULT_PLUGIN_DIR
+    else {
+        zst_plugin_registry_scan(ZSTREAMER_DEFAULT_PLUGIN_DIR);
+    }
+#endif
     return ZST_OK;
 }
 

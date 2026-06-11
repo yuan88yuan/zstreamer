@@ -8,14 +8,24 @@
 #include "zst_element.h"
 #include "zst_buffer.h"
 #include "zst_bus.h"
+#include "zst_clock.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 static zst_result_t
 default_sink_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
 {
     zst_element_t* el = pad->parent;
     if (!el || !el->ops) return ZST_ERROR;
+
+    /* Handle drop flag (propagate downstream or skip immediately) */
+    if (buf && (buf->flags & ZST_BUFFER_FLAG_DROP)) {
+        if (el->nb_src_pads > 0) {
+            return zst_pad_push(el->src_pads[0], buf);
+        }
+        return ZST_OK;
+    }
 
     if (buf && (buf->flags & ZST_BUFFER_FLAG_EOS)) {
         if (el->nb_src_pads > 0) {
@@ -27,6 +37,26 @@ default_sink_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
             zst_bus_post(el->bus, eos_ev);
         }
         return ZST_OK;
+    }
+
+    /* Sink element clock synchronization and QoS dropping */
+    if (el->nb_src_pads == 0 && el->clock && buf && buf->pts > 0 && !(buf->flags & ZST_BUFFER_FLAG_EOS)) {
+        zst_time_t current = zst_clock_get_time(el->clock);
+        if (buf->pts > current + 5000000ULL) { /* 5ms early threshold */
+            if (buf->pts - current < 5000000000ULL) { /* 5s safeguard */
+                zst_clock_wait(el->clock, buf->pts - current);
+            }
+        } else if (buf->pts < current - 100000000ULL) { /* 100ms late threshold */
+            if (current - buf->pts < 5000000000ULL) { /* 5s safeguard */
+                /* Drop late buffer to catch up (QoS) */
+                buf->flags |= ZST_BUFFER_FLAG_DROP;
+                if (el->bus) {
+                    zst_event_t* qos_ev = zst_event_new_warning(el, ZST_ERROR, "QoS: Frame dropped (too late)");
+                    zst_bus_post(el->bus, qos_ev);
+                }
+                return ZST_OK;
+            }
+        }
     }
 
     zst_buffer_t* out_buf = NULL;

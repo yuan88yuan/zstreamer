@@ -90,8 +90,12 @@ endif()
 include(GNUInstallDirs)
 
 target_include_directories(zstreamer
-    PUBLIC  ${ZSTREAMER_INCLUDE_DIR}
-    PRIVATE ${CMAKE_SOURCE_DIR}/src
+    PUBLIC
+        $<BUILD_INTERFACE:${ZSTREAMER_INCLUDE_DIR}>
+        $<INSTALL_INTERFACE:include/zstreamer>
+        $<INSTALL_INTERFACE:include>
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
 )
 
 # Required for shared plugin libraries that link against the static lib
@@ -102,9 +106,59 @@ target_link_libraries(zstreamer
     PRIVATE ${DL_LIB}
 )
 
-# Export include directory for find_package / fetchcontent consumers
-target_include_directories(zstreamer
-    INTERFACE $<INSTALL_INTERFACE:include>
+target_compile_definitions(zstreamer PRIVATE
+    ZSTREAMER_DEFAULT_PLUGIN_DIR="${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/zstreamer/plugins"
+)
+
+# ── Build the elements library ───────────────────────────────────────────
+set(ELEMENT_LIBRARY_SOURCES
+    src/v4l2_source.c
+    src/alsa_source.c
+    src/h264_encoder.c
+    src/h264_decoder.c
+    src/h265_encoder.c
+    src/h265_decoder.c
+    src/aac_encoder.c
+    src/aac_decoder.c
+    src/mp4_muxer.c
+    src/file_sink.c
+    src/file_source.c
+    src/fake_sink.c
+    src/video_scaler.c
+    src/audio_resampler.c
+    src/video_test_src.c
+    src/audio_test_src.c
+    src/text_overlay.c
+    src/text_source.c
+    src/srt_parser.c
+    src/net_source.c
+    src/net_sink.c
+    src/rtsp_source.c
+    src/rtsp_sink.c
+    src/rtsp_server.c
+)
+
+if(BUILD_SHARED)
+    add_library(zstreamer-elements SHARED ${ELEMENT_LIBRARY_SOURCES})
+else()
+    add_library(zstreamer-elements STATIC ${ELEMENT_LIBRARY_SOURCES})
+endif()
+
+target_include_directories(zstreamer-elements
+    PUBLIC
+        $<BUILD_INTERFACE:${ZSTREAMER_INCLUDE_DIR}>
+        $<INSTALL_INTERFACE:include/zstreamer>
+        $<INSTALL_INTERFACE:include>
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${ELEMENT_INCLUDE_DIRS}
+)
+
+set_target_properties(zstreamer-elements PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+target_link_libraries(zstreamer-elements
+    PUBLIC  zstreamer
+    PRIVATE ${ELEMENT_LIBRARIES}
 )
 
 # ── Element plugins (built-in) ──────────────────────────────────────────
@@ -242,65 +296,45 @@ if(BUILD_TESTS)
     # -- unit / smoke test for core infrastructure --
     add_executable(test_core
         tests/test_core.c
-        src/video_scaler.c
-        src/audio_resampler.c
-        src/text_overlay.c
-        src/text_source.c
-        src/h264_encoder.c
-        src/h264_decoder.c
-        src/h265_encoder.c
-        src/h265_decoder.c
-        src/aac_encoder.c
-        src/aac_decoder.c
-        src/audio_test_src.c
     )
     target_include_directories(test_core
         PRIVATE ${ZSTREAMER_INCLUDE_DIR}
-        PRIVATE ${ELEMENT_INCLUDE_DIRS}
     )
     target_link_libraries(test_core
-        PRIVATE zstreamer
-        PRIVATE ${SWSCALE_LIBRARIES} ${SWRESAMPLE_LIBRARIES} ${AVUTIL_LIBRARIES} ${FREETYPE_LIBRARIES} ${AVCODEC_LIBRARIES} ${X264_LIBRARIES}
+        PRIVATE zstreamer-elements
     )
 
     add_executable(test_net_source
         tests/test_net_source.c
-        src/net_source.c
     )
     target_include_directories(test_net_source
         PRIVATE ${ZSTREAMER_INCLUDE_DIR}
-        PRIVATE ${ELEMENT_INCLUDE_DIRS}
     )
     target_link_libraries(test_net_source
-        PRIVATE zstreamer
+        PRIVATE zstreamer-elements
     )
     add_test(NAME test_net_source COMMAND test_net_source)
 
     add_executable(test_net_sink
         tests/test_net_sink.c
-        src/net_sink.c
     )
     target_include_directories(test_net_sink
         PRIVATE ${ZSTREAMER_INCLUDE_DIR}
-        PRIVATE ${ELEMENT_INCLUDE_DIRS}
     )
     target_link_libraries(test_net_sink
-        PRIVATE zstreamer
+        PRIVATE zstreamer-elements
     )
     add_test(NAME test_net_sink COMMAND test_net_sink)
 
     # -- full pipeline example --
     add_executable(example_record
         tests/example_record.c
-        ${ELEMENT_SOURCES}
     )
     target_include_directories(example_record
         PRIVATE ${ZSTREAMER_INCLUDE_DIR}
-        PRIVATE ${ELEMENT_INCLUDE_DIRS}
     )
     target_link_libraries(example_record
-        PRIVATE zstreamer
-        PRIVATE ${ELEMENT_LIBRARIES}
+        PRIVATE zstreamer-elements
     )
 
     # -- deterministic 10s colorbar/timecode H.264 + 1kHz AAC MP4 demo --
@@ -309,7 +343,6 @@ if(BUILD_TESTS)
     )
     target_include_directories(demo_colorbar_mp4
         PRIVATE ${ZSTREAMER_INCLUDE_DIR}
-        PRIVATE ${ELEMENT_INCLUDE_DIRS}
     )
     target_link_libraries(demo_colorbar_mp4
         PRIVATE zstreamer
@@ -323,6 +356,16 @@ if(BUILD_TESTS)
         zst_mp4muxer
     )
 
+    add_executable(example_text_overlay
+        tests/example_text_overlay.c
+    )
+    target_include_directories(example_text_overlay
+        PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+    )
+    target_link_libraries(example_text_overlay
+        PRIVATE zstreamer-elements
+    )
+
     # Register with CTest
     include(CTest)
     enable_testing()
@@ -330,21 +373,79 @@ if(BUILD_TESTS)
     add_test(NAME test_core
         COMMAND test_core
     )
-endif()
 
-# ── Installation ─────────────────────────────────────────────────────────
-install(TARGETS zstreamer
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-)
-install(DIRECTORY include/
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-)
+    add_test(NAME test_install
+        COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_install.sh ${CMAKE_CURRENT_BINARY_DIR}
+    )
+endif()
 
 # ── Compiler warnings ────────────────────────────────────────────────────
 if(CMAKE_COMPILER_IS_GNUCC OR CMAKE_C_COMPILER_ID MATCHES "Clang")
     add_compile_options(-Wall -Wextra -Wpedantic -Wshadow)
 endif()
-add_executable(example_text_overlay tests/example_text_overlay.c src/v4l2_source.c src/text_overlay.c src/h264_encoder.c src/file_sink.c src/zst_element.c src/zst_pad.c src/zst_caps.c src/zst_buffer.c src/zst_bus.c src/zst_plugin.c src/zst_clock.c src/zst_allocator.c)
-target_include_directories(example_text_overlay PRIVATE ${FREETYPE_INCLUDE_DIRS})
-target_link_libraries(example_text_overlay PRIVATE zstreamer ${V4L2_LIBRARIES} ${X264_LIBRARIES} ${FREETYPE_LIBRARIES})
+
+# ── Installation ─────────────────────────────────────────────────────────
+# Install library targets with EXPORT support
+install(TARGETS zstreamer zstreamer-elements
+    EXPORT zstreamerTargets
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+# Install dynamic plugins
+install(TARGETS ${PLUGIN_TARGETS}
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/zstreamer/plugins
+)
+
+# Install public headers
+file(GLOB ROOT_HEADERS "include/*.h")
+install(FILES ${ROOT_HEADERS}
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/zstreamer
+)
+install(DIRECTORY include/zstreamer/elements
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/zstreamer
+)
+
+# ── pkg-config ───────────────────────────────────────────────────────────
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/zstreamer.pc.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/zstreamer.pc"
+    @ONLY
+)
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/zstreamer-elements.pc.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/zstreamer-elements.pc"
+    @ONLY
+)
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/zstreamer.pc"
+    "${CMAKE_CURRENT_BINARY_DIR}/zstreamer-elements.pc"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
+)
+
+# ── CMake Export / config ────────────────────────────────────────────────
+install(EXPORT zstreamerTargets
+    FILE zstreamerTargets.cmake
+    NAMESPACE zstreamer::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/zstreamer
+)
+
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/zstreamerConfigVersion.cmake"
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY AnyNewerVersion
+)
+
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/zstreamerConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/zstreamerConfig.cmake"
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/zstreamer
+)
+
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/zstreamerConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/zstreamerConfigVersion.cmake"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/zstreamer
+)

@@ -2089,6 +2089,50 @@ test_clock_slaving(void)
     PASS();
 }
 
+static void
+test_clock_slaving_qos_sync(void)
+{
+    TEST("clock slaving qos sync");
+
+    zst_clock_t* clk = zst_clock_system_create();
+    assert(clk != NULL);
+
+    zst_element_t* sink = zst_fake_sink_create();
+    assert(sink != NULL);
+
+    /* Direct clock assignment */
+    zst_element_set_clock(sink, clk);
+
+    /* Test early buffer (should wait/block) */
+    zst_buffer_t* buf_early = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
+    zst_time_t current = zst_clock_get_time(clk);
+    buf_early->pts = current + 50000000ULL; /* 50ms early */
+
+    zst_time_t t1 = zst_clock_get_time(clk);
+    zst_pad_t* sink_pad = sink->sink_pads[0];
+    zst_result_t ret = sink_pad->push(sink_pad, buf_early);
+    zst_time_t t2 = zst_clock_get_time(clk);
+
+    assert(ret == ZST_OK);
+    assert(t2 - t1 >= 40000000ULL); /* should have blocked for ~50ms (at least 40ms) */
+
+    /* Test late buffer (QoS drop) */
+    zst_buffer_t* buf_late = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
+    current = zst_clock_get_time(clk);
+    buf_late->pts = current - 200000000ULL; /* 200ms late */
+
+    ret = sink_pad->push(sink_pad, buf_late);
+    assert(ret == ZST_OK);
+    assert(buf_late->flags & ZST_BUFFER_FLAG_DROP); /* QoS should have set the drop flag */
+
+    zst_buffer_unref(buf_early);
+    zst_buffer_unref(buf_late);
+    zst_element_destroy(sink);
+    zst_clock_unref(clk);
+
+    PASS();
+}
+
 /* ── Text Overlay (Phase 11a) ────────────────────────────────────────────── */
 
 static void
@@ -2766,6 +2810,7 @@ test_text_overlay_multiline(void)
 
 int main(void)
 {
+    setvbuf(stdout, NULL, _IONBF, 0);
     printf("\n╔════════════════════════════════════════════════════╗\n");
     printf("║     zstreamer — core unit tests                   ║\n");
     printf("╚════════════════════════════════════════════════════╝\n\n");
@@ -2856,6 +2901,7 @@ int main(void)
     printf("[clock]\n");
     test_clock_basic();
     test_clock_slaving();
+    test_clock_slaving_qos_sync();
 
     /* ── Text Overlay (Phase 11a) ── */
     printf("[text overlay]\n");

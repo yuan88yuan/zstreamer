@@ -180,10 +180,11 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | Dynamic Plugins             | ✅ Done                          |
 | Logging System              | ✅ Done                          |
 | Unit Tests                  | ✅ 52 core tests + test_net_source + test_net_sink, all passing |
-| Allocator API + Pool        | ✅ Done (allocator interface, buffer pools, 7+ elements migrated) |
+| Allocator API + Pool        | ✅ Mostly done (allocator interface, pool, elements migrated; topology sizing & tests pending) |
 | Clock                       | ✅ Done (system clock + pipeline integration) |
+| Element Public API (8d)     | ✅ Done (Descriptor ABI, plugin introspection, typed properties, official metadata, convenience headers, library & installation layout) |
 | Text Overlay (4s)           | ✅ Included in Element Implementations |
-| A/V Sync (clock slaving)    | 📝 Future                        |
+| A/V Sync (clock slaving)    | ✅ Done (Scheduler wait integration, QoS dropping, and clock slaving verification tests) |
 | RTSP Server Multi-Session (4z) | ✅ Done (port 8554, multiple mount points, per-client threads, H.264/AAC RTP, TCP interleaved + UDP unicast transport) |
 | SRT Subtitle Parser (4u)    | ✅ Done                          |
 | H.264 Decoder (4v)          | ✅ Done                          |
@@ -194,7 +195,6 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | RTSP Source (UDP support)   | ✅ Done (TCP interleaved + UDP unicast transport) |
 | RTSP Sink (4p)              | ✅ Done                          |
 | RTSP Server (UDP support)   | ✅ Done (TCP interleaved + UDP unicast transport) |
-| A/V Sync (clock slaving)    | 📝 Future                        |
 | RTMP Source/Sink (4q/4r)    | 📝 Planned                       |
 | Element Bins                | 📝 Planned                       |
 | CI Pipeline                 | 📝 Future                        |
