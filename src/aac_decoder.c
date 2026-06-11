@@ -399,12 +399,21 @@ aacdec_get_caps(zst_element_t* el, zst_pad_t* pad, const zst_caps_t* filter)
     return caps;
 }
 
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    aac_decoder_t* s = el->priv;
+    return s->pool;
+}
+
 static zst_element_ops_t g_ops = {
     .name     = "aacdec",
     .open     = aacdec_open,
     .close    = aacdec_close,
     .process  = aacdec_process,
     .get_caps = aacdec_get_caps,
+    .get_pool = element_get_pool
 };
 
 zst_element_t*

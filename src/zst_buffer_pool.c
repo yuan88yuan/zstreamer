@@ -264,6 +264,16 @@ zst_buffer_pool_config_t zst_buffer_pool_get_config(zst_buffer_pool_t* pool) {
     return pool->config;
 }
 
+zst_result_t zst_buffer_pool_set_config(zst_buffer_pool_t* pool, const zst_buffer_pool_config_t* config) {
+    if (!pool || !config) return ZST_ERROR;
+
+    pthread_mutex_lock(&pool->lock);
+    pool->config = *config;
+    pthread_mutex_unlock(&pool->lock);
+
+    return ZST_OK;
+}
+
 zst_buffer_pool_config_t zst_buffer_pool_config_from_caps(const zst_caps_t* caps) {
     zst_buffer_pool_config_t config = {0};
 
@@ -341,4 +351,20 @@ void zst_buffer_pool_drain(zst_buffer_pool_t* pool) {
     }
 
     pthread_mutex_unlock(&pool->lock);
+}
+
+#include "zst_pipeline.h"
+
+void
+zst_pool_config_default_size(zst_buffer_pool_config_t* config, zst_pipeline_t* pipeline)
+{
+    if (!config || !pipeline) return;
+
+    int n_queues = zst_pipeline_count_elements_of_type(pipeline, "queue");
+    if (n_queues > 0 && config->min_buffers < (uint32_t)(n_queues + 2)) {
+        config->min_buffers = n_queues + 2;
+        if (config->max_buffers < config->min_buffers) {
+            config->max_buffers = config->min_buffers * 2;
+        }
+    }
 }

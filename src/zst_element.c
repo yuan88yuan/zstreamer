@@ -362,3 +362,10 @@ zst_element_get_property_bool(zst_element_t* el, const char* name, bool* value_o
     }
     return ZST_ERROR;
 }
+
+zst_buffer_pool_t*
+zst_element_get_pool(zst_element_t* el)
+{
+    if (!el || !el->ops || !el->ops->get_pool) return NULL;
+    return el->ops->get_pool(el);
+}

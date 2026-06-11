@@ -58,6 +58,9 @@ typedef struct {
         char* value_out,
         size_t max_len);
 
+    zst_buffer_pool_t* (*get_pool)(
+        zst_element_t* el);
+
 } zst_element_ops_t;
 
 struct zst_element {
@@ -167,6 +170,9 @@ zst_result_t zst_element_get_property_bool(
     zst_element_t* el,
     const char* name,
     bool* value_out);
+
+zst_buffer_pool_t* zst_element_get_pool(
+    zst_element_t* el);
 
 #ifdef __cplusplus
 }

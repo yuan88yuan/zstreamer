@@ -310,6 +310,14 @@ v4l2_buf_free(zst_buffer_t* buf)
     }
 }
 
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    v4l2_source_t* s = el->priv;
+    return s->pool;
+}
+
 static zst_element_ops_t g_ops = {
     .name    = "v4l2src",
     .open    = v4l2_open,
@@ -317,6 +325,7 @@ static zst_element_ops_t g_ops = {
     .start   = v4l2_start,
     .stop    = v4l2_stop,
     .process = v4l2_process,
+    .get_pool = element_get_pool
 };
 
 zst_element_t*

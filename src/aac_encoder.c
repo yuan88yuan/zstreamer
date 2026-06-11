@@ -240,11 +240,20 @@ aac_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     return r;
 }
 
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    aac_encoder_t* s = el->priv;
+    return s->pool;
+}
+
 static zst_element_ops_t g_ops = {
     .name    = "aacenc",
     .open    = aac_open,
     .close   = aac_close,
     .process = aac_process,
+    .get_pool = element_get_pool
 };
 
 zst_element_t*

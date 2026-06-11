@@ -388,12 +388,21 @@ h265_get_caps(zst_element_t* el, zst_pad_t* pad, const zst_caps_t* filter)
     return caps;
 }
 
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    h265_decoder_t* s = el->priv;
+    return s->pool;
+}
+
 static zst_element_ops_t g_ops = {
     .name     = "h265dec",
     .open     = h265_open,
     .close    = h265_close,
     .process  = h265_process,
     .get_caps = h265_get_caps,
+    .get_pool = element_get_pool
 };
 
 zst_element_t*

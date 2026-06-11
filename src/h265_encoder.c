@@ -216,11 +216,20 @@ h265_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     return ZST_OK;
 }
 
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    h265_encoder_t* s = el->priv;
+    return s->pool;
+}
+
 static zst_element_ops_t g_ops = {
     .name    = "h265enc",
     .open    = h265_open,
     .close   = h265_close,
     .process = h265_process,
+    .get_pool = element_get_pool
 };
 
 zst_element_t*
