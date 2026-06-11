@@ -1,3 +1,21 @@
+/*=============================================================================
+    demo_colorbar_mp4.c — Colorbar + timecode + 1kHz tone → H.264/AAC MP4
+
+    Demonstrates the zstreamer Element Public API:
+      - zst_register_builtin_elements()   for factory-based element creation
+      - zst_element_factory_make()         for named element instantiation
+      - zst_element_set_property_int()     typed integer properties
+      - zst_element_set_property_bool()    typed boolean properties
+      - zst_element_set_property_string()  typed string properties
+
+    Pipeline:
+      videotestsrc → textoverlay → h264enc ─┐
+                                             ├→ mp4mux → [file]
+      audiotestsrc → aacenc ────────────────┘
+
+    Generates: 10 seconds of 320×240 H.264 video with colour bars and
+    a timecode overlay, plus 44.1 kHz 1 kHz sine AAC audio, muxed to MP4.
+=============================================================================*/
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -6,9 +24,9 @@
 #include "zst_pipeline.h"
 #include "zst_scheduler.h"
 #include "zst_element.h"
+#include "zst_element_factory.h"
 #include "zst_pad.h"
 #include "zst_bus.h"
-#include "zst_plugin.h"
 
 #define CHECK_OK(expr, label) \
     do { \
@@ -26,29 +44,6 @@
             goto fail; \
         } \
     } while (0)
-
-static void scan_demo_plugins(const char* argv0)
-{
-    /* Prefer explicit user configuration, then common build-tree layouts. */
-    zst_plugin_registry_scan_env();
-
-    if (argv0) {
-        const char* slash = strrchr(argv0, '/');
-        if (slash) {
-            char path[1024];
-            size_t dir_len = (size_t)(slash - argv0);
-            if (dir_len >= sizeof(path)) dir_len = sizeof(path) - 1;
-            memcpy(path, argv0, dir_len);
-            path[dir_len] = '\0';
-            snprintf(path + dir_len, sizeof(path) - dir_len, "/plugins");
-            zst_plugin_registry_scan(path);
-        }
-    }
-
-    zst_plugin_registry_scan("./plugins");
-    zst_plugin_registry_scan("build/plugins");
-    zst_plugin_registry_scan("build-docker/plugins");
-}
 
 int main(int argc, char** argv)
 {
@@ -70,8 +65,11 @@ int main(int argc, char** argv)
     zst_element_t* mux = NULL;
     int rc = 1;
 
-    CHECK_OK(zst_plugin_registry_init(), "plugin registry init");
-    scan_demo_plugins(argv[0]);
+    /*──────────────────────────────────────────────────────────────────────
+      Register built-in elements so that zst_element_factory_make() can
+      find them without dynamic plugin scanning.
+    ──────────────────────────────────────────────────────────────────────*/
+    CHECK_OK(zst_register_builtin_elements(), "register builtins");
 
     pipe = zst_pipeline_create();
     CHECK_PTR(pipe, "zst_pipeline_create");
@@ -83,68 +81,99 @@ int main(int argc, char** argv)
     sched = zst_scheduler_create(&cfg);
     CHECK_PTR(sched, "zst_scheduler_create");
 
+    /*──────────────────────────────────────────────────────────────────────
+      Create elements via the Element Public API factory.
+    ──────────────────────────────────────────────────────────────────────*/
     video_src = zst_element_factory_make("videotestsrc");
-    overlay = zst_element_factory_make("textoverlay");
-    h264 = zst_element_factory_make("h264enc");
+    overlay   = zst_element_factory_make("textoverlay");
+    h264      = zst_element_factory_make("h264enc");
     audio_src = zst_element_factory_make("audiotestsrc");
-    aac = zst_element_factory_make("aacenc");
-    mux = zst_element_factory_make("mp4mux");
+    aac       = zst_element_factory_make("aacenc");
+    mux       = zst_element_factory_make("mp4mux");
 
     CHECK_PTR(video_src, "factory make videotestsrc");
-    CHECK_PTR(overlay, "factory make textoverlay");
-    CHECK_PTR(h264, "factory make h264enc");
+    CHECK_PTR(overlay,   "factory make textoverlay");
+    CHECK_PTR(h264,      "factory make h264enc");
     CHECK_PTR(audio_src, "factory make audiotestsrc");
-    CHECK_PTR(aac, "factory make aacenc");
-    CHECK_PTR(mux, "factory make mp4mux");
+    CHECK_PTR(aac,       "factory make aacenc");
+    CHECK_PTR(mux,       "factory make mp4mux");
 
-    CHECK_OK(zst_element_set_property(video_src, "width", "320"), "video width");
-    CHECK_OK(zst_element_set_property(video_src, "height", "240"), "video height");
-    CHECK_OK(zst_element_set_property(video_src, "fps", "30"), "video fps");
-    CHECK_OK(zst_element_set_property(video_src, "pattern", "bars"), "video pattern");
-    CHECK_OK(zst_element_set_property(video_src, "num-buffers", "300"), "video num-buffers");
-    CHECK_OK(zst_element_set_property(video_src, "use-clock", "false"), "video use-clock");
+    /*──────────────────────────────────────────────────────────────────────
+      Configure elements using the typed Element Public API.
 
-    CHECK_OK(zst_element_set_property(overlay, "timecode", "true"), "overlay timecode");
-    CHECK_OK(zst_element_set_property(overlay, "font-size", "24"), "overlay font-size");
-    CHECK_OK(zst_element_set_property(overlay, "x", "10"), "overlay x");
-    CHECK_OK(zst_element_set_property(overlay, "y", "35"), "overlay y");
+      Each property is set with the type-appropriate setter rather than
+      a generic string conversion.
+    ──────────────────────────────────────────────────────────────────────*/
 
-    CHECK_OK(zst_element_set_property(audio_src, "sample-rate", "44100"), "audio sample-rate");
-    CHECK_OK(zst_element_set_property(audio_src, "channels", "2"), "audio channels");
-    CHECK_OK(zst_element_set_property(audio_src, "sample-format", "S16LE"), "audio sample-format");
-    CHECK_OK(zst_element_set_property(audio_src, "wave", "sine"), "audio wave");
-    CHECK_OK(zst_element_set_property(audio_src, "frequency", "1000"), "audio frequency");
-    CHECK_OK(zst_element_set_property(audio_src, "samples-per-buffer", "1024"), "audio samples-per-buffer");
-    CHECK_OK(zst_element_set_property(audio_src, "num-samples", "441000"), "audio num-samples");
-    CHECK_OK(zst_element_set_property(audio_src, "use-clock", "false"), "audio use-clock");
+    /* -- video source: colour bars, 320×240@30, 300 frames -- */
+    CHECK_OK(zst_element_set_property_int(video_src, "width",       width),    "video width");
+    CHECK_OK(zst_element_set_property_int(video_src, "height",      height),   "video height");
+    CHECK_OK(zst_element_set_property_int(video_src, "fps",         fps),      "video fps");
+    CHECK_OK(zst_element_set_property_string(video_src, "pattern",  "bars"),   "video pattern");
+    CHECK_OK(zst_element_set_property_int(video_src, "num-buffers", 300),      "video num-buffers");
+    CHECK_OK(zst_element_set_property_bool(video_src, "use-clock",  false),    "video use-clock");
 
-    CHECK_OK(zst_element_set_property(mux, "width", "320"), "mux width");
-    CHECK_OK(zst_element_set_property(mux, "height", "240"), "mux height");
-    CHECK_OK(zst_element_set_property(mux, "fps", "30"), "mux fps");
-    CHECK_OK(zst_element_set_property(mux, "sample-rate", "44100"), "mux sample-rate");
-    CHECK_OK(zst_element_set_property(mux, "channels", "2"), "mux channels");
-    CHECK_OK(zst_element_set_property(mux, "location", output), "mux location");
+    /* -- text overlay: timecode, 24 px, offset (10, 35) -- */
+    CHECK_OK(zst_element_set_property_bool(overlay, "timecode",  true),   "overlay timecode");
+    CHECK_OK(zst_element_set_property_int(overlay,  "font-size", 24),     "overlay font-size");
+    CHECK_OK(zst_element_set_property_int(overlay,  "x",         10),     "overlay x");
+    CHECK_OK(zst_element_set_property_int(overlay,  "y",         35),     "overlay y");
 
+    /* -- audio source: 44.1 kHz, stereo, S16LE, 1 kHz sine, 10 s -- */
+    CHECK_OK(zst_element_set_property_int(audio_src,   "sample-rate",       sample_rate),  "audio sample-rate");
+    CHECK_OK(zst_element_set_property_int(audio_src,   "channels",          channels),     "audio channels");
+    CHECK_OK(zst_element_set_property_string(audio_src, "sample-format",    "S16LE"),      "audio sample-format");
+    CHECK_OK(zst_element_set_property_string(audio_src, "wave",             "sine"),       "audio wave");
+    CHECK_OK(zst_element_set_property_int(audio_src,   "frequency",         1000),         "audio frequency");
+    CHECK_OK(zst_element_set_property_int(audio_src,   "samples-per-buffer", 1024),         "audio samples-per-buffer");
+    CHECK_OK(zst_element_set_property_int(audio_src,   "num-samples",       441000),       "audio num-samples");
+    CHECK_OK(zst_element_set_property_bool(audio_src,  "use-clock",         false),        "audio use-clock");
+
+    /* -- MP4 muxer: stream metadata + output path -- */
+    CHECK_OK(zst_element_set_property_int(mux,    "width",       width),       "mux width");
+    CHECK_OK(zst_element_set_property_int(mux,    "height",      height),      "mux height");
+    CHECK_OK(zst_element_set_property_int(mux,    "fps",         fps),         "mux fps");
+    CHECK_OK(zst_element_set_property_int(mux,    "sample-rate", sample_rate), "mux sample-rate");
+    CHECK_OK(zst_element_set_property_int(mux,    "channels",    channels),    "mux channels");
+    CHECK_OK(zst_element_set_property_string(mux, "location",    output),      "mux location");
+
+    /*──────────────────────────────────────────────────────────────────────
+      Build the pipeline topology.
+    ──────────────────────────────────────────────────────────────────────*/
     CHECK_OK(zst_pipeline_add(pipe, video_src), "add video_src");
-    CHECK_OK(zst_pipeline_add(pipe, overlay), "add overlay");
-    CHECK_OK(zst_pipeline_add(pipe, h264), "add h264");
+    CHECK_OK(zst_pipeline_add(pipe, overlay),   "add overlay");
+    CHECK_OK(zst_pipeline_add(pipe, h264),      "add h264");
     CHECK_OK(zst_pipeline_add(pipe, audio_src), "add audio_src");
-    CHECK_OK(zst_pipeline_add(pipe, aac), "add aac");
-    CHECK_OK(zst_pipeline_add(pipe, mux), "add mux");
+    CHECK_OK(zst_pipeline_add(pipe, aac),       "add aac");
+    CHECK_OK(zst_pipeline_add(pipe, mux),       "add mux");
 
-    CHECK_OK(zst_pad_link(zst_element_get_pad(video_src, "src"), zst_element_get_pad(overlay, "sink")), "link video_src->overlay");
-    CHECK_OK(zst_pad_link(zst_element_get_pad(overlay, "src"), zst_element_get_pad(h264, "sink")), "link overlay->h264");
-    CHECK_OK(zst_pad_link(zst_element_get_pad(h264, "src"), zst_element_get_pad(mux, "video")), "link h264->mux");
-    CHECK_OK(zst_pad_link(zst_element_get_pad(audio_src, "src"), zst_element_get_pad(aac, "sink")), "link audio_src->aac");
-    CHECK_OK(zst_pad_link(zst_element_get_pad(aac, "src"), zst_element_get_pad(mux, "audio")), "link aac->mux");
+    /* Video: videotestsrc → textoverlay → h264enc → mp4mux.video */
+    CHECK_OK(zst_pad_link(zst_element_get_pad(video_src, "src"),
+                          zst_element_get_pad(overlay,   "sink")), "link video_src→overlay");
+    CHECK_OK(zst_pad_link(zst_element_get_pad(overlay, "src"),
+                          zst_element_get_pad(h264,    "sink")), "link overlay→h264");
+    CHECK_OK(zst_pad_link(zst_element_get_pad(h264, "src"),
+                          zst_element_get_pad(mux,  "video")), "link h264→mux");
 
+    /* Audio: audiotestsrc → aacenc → mp4mux.audio */
+    CHECK_OK(zst_pad_link(zst_element_get_pad(audio_src, "src"),
+                          zst_element_get_pad(aac,       "sink")), "link audio_src→aac");
+    CHECK_OK(zst_pad_link(zst_element_get_pad(aac, "src"),
+                          zst_element_get_pad(mux, "audio")), "link aac→mux");
+
+    /*──────────────────────────────────────────────────────────────────────
+      Run the pipeline.
+    ──────────────────────────────────────────────────────────────────────*/
     CHECK_OK(zst_scheduler_attach(sched, pipe), "scheduler attach");
-    CHECK_OK(zst_pipeline_set_state(pipe, ZST_STATE_READY), "pipeline READY");
+    CHECK_OK(zst_pipeline_set_state(pipe, ZST_STATE_READY),  "pipeline READY");
     CHECK_OK(zst_pipeline_set_state(pipe, ZST_STATE_PLAYING), "pipeline PLAYING");
     CHECK_OK(zst_scheduler_run(sched), "scheduler run");
 
     printf("Writing %ds %dx%d H.264/AAC MP4 to %s ...\n", seconds, width, height, output);
 
+    /*──────────────────────────────────────────────────────────────────────
+      Wait for EOS or error on the pipeline bus.
+    ──────────────────────────────────────────────────────────────────────*/
     for (;;) {
         zst_event_t* ev = NULL;
         zst_result_t r = zst_bus_pop(zst_pipeline_get_bus(pipe), &ev, 15000);
@@ -176,7 +205,6 @@ fail:
     if (pipe) zst_pipeline_set_state(pipe, ZST_STATE_NULL);
     if (sched) zst_scheduler_destroy(sched);
     if (pipe) zst_pipeline_destroy(pipe);
-    zst_plugin_registry_deinit();
 
     if (rc == 0) {
         printf("Done: %s\n", output);

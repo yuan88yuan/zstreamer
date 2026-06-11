@@ -112,6 +112,7 @@ target_compile_definitions(zstreamer PRIVATE
 
 # ── Build the elements library ───────────────────────────────────────────
 set(ELEMENT_LIBRARY_SOURCES
+    src/zst_builtins.c
     src/v4l2_source.c
     src/alsa_source.c
     src/h264_encoder.c
@@ -338,6 +339,10 @@ if(BUILD_TESTS)
     )
 
     # -- deterministic 10s colorbar/timecode H.264 + 1kHz AAC MP4 demo --
+    # Uses the Element Public API (typed property setters) and
+    # zst_register_builtin_elements() for factory-based element creation.
+    # zst_register_builtin_elements() lives in libzstreamer-elements and uses
+    # strong (non-weak) constructor references, so no --whole-archive needed.
     add_executable(demo_colorbar_mp4
         tests/demo_colorbar_mp4.c
     )
@@ -345,15 +350,7 @@ if(BUILD_TESTS)
         PRIVATE ${ZSTREAMER_INCLUDE_DIR}
     )
     target_link_libraries(demo_colorbar_mp4
-        PRIVATE zstreamer
-    )
-    add_dependencies(demo_colorbar_mp4
-        zst_videotestsrc
-        zst_textoverlay
-        zst_h264encoder
-        zst_audiotestsrc
-        zst_aacencoder
-        zst_mp4muxer
+        PRIVATE zstreamer-elements
     )
 
     add_executable(example_text_overlay

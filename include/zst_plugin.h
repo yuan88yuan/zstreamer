@@ -63,6 +63,19 @@ zst_result_t zst_plugin_registry_scan(
 
 zst_result_t zst_plugin_registry_scan_env(void);
 
+/* Internal: register elements directly with the factory registry.
+ * Used by the elements library's zst_register_builtin_elements().
+ *
+ * Parameters:
+ *   elements       — array of element descriptors
+ *   nb_elements    — number of descriptors
+ *   create_element — callback that constructs an element by name
+ */
+zst_result_t zst_plugin_registry_add_entry(
+    const zst_element_desc_t* elements,
+    uint32_t nb_elements,
+    zst_create_element_fn create_element);
+
 ZST_PLUGIN_EXPORT
 zst_plugin_t* zst_get_plugin(void);
 
