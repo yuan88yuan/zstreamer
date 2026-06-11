@@ -5,6 +5,7 @@
 
 #include "zst_types.h"
 #include "zst_pad.h"
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -77,6 +78,8 @@ struct zst_element {
 
     zst_plugin_t* plugin;
 
+    const zst_element_desc_t* desc;
+
     zst_clock_t* clock;
 };
 
@@ -113,6 +116,57 @@ zst_result_t zst_element_get_property(
     const char* name,
     char* value_out,
     size_t max_len);
+
+zst_result_t zst_element_set_property_string(
+    zst_element_t* el,
+    const char* name,
+    const char* value);
+
+zst_result_t zst_element_set_property_int(
+    zst_element_t* el,
+    const char* name,
+    int64_t value);
+
+zst_result_t zst_element_set_property_uint(
+    zst_element_t* el,
+    const char* name,
+    uint64_t value);
+
+zst_result_t zst_element_set_property_double(
+    zst_element_t* el,
+    const char* name,
+    double value);
+
+zst_result_t zst_element_set_property_bool(
+    zst_element_t* el,
+    const char* name,
+    bool value);
+
+zst_result_t zst_element_get_property_string(
+    zst_element_t* el,
+    const char* name,
+    char* value_out,
+    size_t max_len);
+
+zst_result_t zst_element_get_property_int(
+    zst_element_t* el,
+    const char* name,
+    int64_t* value_out);
+
+zst_result_t zst_element_get_property_uint(
+    zst_element_t* el,
+    const char* name,
+    uint64_t* value_out);
+
+zst_result_t zst_element_get_property_double(
+    zst_element_t* el,
+    const char* name,
+    double* value_out);
+
+zst_result_t zst_element_get_property_bool(
+    zst_element_t* el,
+    const char* name,
+    bool* value_out);
 
 #ifdef __cplusplus
 }

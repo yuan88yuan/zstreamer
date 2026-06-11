@@ -1517,6 +1517,26 @@ static zst_element_t* plugin_create(const char* name) {
     return NULL;
 }
 
+static const zst_pad_template_t g_rtspsrc_pads[] = {
+    { "video", ZST_PAD_SRC, "ANY" },
+    { "audio", ZST_PAD_SRC, "ANY" }
+};
+
+static const zst_element_desc_t g_rtspsrc_elements[] = {
+    {
+        .name = "rtspsrc",
+        .long_name = "RTSP Source",
+        .category = "Source/Network",
+        .description = "Receives audio/video from an RTSP endpoint",
+        .author = "zstreamer",
+        .properties = NULL,
+        .nb_properties = 0,
+        .pads = g_rtspsrc_pads,
+        .nb_pads = sizeof(g_rtspsrc_pads) / sizeof(g_rtspsrc_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name    = "rtspsrc_plugin",
@@ -1527,6 +1547,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_rtspsrc_elements) / sizeof(g_rtspsrc_elements[0]);
+    }
+    return g_rtspsrc_elements;
+}
 
 ZST_PLUGIN_EXPORT zst_plugin_t* zst_get_plugin(void) {
     zst_plugin_t* p = malloc(sizeof(*p));

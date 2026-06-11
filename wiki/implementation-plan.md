@@ -30,4 +30,4 @@ All phases are now documented in separate files for easier maintenance.
 | Testing & CI (9) | ⬜ Planned | CI pipeline, stress tests, static analysis |
 | Documentation (10) | ⬜ Planned | Doxygen API ref, tutorials |
 | Advanced Features (8c) | 📝 Planned | Element bin, pad probes, segment seeking |
-| Element Public API (8d) | 📝 Planned | Plugin-first element exposure, introspection, typed properties, optional convenience headers |
+| Element Public API (8d) | 🔄 Started | Descriptor ABI, plugin introspection, typed properties, official element metadata, first convenience headers |

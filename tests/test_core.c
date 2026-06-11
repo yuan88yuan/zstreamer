@@ -21,10 +21,14 @@
 #include "zst_scheduler.h"
 #include "zst_bus.h"
 #include "zst_plugin.h"
+#include "zst_element_factory.h"
 #include "zst_log.h"
 #include "zst_allocator.h"
 #include "zst_buffer_pool.h"
 #include "zst_clock.h"
+#include "zstreamer/elements/zst_file_source.h"
+#include "zstreamer/elements/zst_file_sink.h"
+#include "zstreamer/elements/zst_fake_sink.h"
 
 zst_element_t* zst_video_scaler_create(int target_width, int target_height, const char* target_pixel_format);
 zst_element_t* zst_audio_resampler_create(int target_sample_rate, int target_channels, const char* target_format);
@@ -1128,13 +1132,26 @@ test_plugin_registry_basic(void)
     PASS();
 }
 
+static const char*
+test_plugin_path(void)
+{
+    const char* ppath = getenv("ZSTREAMER_TEST_PLUGIN_PATH");
+    if (!ppath) {
+        ppath = "/workspace/build/plugins";
+        if (access("/app/build/plugins", R_OK) == 0) {
+            ppath = "/app/build/plugins";
+        }
+    }
+    return ppath;
+}
+
 static void
 test_element_factory_refcounting(void)
 {
     TEST("element factory make and plugin refcounting");
     
     zst_plugin_registry_init();
-    zst_plugin_registry_scan("/workspace/build/plugins");
+    zst_plugin_registry_scan(test_plugin_path());
     
     zst_element_t* filesink = zst_element_factory_make("filesink");
     assert(filesink != NULL);
@@ -1244,6 +1261,113 @@ test_element_factory_refcounting(void)
     
     zst_plugin_registry_deinit();
     
+    PASS();
+}
+
+static void
+test_builtin_element_registry(void)
+{
+    TEST("builtin element registry");
+
+    zst_plugin_registry_init();
+    assert(zst_register_builtin_elements() == ZST_OK);
+
+    const zst_element_desc_t* queue_desc = zst_element_factory_get_desc("queue");
+    assert(queue_desc != NULL);
+    assert(strcmp(queue_desc->name, "queue") == 0);
+    assert(queue_desc->nb_pads == 2);
+
+    zst_element_t* queue = zst_element_factory_make("queue");
+    assert(queue != NULL);
+    assert(queue->plugin == NULL);
+    assert(queue->desc == queue_desc);
+    zst_element_destroy(queue);
+
+    const zst_element_desc_t* audio_desc = zst_element_factory_get_desc("audiotestsrc");
+    assert(audio_desc != NULL);
+    assert(strcmp(audio_desc->name, "audiotestsrc") == 0);
+
+    zst_element_t* audio = zst_element_factory_make("audiotestsrc");
+    assert(audio != NULL);
+    assert(audio->plugin == NULL);
+    assert(audio->desc == audio_desc);
+    zst_element_destroy(audio);
+
+    const zst_element_desc_t** descs = NULL;
+    uint32_t n_descs = zst_element_factory_list(&descs);
+    assert(n_descs >= 2);
+    assert(descs != NULL);
+    zst_element_factory_list_free(descs);
+
+    zst_plugin_registry_deinit();
+
+    PASS();
+}
+
+static void
+test_element_factory_introspection_and_typed_properties(void)
+{
+    TEST("element factory introspection and typed properties");
+
+    zst_plugin_registry_init();
+    zst_plugin_registry_scan(test_plugin_path());
+
+    const zst_element_desc_t* filesrc_desc = zst_element_factory_get_desc("filesrc");
+    assert(filesrc_desc != NULL);
+    assert(strcmp(filesrc_desc->name, "filesrc") == 0);
+    assert(filesrc_desc->nb_properties >= 5);
+    assert(filesrc_desc->nb_pads == 1);
+    assert(strcmp(filesrc_desc->pads[0].name, "src") == 0);
+    assert(filesrc_desc->pads[0].direction == ZST_PAD_SRC);
+
+    const zst_element_desc_t** descs = NULL;
+    uint32_t n_descs = zst_element_factory_list(&descs);
+    assert(n_descs >= 3);
+    assert(descs != NULL);
+    int saw_filesrc = 0;
+    int saw_filesink = 0;
+    int saw_fakesink = 0;
+    for (uint32_t i = 0; i < n_descs; i++) {
+        if (strcmp(descs[i]->name, "filesrc") == 0) saw_filesrc = 1;
+        if (strcmp(descs[i]->name, "filesink") == 0) saw_filesink = 1;
+        if (strcmp(descs[i]->name, "fakesink") == 0) saw_fakesink = 1;
+    }
+    assert(saw_filesrc && saw_filesink && saw_fakesink);
+    zst_element_factory_list_free(descs);
+
+    zst_element_t* src = zst_element_factory_make("filesrc");
+    assert(src != NULL);
+    assert(src->desc == filesrc_desc);
+    assert(zst_element_set_property_string(src, "path", "input.bin") == ZST_OK);
+    assert(zst_element_set_property_uint(src, "chunk-size", 16) == ZST_OK);
+    assert(zst_element_set_property_bool(src, "loop", true) == ZST_OK);
+
+    char path[64];
+    uint64_t chunk_size = 0;
+    bool loop = false;
+    assert(zst_element_get_property_string(src, "path", path, sizeof(path)) == ZST_OK);
+    assert(strcmp(path, "input.bin") == 0);
+    assert(zst_element_get_property_uint(src, "chunk-size", &chunk_size) == ZST_OK);
+    assert(chunk_size == 16);
+    assert(zst_element_get_property_bool(src, "loop", &loop) == ZST_OK);
+    assert(loop == true);
+    zst_element_destroy(src);
+
+    zst_element_t* sink = zst_element_factory_make("filesink");
+    assert(sink != NULL);
+    assert(zst_element_set_property_string(sink, "path", "output.bin") == ZST_OK);
+    assert(zst_element_get_property_string(sink, "path", path, sizeof(path)) == ZST_OK);
+    assert(strcmp(path, "output.bin") == 0);
+    zst_element_destroy(sink);
+
+    zst_element_t* fake = zst_element_factory_make("fakesink");
+    assert(fake != NULL);
+    assert(zst_element_set_property_double(fake, "drop-probability", 0.25) == ZST_OK);
+    assert(zst_element_set_property_uint(fake, "total-buffers", 10) == ZST_ERROR);
+    zst_element_destroy(fake);
+
+    zst_plugin_registry_deinit();
+
     PASS();
 }
 
@@ -2703,7 +2827,9 @@ int main(void)
     /* ── Dynamic Plugins (Phase 7) ── */
     printf("[dynamic plugins]\n");
     test_plugin_registry_basic();
+    test_builtin_element_registry();
     test_element_factory_refcounting();
+    test_element_factory_introspection_and_typed_properties();
 
     /* ── Logging (Phase 3.5) ── */
     printf("[logging]\n");

@@ -614,6 +614,25 @@ plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_pad_template_t g_audiotestsrc_pads[] = {
+    { "src", ZST_PAD_SRC, "ANY" }
+};
+
+static const zst_element_desc_t g_audiotestsrc_elements[] = {
+    {
+        .name = "audiotestsrc",
+        .long_name = "Audio Test Source",
+        .category = "Source/Test",
+        .description = "Generates synthetic audio test signals",
+        .author = "zstreamer",
+        .properties = NULL,
+        .nb_properties = 0,
+        .pads = g_audiotestsrc_pads,
+        .nb_pads = sizeof(g_audiotestsrc_pads) / sizeof(g_audiotestsrc_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "audiotestsrc_plugin",
@@ -624,6 +643,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create_element
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_audiotestsrc_elements) / sizeof(g_audiotestsrc_elements[0]);
+    }
+    return g_audiotestsrc_elements;
+}
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t*

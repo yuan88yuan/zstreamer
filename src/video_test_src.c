@@ -355,6 +355,25 @@ static zst_element_t* plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_pad_template_t g_videotestsrc_pads[] = {
+    { "src", ZST_PAD_SRC, "ANY" }
+};
+
+static const zst_element_desc_t g_videotestsrc_elements[] = {
+    {
+        .name = "videotestsrc",
+        .long_name = "Video Test Source",
+        .category = "Source/Test",
+        .description = "Generates synthetic video test patterns",
+        .author = "zstreamer",
+        .properties = NULL,
+        .nb_properties = 0,
+        .pads = g_videotestsrc_pads,
+        .nb_pads = sizeof(g_videotestsrc_pads) / sizeof(g_videotestsrc_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "videotestsrc_plugin",
@@ -365,6 +384,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create_element
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_videotestsrc_elements) / sizeof(g_videotestsrc_elements[0]);
+    }
+    return g_videotestsrc_elements;
+}
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t* zst_get_plugin(void)

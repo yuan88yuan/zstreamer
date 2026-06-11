@@ -556,6 +556,25 @@ plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_pad_template_t g_netsink_pads[] = {
+    { "sink", ZST_PAD_SINK, "ANY" }
+};
+
+static const zst_element_desc_t g_netsink_elements[] = {
+    {
+        .name = "netsink",
+        .long_name = "Network Sink",
+        .category = "Sink/Network",
+        .description = "Sends buffers to TCP/UDP or Unix sockets",
+        .author = "zstreamer",
+        .properties = NULL,
+        .nb_properties = 0,
+        .pads = g_netsink_pads,
+        .nb_pads = sizeof(g_netsink_pads) / sizeof(g_netsink_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "netsink_plugin",
@@ -566,6 +585,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create_element
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_netsink_elements) / sizeof(g_netsink_elements[0]);
+    }
+    return g_netsink_elements;
+}
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t*

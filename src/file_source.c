@@ -357,6 +357,38 @@ plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_property_spec_t g_filesrc_properties[] = {
+    { "path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE,
+      "", "Input file path" },
+    { "chunk-size", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE,
+      "4096", "Maximum bytes to read per buffer" },
+    { "loop", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE,
+      "false", "Loop back to the start at EOF" },
+    { "offset", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE,
+      "0", "Initial byte offset" },
+    { "length", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE,
+      "-1", "Maximum number of bytes to read; -1 means unlimited" }
+};
+
+static const zst_pad_template_t g_filesrc_pads[] = {
+    { "src", ZST_PAD_SRC, "ANY" }
+};
+
+static const zst_element_desc_t g_filesrc_elements[] = {
+    {
+        .name = "filesrc",
+        .long_name = "File Source",
+        .category = "Source/File",
+        .description = "Reads buffers from a local file",
+        .author = "zstreamer",
+        .properties = g_filesrc_properties,
+        .nb_properties = sizeof(g_filesrc_properties) / sizeof(g_filesrc_properties[0]),
+        .pads = g_filesrc_pads,
+        .nb_pads = sizeof(g_filesrc_pads) / sizeof(g_filesrc_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "filesrc_plugin",
@@ -367,6 +399,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create_element
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_filesrc_elements) / sizeof(g_filesrc_elements[0]);
+    }
+    return g_filesrc_elements;
+}
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t*

@@ -156,24 +156,24 @@ Expose the features of all official, dynamic, and future elements through a stab
 
 ### Design Principles
 
-- [ ] Treat `zst_element_factory_make()` as the primary user-facing element creation API
-- [ ] Use one registry path for built-in official elements and dynamically loaded plugins
-- [ ] Make elements self-describing: factory name, category, description, properties, pads, caps, and creation function
-- [ ] Keep element private structs private; users interact through `zst_element_t`, pads, caps, properties, and introspection
-- [ ] Preserve the current string property API for compatibility while adding typed helpers
-- [ ] Provide optional official convenience headers for first-party elements only
+- [x] Treat `zst_element_factory_make()` as the primary user-facing element creation API
+- [x] Use one registry path for built-in official elements and dynamically loaded plugins
+- [x] Make elements self-describing: factory name, category, description, properties, pads, caps, and creation function
+- [x] Keep element private structs private; users interact through `zst_element_t`, pads, caps, properties, and introspection
+- [x] Preserve the current string property API for compatibility while adding typed helpers
+- [ ] Provide optional official convenience headers for first-party elements only (started for `filesrc`, `filesink`, `fakesink`)
 
 ### Plugin / Element Metadata
 
 Extend the plugin ABI in a backward-compatible way using `abi_version` and `struct_size`. Keep the current `create_element(const char* name)` path during transition so existing plugins continue to load.
 
-- [ ] Add `zst_property_type_t` for `STRING`, `INT`, `UINT`, `DOUBLE`, `BOOL`, and `ENUM`
-- [ ] Add property flags: `READABLE`, `WRITABLE`, `RUNTIME`
-- [ ] Add `zst_property_spec_t` with name, type, flags, default value, and description
-- [ ] Add `zst_pad_template_t` with pad name, direction, and caps string
-- [ ] Add `zst_element_desc_t` describing each element exported by a plugin
-- [ ] Extend `zst_plugin_desc_t` to expose an array of `zst_element_desc_t`
-- [ ] Support plugins that expose multiple element factories from one `.so`
+- [x] Add `zst_property_type_t` for `STRING`, `INT`, `UINT`, `DOUBLE`, `BOOL`, and `ENUM`
+- [x] Add property flags: `READABLE`, `WRITABLE`, `RUNTIME`
+- [x] Add `zst_property_spec_t` with name, type, flags, default value, and description
+- [x] Add `zst_pad_template_t` with pad name, direction, and caps string
+- [x] Add `zst_element_desc_t` describing each element exported by a plugin
+- [x] Extend `zst_plugin_desc_t` to expose an array of `zst_element_desc_t`
+- [x] Support plugins that expose multiple element factories from one `.so`
 
 Candidate public structures:
 
@@ -228,10 +228,10 @@ typedef struct {
 
 Applications, CLIs, UIs, and tests should be able to discover available elements at runtime, including third-party plugin elements unknown at compile time.
 
-- [ ] `zst_element_factory_list()` — list all registered element descriptors
-- [ ] `zst_element_factory_get_desc(name)` — get metadata for one factory name
-- [ ] Introspection should work for both built-in and plugin-backed elements
-- [ ] Return property and pad metadata without requiring element instantiation where possible
+- [x] `zst_element_factory_list()` — list all registered element descriptors
+- [x] `zst_element_factory_get_desc(name)` — get metadata for one factory name
+- [x] Introspection should work for both built-in and plugin-backed elements
+- [x] Return property and pad metadata without requiring element instantiation where possible
 
 Candidate API:
 
@@ -253,12 +253,12 @@ zst_element_set_property(el, "chunk-size", "4096");
 
 Add typed wrappers for safer user code:
 
-- [ ] `zst_element_set_property_string()` / `zst_element_get_property_string()`
-- [ ] `zst_element_set_property_int()` / `zst_element_get_property_int()`
-- [ ] `zst_element_set_property_uint()` / `zst_element_get_property_uint()`
-- [ ] `zst_element_set_property_double()` / `zst_element_get_property_double()`
-- [ ] `zst_element_set_property_bool()` / `zst_element_get_property_bool()`
-- [ ] Validate typed helper calls against descriptor metadata when available
+- [x] `zst_element_set_property_string()` / `zst_element_get_property_string()`
+- [x] `zst_element_set_property_int()` / `zst_element_get_property_int()`
+- [x] `zst_element_set_property_uint()` / `zst_element_get_property_uint()`
+- [x] `zst_element_set_property_double()` / `zst_element_get_property_double()`
+- [x] `zst_element_set_property_bool()` / `zst_element_get_property_bool()`
+- [x] Validate typed helper calls against descriptor metadata when available
 
 Candidate API:
 
@@ -289,9 +289,9 @@ zst_element_factory_make("filesrc");
 
 Add built-in registration so official elements and dynamic plugins are available through the same factory/introspection API.
 
-- [ ] Add `zst_register_builtin_elements()` or equivalent initialization hook
-- [ ] Register built-in official elements into the same factory registry as dynamic plugins
-- [ ] Ensure `zst_element_factory_make()` does not care whether an element is built-in or plugin-backed
+- [x] Add `zst_register_builtin_elements()` or equivalent initialization hook
+- [x] Register built-in official elements into the same factory registry as dynamic plugins
+- [x] Ensure `zst_element_factory_make()` does not care whether an element is built-in or plugin-backed
 - [ ] Install plugin `.so` files to a stable plugin directory and continue supporting `ZSTREAMER_PLUGIN_PATH`
 
 Candidate usage:
@@ -310,27 +310,27 @@ zst_element_t* sink = zst_element_factory_make("filesink");
 
 Add `zst_element_desc_t` metadata for every official element:
 
-- [ ] `filesrc`, `filesink`, `fakesink`
-- [ ] `v4l2source`, `alsasource`
-- [ ] `h264encoder`, `h264decoder`
-- [ ] `h265encoder`, `h265decoder`
-- [ ] `aacencoder`, `aacdecoder`
-- [ ] `mp4muxer`
-- [ ] `videoscaler`, `audioresampler`
-- [ ] `videotestsrc`, `audiotestsrc`
-- [ ] `textoverlay`, `textsource`, `srtparser`
-- [ ] `netsrc`, `netsink`
-- [ ] `rtspsource`, `rtspsink`, `rtspserver`
+- [x] `filesrc`, `filesink`, `fakesink`
+- [x] `v4l2source`, `alsasource`
+- [x] `h264encoder`, `h264decoder`
+- [x] `h265encoder`, `h265decoder`
+- [x] `aacencoder`, `aacdecoder`
+- [x] `mp4muxer`
+- [x] `videoscaler`, `audioresampler`
+- [x] `videotestsrc`, `audiotestsrc`
+- [x] `textoverlay`, `textsource`, `srtparser`
+- [x] `netsrc`, `netsink`
+- [x] `rtspsource`, `rtspsink`, `rtspserver`
 - [ ] future RTMP source/sink and other elements
 
 Each descriptor should document:
 
-- [ ] factory name
-- [ ] long name, category, and description
-- [ ] source and sink pad templates
+- [x] factory name
+- [x] long name, category, and description
+- [x] source and sink pad templates
 - [ ] supported/static caps where known
-- [ ] readable/writable properties and defaults
-- [ ] read-only statistics where applicable
+- [ ] readable/writable properties and defaults (started for `filesrc`, `filesink`, `fakesink`)
+- [ ] read-only statistics where applicable (started for `fakesink`)
 
 ### Optional Official Convenience Headers
 
@@ -346,8 +346,8 @@ include/zstreamer/elements/zst_h264_encoder.h
 
 These headers may expose constructor convenience functions, property name macros, and optional config structs with `struct_size` for ABI extension.
 
-- [ ] Add convenience headers for official elements where useful
-- [ ] Add property name macros to avoid string literals in user code
+- [ ] Add convenience headers for official elements where useful (started for `filesrc`, `filesink`, `fakesink`)
+- [ ] Add property name macros to avoid string literals in user code (started for `filesrc`, `filesink`, `fakesink`)
 - [ ] Use `struct_size` in config structs for forward-compatible extension
 - [ ] Implement wrappers on top of the same element implementations; do not bypass the generic factory/property model
 
@@ -379,13 +379,13 @@ include/zstreamer/...        public headers
 
 ### Test Deliverables
 
-- [ ] Existing plugin ABI loads during transition
+- [x] Existing plugin ABI loads during transition
 - [ ] Registry lists built-in elements
-- [ ] Registry lists dynamically loaded plugin elements
-- [ ] Descriptors for official elements contain expected properties and pads
-- [ ] `zst_element_factory_make()` creates the same element whether backed by built-in registration or plugin registration
-- [ ] Typed property helpers set/get values correctly
-- [ ] Typed helper validation rejects wrong property types where metadata is available
+- [x] Registry lists dynamically loaded plugin elements
+- [x] Descriptors for official elements contain expected properties and pads (covered for `filesrc`, `filesink`, `fakesink`)
+- [x] `zst_element_factory_make()` creates the same element whether backed by built-in registration or plugin registration
+- [x] Typed property helpers set/get values correctly
+- [x] Typed helper validation rejects wrong property types where metadata is available
 - [ ] Public convenience headers compile and link from an external-style test target
 - [ ] Third-party test plugin descriptors are discoverable
 

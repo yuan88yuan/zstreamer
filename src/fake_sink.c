@@ -127,6 +127,34 @@ plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_property_spec_t g_fakesink_properties[] = {
+    { "drop-probability", ZST_PROPERTY_DOUBLE, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE,
+      "0.0", "Probability in [0.0, 1.0] of dropping a buffer without counting it" },
+    { "total-buffers", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE,
+      "0", "Number of buffers received since open" },
+    { "total-bytes", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE,
+      "0", "Number of bytes received since open" }
+};
+
+static const zst_pad_template_t g_fakesink_pads[] = {
+    { "sink", ZST_PAD_SINK, "ANY" }
+};
+
+static const zst_element_desc_t g_fakesink_elements[] = {
+    {
+        .name = "fakesink",
+        .long_name = "Fake Sink",
+        .category = "Sink/Test",
+        .description = "Consumes buffers and records simple statistics",
+        .author = "zstreamer",
+        .properties = g_fakesink_properties,
+        .nb_properties = sizeof(g_fakesink_properties) / sizeof(g_fakesink_properties[0]),
+        .pads = g_fakesink_pads,
+        .nb_pads = sizeof(g_fakesink_pads) / sizeof(g_fakesink_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "fakesink_plugin",
@@ -137,6 +165,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create_element
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_fakesink_elements) / sizeof(g_fakesink_elements[0]);
+    }
+    return g_fakesink_elements;
+}
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t*

@@ -236,6 +236,26 @@ plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_pad_template_t g_h264enc_pads[] = {
+    { "sink", ZST_PAD_SINK, "ANY" },
+    { "src", ZST_PAD_SRC, "ANY" }
+};
+
+static const zst_element_desc_t g_h264enc_elements[] = {
+    {
+        .name = "h264enc",
+        .long_name = "H.264 Encoder",
+        .category = "Codec/Encoder",
+        .description = "Encodes raw video to H.264",
+        .author = "zstreamer",
+        .properties = NULL,
+        .nb_properties = 0,
+        .pads = g_h264enc_pads,
+        .nb_pads = sizeof(g_h264enc_pads) / sizeof(g_h264enc_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "h264encoder_plugin",
@@ -246,6 +266,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create_element
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_h264enc_elements) / sizeof(g_h264enc_elements[0]);
+    }
+    return g_h264enc_elements;
+}
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t*

@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "zst_element.h"
 #include "zst_buffer.h"
@@ -60,6 +61,32 @@ file_process(
     return ZST_OK;
 }
 
+static zst_result_t
+file_set_property(zst_element_t* el, const char* name, const char* value)
+{
+    file_sink_t* s = el->priv;
+
+    if (strcmp(name, "path") == 0 || strcmp(name, "location") == 0) {
+        snprintf(s->path, sizeof(s->path), "%s", value);
+        return ZST_OK;
+    }
+
+    return ZST_ERROR;
+}
+
+static zst_result_t
+file_get_property(zst_element_t* el, const char* name, char* value_out, size_t max_len)
+{
+    file_sink_t* s = el->priv;
+
+    if (strcmp(name, "path") == 0 || strcmp(name, "location") == 0) {
+        snprintf(value_out, max_len, "%s", s->path);
+        return ZST_OK;
+    }
+
+    return ZST_ERROR;
+}
+
 static zst_element_ops_t g_ops = {
 
     .name = "filesink",
@@ -69,6 +96,8 @@ static zst_element_ops_t g_ops = {
     .close = file_close,
 
     .process = file_process,
+    .set_property = file_set_property,
+    .get_property = file_get_property,
 };
 
 zst_element_t*
@@ -113,6 +142,32 @@ plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_property_spec_t g_filesink_properties[] = {
+    { "path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE,
+      "", "Output file path" },
+    { "location", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE,
+      "", "Alias for path" }
+};
+
+static const zst_pad_template_t g_filesink_pads[] = {
+    { "sink", ZST_PAD_SINK, "ANY" }
+};
+
+static const zst_element_desc_t g_filesink_elements[] = {
+    {
+        .name = "filesink",
+        .long_name = "File Sink",
+        .category = "Sink/File",
+        .description = "Writes incoming buffers to a local file",
+        .author = "zstreamer",
+        .properties = g_filesink_properties,
+        .nb_properties = sizeof(g_filesink_properties) / sizeof(g_filesink_properties[0]),
+        .pads = g_filesink_pads,
+        .nb_pads = sizeof(g_filesink_pads) / sizeof(g_filesink_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "filesink_plugin",
@@ -123,6 +178,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create_element
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_filesink_elements) / sizeof(g_filesink_elements[0]);
+    }
+    return g_filesink_elements;
+}
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t*

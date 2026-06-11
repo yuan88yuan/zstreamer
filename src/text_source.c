@@ -512,6 +512,25 @@ static zst_element_t* plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_pad_template_t g_textsource_pads[] = {
+    { "src", ZST_PAD_SRC, "ANY" }
+};
+
+static const zst_element_desc_t g_textsource_elements[] = {
+    {
+        .name = "textsource",
+        .long_name = "Text Source",
+        .category = "Source/Video",
+        .description = "Generates video frames containing text",
+        .author = "zstreamer",
+        .properties = NULL,
+        .nb_properties = 0,
+        .pads = g_textsource_pads,
+        .nb_pads = sizeof(g_textsource_pads) / sizeof(g_textsource_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "textsource_plugin",
@@ -522,6 +541,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create_element
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_textsource_elements) / sizeof(g_textsource_elements[0]);
+    }
+    return g_textsource_elements;
+}
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t* zst_get_plugin(void)
