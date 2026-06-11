@@ -4,7 +4,30 @@
 - [x] `zst_allocator_t` interface: `alloc`, `free`, ref-counting
 - [x] Default CPU allocator (malloc/free)
 - [ ] DMABUF allocator (Linux dma-buf)
+  
+  **Linux dma-buf Sharing and Mapping:**
+  - [ ] Context struct: `zst_dmabuf_mem_t` wrapping `fd`, `size`, and mapped CPU address pointer (`mmap_ptr`).
+  - [ ] Implement `zst_allocator_dmabuf_create(void)` backing allocator via Linux memory files/devices (e.g., `/dev/udmabuf`, `dma-buf` heaps, or fallback `memfd_create` with file-seals for compatibility testing).
+  - [ ] Implement `zst_allocator_dmabuf_import(zst_allocator_t* allocator, int fd, size_t size)` to wrap an existing DMABUF file descriptor.
+  - [ ] Implement `zst_allocator_dmabuf_get_fd(zst_allocator_t* allocator, void* ptr)` to retrieve the file descriptor from an allocated block.
+  - [ ] Implement custom `alloc` (which configures the memory struct and returns mapped user-space address) and `free` (which performs `munmap` and closes the fd).
+
 - [ ] CUDA / Vulkan device memory allocators
+  
+  **CUDA Device Memory Allocator:**
+  - [ ] Context struct: `zst_cuda_alloc_t` wrapping device pointer (`CUdeviceptr` / `void*`) and unified memory configurations.
+  - [ ] Implement `zst_allocator_cuda_create(int device_id, bool unified_memory)` returning a CUDA-specific `zst_allocator_t`.
+  - [ ] Implement `alloc` callback calling `cudaMalloc` (for device-only memory) or `cudaMallocManaged` (for unified host-accessible memory).
+  - [ ] Implement `free` callback calling `cudaFree`.
+  - [ ] Integrate mock/fallback CPU-based allocation if CUDA runtime or GPU hardware is not detected at runtime.
+
+  **Vulkan Device Memory Allocator:**
+  - [ ] Context struct: `zst_vulkan_alloc_t` wrapping `VkDeviceMemory`, `VkDevice`, offset, and CPU mapped pointer.
+  - [ ] Implement `zst_allocator_vulkan_create(VkDevice device, VkPhysicalDevice physical_device, uint32_t memory_type_index)` returning a Vulkan-specific `zst_allocator_t`.
+  - [ ] Implement `alloc` callback calling `vkAllocateMemory` and, if memory type is host-visible, `vkMapMemory` for CPU access.
+  - [ ] Implement `free` callback calling `vkUnmapMemory` and `vkFreeMemory`.
+  - [ ] Integrate mock/fallback CPU-based allocation if Vulkan driver/device is not available.
+
 - [x] Buffer pools to eliminate per-frame allocation ✅
 
   **`zst_buffer_pool_t` — a recyclable pool of pre-allocated buffers**
