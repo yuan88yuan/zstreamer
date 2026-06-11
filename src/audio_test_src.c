@@ -262,14 +262,6 @@ audio_test_src_stop(zst_element_t* el)
     return ZST_OK;
 }
 
-static zst_buffer_t*
-audio_test_src_create_eos(void)
-{
-    zst_buffer_t* eos_buf = zst_buffer_create(ZST_BUFFER_AUDIO_FRAME);
-    if (eos_buf) eos_buf->flags |= ZST_BUFFER_FLAG_EOS;
-    return eos_buf;
-}
-
 static double
 audio_test_src_next_sample(audio_test_src_t* s)
 {
@@ -313,8 +305,7 @@ audio_test_src_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     *out = NULL;
 
     if (s->stopped) {
-        *out = audio_test_src_create_eos();
-        return *out ? ZST_OK : ZST_ERROR;
+        return ZST_EOF;
     }
 
     bool hit_buffer_limit = s->num_buffers >= 0 && s->buffer_count >= (uint64_t)s->num_buffers;
@@ -325,8 +316,7 @@ audio_test_src_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
             s->buffer_count = 0;
             audio_test_src_reset_signal_state(s);
         } else {
-            *out = audio_test_src_create_eos();
-            return *out ? ZST_OK : ZST_ERROR;
+            return ZST_EOF;
         }
     }
 
@@ -335,8 +325,7 @@ audio_test_src_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
         uint64_t remaining = (uint64_t)s->num_samples - s->sample_count;
         if (remaining < nb_samples) nb_samples = (uint32_t)remaining;
         if (nb_samples == 0) {
-            *out = audio_test_src_create_eos();
-            return *out ? ZST_OK : ZST_ERROR;
+            return ZST_EOF;
         }
     }
 

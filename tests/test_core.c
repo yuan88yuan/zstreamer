@@ -2422,10 +2422,8 @@ test_audio_test_src(void)
     zst_buffer_unref(buf);
 
     buf = NULL;
-    assert(src->ops->process(src, NULL, &buf) == ZST_OK);
-    assert(buf != NULL);
-    assert(buf->flags & ZST_BUFFER_FLAG_EOS);
-    zst_buffer_unref(buf);
+    assert(src->ops->process(src, NULL, &buf) == ZST_EOF);
+    assert(buf == NULL);
 
     assert(zst_element_set_state(src, ZST_STATE_NULL) == ZST_OK);
     zst_element_destroy(src);

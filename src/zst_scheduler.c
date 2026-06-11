@@ -100,10 +100,11 @@ worker_loop(void* arg)
                     if (ret == ZST_OK && out_buf) {
                         activity = 1;
                         if (el->nb_src_pads > 0) {
-                            /* Scheduler clock integration: wait until PTS is reached before delivering */
-                            if (el->clock && out_buf->pts > 0 && !(out_buf->flags & (ZST_BUFFER_FLAG_EOS | ZST_BUFFER_FLAG_DROP))) {
+                            /* Clock-sync mode: wait until PTS is reached before delivering */
+                            if (pipe->clock_sync && el->clock && out_buf->pts > 0
+                                && !(out_buf->flags & (ZST_BUFFER_FLAG_EOS | ZST_BUFFER_FLAG_DROP))) {
                                 zst_time_t current = zst_clock_get_time(el->clock);
-                                if (out_buf->pts > current + 5000000ULL) { /* 5ms early threshold */
+                                if (out_buf->pts > current + 5000000ULL) {
                                     zst_clock_wait(el->clock, out_buf->pts - current);
                                 }
                             }
@@ -117,6 +118,8 @@ worker_loop(void* arg)
                             eos_buf->flags |= ZST_BUFFER_FLAG_EOS;
                             if (el->nb_src_pads > 0) {
                                 zst_pad_push(el->src_pads[0], eos_buf);
+                            } else if (el->bus) {
+                                zst_bus_post(el->bus, zst_event_new_eos(el));
                             }
                             zst_buffer_unref(eos_buf);
                         }

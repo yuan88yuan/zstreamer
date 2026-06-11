@@ -160,10 +160,7 @@ static zst_result_t video_test_src_process(zst_element_t* el, zst_buffer_t* in, 
         if (s->loop) {
             s->frame_count = 0;
         } else {
-            zst_buffer_t* eos_buf = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
-            if (eos_buf) eos_buf->flags |= ZST_BUFFER_FLAG_EOS;
-            *out = eos_buf;
-            return ZST_OK;
+            return ZST_EOF;
         }
     }
 

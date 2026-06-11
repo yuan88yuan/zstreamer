@@ -210,6 +210,20 @@ dfs_sort(zst_element_t* el, zst_element_t** temp, uint32_t* temp_idx, int* visit
     temp[--(*temp_idx)] = el;
 }
 
+zst_result_t
+zst_pipeline_set_clock_sync(zst_pipeline_t* pipe, int enabled)
+{
+    if (!pipe) return ZST_ERROR;
+    pipe->clock_sync = enabled ? 1 : 0;
+    return ZST_OK;
+}
+
+int
+zst_pipeline_get_clock_sync(zst_pipeline_t* pipe)
+{
+    return pipe ? pipe->clock_sync : 0;
+}
+
 void
 zst_pipeline_topological_sort(zst_pipeline_t* pipe)
 {
