@@ -1,4 +1,4 @@
-# Element Implementations — Phase 4  (✅ 4a-4p, 4s-4z; 📝 4q, 4r)
+# Element Implementations — Phase 4  (✅ 4a-4z)
 
 Fourteen elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.
 Additional elements are planned: network I/O for stream ingestion, RTSP/RTMP for live streaming, subtitle parsing utilities, and expanded codec coverage.
@@ -316,7 +316,7 @@ Acts as an RTSP server element that accepts incoming RTP streams and makes them 
 - [ ] RTCP sender reports: generate SR packets with NTP/RTP timestamps
 - [x] Configurable `listen_port`, `mount_point`, `max_clients`, `transport`
 
-### 4q — RTMP Source  (📝 Planned)
+### 4q — RTMP Source  (✅ Done)
 
 Connects to an RTMP server (or receives RTMP pushes) and demuxes the FLV stream into video/audio buffers. Essential for consuming from live streaming platforms, OBS pushes, and legacy IP cameras.
 
@@ -351,7 +351,7 @@ Designed using patterns from ireader/media-server's librtsp.
 - [x] H.264 NAL unit scan and fragmentation
 - [x] Dynamic plugin build (`libzst_rtsp_server.so`)
 
-### 4r — RTMP Sink  (📝 Planned)
+### 4r — RTMP Sink  (✅ Done)
 
 Publishes pipeline output to an RTMP ingest endpoint — the standard way to push to YouTube Live, Twitch, Facebook Live, and most CDNs.
 

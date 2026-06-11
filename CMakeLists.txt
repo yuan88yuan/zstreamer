@@ -137,6 +137,8 @@ set(ELEMENT_LIBRARY_SOURCES
     src/rtsp_source.c
     src/rtsp_sink.c
     src/rtsp_server.c
+    src/rtmp_source.c
+    src/rtmp_sink.c
 )
 
 if(BUILD_SHARED)
@@ -186,6 +188,8 @@ set(ELEMENT_SOURCES
     src/aac_decoder.c
     src/net_source.c
     src/net_sink.c
+    src/rtmp_source.c
+    src/rtmp_sink.c
 )
 
 # ── Dynamic Plugins ──────────────────────────────────────────────────────
@@ -285,7 +289,15 @@ add_library(zst_aacdecoder SHARED src/aac_decoder.c)
 target_compile_definitions(zst_aacdecoder PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_aacdecoder PRIVATE zstreamer ${AVCODEC_LIBRARIES} ${AVUTIL_LIBRARIES})
 
-set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_rtspsource zst_rtspsink zst_rtsp_server zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_textsource zst_netsrc zst_netsink zst_h264decoder zst_h265encoder zst_h265decoder zst_aacdecoder)
+add_library(zst_rtmpsource SHARED src/rtmp_source.c)
+target_compile_definitions(zst_rtmpsource PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_rtmpsource PRIVATE zstreamer ${AVFORMAT_LIBRARIES} ${AVCODEC_LIBRARIES} ${AVUTIL_LIBRARIES})
+
+add_library(zst_rtmpsink SHARED src/rtmp_sink.c)
+target_compile_definitions(zst_rtmpsink PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_rtmpsink PRIVATE zstreamer ${AVFORMAT_LIBRARIES} ${AVCODEC_LIBRARIES} ${AVUTIL_LIBRARIES})
+
+set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_rtspsource zst_rtspsink zst_rtsp_server zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_textsource zst_netsrc zst_netsink zst_h264decoder zst_h265encoder zst_h265decoder zst_aacdecoder zst_rtmpsource zst_rtmpsink)
 foreach(plugin ${PLUGIN_TARGETS})
     target_include_directories(${plugin} PRIVATE ${ZSTREAMER_INCLUDE_DIR} PRIVATE ${ELEMENT_INCLUDE_DIRS})
     set_target_properties(${plugin} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")

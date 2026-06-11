@@ -1199,6 +1199,18 @@ test_element_factory_refcounting(void)
     assert(rtspsink->plugin != NULL);
     assert(strcmp(rtspsink->ops->name, "rtspsink") == 0);
     zst_element_destroy(rtspsink);
+
+    zst_element_t* rtmpsrc = zst_element_factory_make("rtmpsrc");
+    assert(rtmpsrc != NULL);
+    assert(rtmpsrc->plugin != NULL);
+    assert(strcmp(rtmpsrc->ops->name, "rtmpsrc") == 0);
+    zst_element_destroy(rtmpsrc);
+
+    zst_element_t* rtmpsink = zst_element_factory_make("rtmpsink");
+    assert(rtmpsink != NULL);
+    assert(rtmpsink->plugin != NULL);
+    assert(strcmp(rtmpsink->ops->name, "rtmpsink") == 0);
+    zst_element_destroy(rtmpsink);
     
     zst_element_t* aacencoder = zst_element_factory_make("aacenc");
     assert(aacencoder != NULL);
