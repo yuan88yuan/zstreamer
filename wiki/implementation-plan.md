@@ -7,7 +7,7 @@ All phases are now documented in separate files for easier maintenance.
 | 0–3   | [Core Framework](phase-core.md) | ~190 | ✅ Complete |
 | 4     | [Element Implementations](phase-elements.md) | ~360 | ✅ 4a-4y done (all 24 elements); 📝 4q, 4r planned |
 | 5–7   | [Infrastructure](phase-infrastructure.md) | ~58 | ✅ Complete |
-| 8     | [Advanced Features](phase-advanced.md) | ~115 | 🔄 In Progress |
+| 8     | [Advanced Features](phase-advanced.md) | ~417 | 🔄 In Progress |
 | 9–10  | [Future Work](phase-future.md) | ~34 | ⬜ Not Started |
 
 ---
@@ -30,4 +30,4 @@ All phases are now documented in separate files for easier maintenance.
 | Testing & CI (9) | ⬜ Planned | CI pipeline, stress tests, static analysis |
 | Documentation (10) | ⬜ Planned | Doxygen API ref, tutorials |
 | Advanced Features (8c) | 📝 Planned | Element bin, pad probes, segment seeking |
-
+| Element Public API (8d) | 📝 Planned | Plugin-first element exposure, introspection, typed properties, optional convenience headers |

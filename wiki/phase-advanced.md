@@ -149,3 +149,269 @@ Enable playback of a specific time range within a stream — clip in, clip out, 
 - [ ] Use case: loop playback of a segment for stress testing
 - [ ] Use case: seek to a specific position in a recorded file source
 - [ ] Use case: pause/resume from last position (stop position as resumption point)
+
+## 8d — Element Public API and Plugin-First Feature Exposure
+
+Expose the features of all official, dynamic, and future elements through a stable C API. The existing `dlopen` plugin/factory system should be the primary public interface; per-element C headers should be optional convenience wrappers, not the only supported way to use elements.
+
+### Design Principles
+
+- [ ] Treat `zst_element_factory_make()` as the primary user-facing element creation API
+- [ ] Use one registry path for built-in official elements and dynamically loaded plugins
+- [ ] Make elements self-describing: factory name, category, description, properties, pads, caps, and creation function
+- [ ] Keep element private structs private; users interact through `zst_element_t`, pads, caps, properties, and introspection
+- [ ] Preserve the current string property API for compatibility while adding typed helpers
+- [ ] Provide optional official convenience headers for first-party elements only
+
+### Plugin / Element Metadata
+
+Extend the plugin ABI in a backward-compatible way using `abi_version` and `struct_size`. Keep the current `create_element(const char* name)` path during transition so existing plugins continue to load.
+
+- [ ] Add `zst_property_type_t` for `STRING`, `INT`, `UINT`, `DOUBLE`, `BOOL`, and `ENUM`
+- [ ] Add property flags: `READABLE`, `WRITABLE`, `RUNTIME`
+- [ ] Add `zst_property_spec_t` with name, type, flags, default value, and description
+- [ ] Add `zst_pad_template_t` with pad name, direction, and caps string
+- [ ] Add `zst_element_desc_t` describing each element exported by a plugin
+- [ ] Extend `zst_plugin_desc_t` to expose an array of `zst_element_desc_t`
+- [ ] Support plugins that expose multiple element factories from one `.so`
+
+Candidate public structures:
+
+```c
+typedef enum {
+    ZST_PROPERTY_STRING,
+    ZST_PROPERTY_INT,
+    ZST_PROPERTY_UINT,
+    ZST_PROPERTY_DOUBLE,
+    ZST_PROPERTY_BOOL,
+    ZST_PROPERTY_ENUM
+} zst_property_type_t;
+
+typedef enum {
+    ZST_PROPERTY_READABLE = 1u << 0,
+    ZST_PROPERTY_WRITABLE = 1u << 1,
+    ZST_PROPERTY_RUNTIME  = 1u << 2
+} zst_property_flags_t;
+
+typedef struct {
+    const char* name;
+    zst_property_type_t type;
+    uint32_t flags;
+    const char* default_value;
+    const char* description;
+} zst_property_spec_t;
+
+typedef struct {
+    const char* name;
+    zst_pad_direction_t direction;
+    const char* caps;
+} zst_pad_template_t;
+
+typedef struct {
+    const char* name;
+    const char* long_name;
+    const char* category;
+    const char* description;
+    const char* author;
+
+    const zst_property_spec_t* properties;
+    uint32_t nb_properties;
+
+    const zst_pad_template_t* pads;
+    uint32_t nb_pads;
+
+    zst_element_t* (*create)(void);
+} zst_element_desc_t;
+```
+
+### Factory Introspection APIs
+
+Applications, CLIs, UIs, and tests should be able to discover available elements at runtime, including third-party plugin elements unknown at compile time.
+
+- [ ] `zst_element_factory_list()` — list all registered element descriptors
+- [ ] `zst_element_factory_get_desc(name)` — get metadata for one factory name
+- [ ] Introspection should work for both built-in and plugin-backed elements
+- [ ] Return property and pad metadata without requiring element instantiation where possible
+
+Candidate API:
+
+```c
+uint32_t zst_element_factory_list(
+    const zst_element_desc_t*** elements_out);
+
+const zst_element_desc_t* zst_element_factory_get_desc(
+    const char* name);
+```
+
+### Typed Property Helpers
+
+Keep the current string API:
+
+```c
+zst_element_set_property(el, "chunk-size", "4096");
+```
+
+Add typed wrappers for safer user code:
+
+- [ ] `zst_element_set_property_string()` / `zst_element_get_property_string()`
+- [ ] `zst_element_set_property_int()` / `zst_element_get_property_int()`
+- [ ] `zst_element_set_property_uint()` / `zst_element_get_property_uint()`
+- [ ] `zst_element_set_property_double()` / `zst_element_get_property_double()`
+- [ ] `zst_element_set_property_bool()` / `zst_element_get_property_bool()`
+- [ ] Validate typed helper calls against descriptor metadata when available
+
+Candidate API:
+
+```c
+zst_result_t zst_element_set_property_string(zst_element_t* el, const char* name, const char* value);
+zst_result_t zst_element_set_property_int(zst_element_t* el, const char* name, int64_t value);
+zst_result_t zst_element_set_property_uint(zst_element_t* el, const char* name, uint64_t value);
+zst_result_t zst_element_set_property_double(zst_element_t* el, const char* name, double value);
+zst_result_t zst_element_set_property_bool(zst_element_t* el, const char* name, bool value);
+
+zst_result_t zst_element_get_property_string(zst_element_t* el, const char* name, char* value_out, size_t max_len);
+zst_result_t zst_element_get_property_int(zst_element_t* el, const char* name, int64_t* value_out);
+zst_result_t zst_element_get_property_uint(zst_element_t* el, const char* name, uint64_t* value_out);
+zst_result_t zst_element_get_property_double(zst_element_t* el, const char* name, double* value_out);
+zst_result_t zst_element_get_property_bool(zst_element_t* el, const char* name, bool* value_out);
+```
+
+### Unified Built-In and Dynamic Registration
+
+The current dynamic plugin flow should remain valid:
+
+```c
+zst_plugin_registry_init();
+zst_plugin_registry_scan(path);
+zst_plugin_registry_scan_env();
+zst_element_factory_make("filesrc");
+```
+
+Add built-in registration so official elements and dynamic plugins are available through the same factory/introspection API.
+
+- [ ] Add `zst_register_builtin_elements()` or equivalent initialization hook
+- [ ] Register built-in official elements into the same factory registry as dynamic plugins
+- [ ] Ensure `zst_element_factory_make()` does not care whether an element is built-in or plugin-backed
+- [ ] Install plugin `.so` files to a stable plugin directory and continue supporting `ZSTREAMER_PLUGIN_PATH`
+
+Candidate usage:
+
+```c
+zst_plugin_registry_init();
+zst_register_builtin_elements();
+zst_plugin_registry_scan_env();
+
+zst_element_t* src = zst_element_factory_make("filesrc");
+zst_element_t* enc = zst_element_factory_make("h264encoder");
+zst_element_t* sink = zst_element_factory_make("filesink");
+```
+
+### Metadata for Official Elements
+
+Add `zst_element_desc_t` metadata for every official element:
+
+- [ ] `filesrc`, `filesink`, `fakesink`
+- [ ] `v4l2source`, `alsasource`
+- [ ] `h264encoder`, `h264decoder`
+- [ ] `h265encoder`, `h265decoder`
+- [ ] `aacencoder`, `aacdecoder`
+- [ ] `mp4muxer`
+- [ ] `videoscaler`, `audioresampler`
+- [ ] `videotestsrc`, `audiotestsrc`
+- [ ] `textoverlay`, `textsource`, `srtparser`
+- [ ] `netsrc`, `netsink`
+- [ ] `rtspsource`, `rtspsink`, `rtspserver`
+- [ ] future RTMP source/sink and other elements
+
+Each descriptor should document:
+
+- [ ] factory name
+- [ ] long name, category, and description
+- [ ] source and sink pad templates
+- [ ] supported/static caps where known
+- [ ] readable/writable properties and defaults
+- [ ] read-only statistics where applicable
+
+### Optional Official Convenience Headers
+
+Install optional first-party headers under a stable namespace, for example:
+
+```text
+include/zstreamer/elements/zst_file_source.h
+include/zstreamer/elements/zst_file_sink.h
+include/zstreamer/elements/zst_fake_sink.h
+include/zstreamer/elements/zst_h264_encoder.h
+...
+```
+
+These headers may expose constructor convenience functions, property name macros, and optional config structs with `struct_size` for ABI extension.
+
+- [ ] Add convenience headers for official elements where useful
+- [ ] Add property name macros to avoid string literals in user code
+- [ ] Use `struct_size` in config structs for forward-compatible extension
+- [ ] Implement wrappers on top of the same element implementations; do not bypass the generic factory/property model
+
+Example:
+
+```c
+#define ZST_FILE_SOURCE_PROP_PATH       "path"
+#define ZST_FILE_SOURCE_PROP_CHUNK_SIZE "chunk-size"
+#define ZST_FILE_SOURCE_PROP_LOOP       "loop"
+
+zst_element_t* zst_file_source_create(const char* path);
+```
+
+### Library and Installation Layout
+
+Recommended installable artifacts:
+
+```text
+libzstreamer.so              core framework and registry
+libzstreamer-elements.so     official element implementations, if not linked into core
+lib/zstreamer/plugins/*.so   dynamic plugins
+include/zstreamer/...        public headers
+```
+
+- [ ] Decide whether official elements live in `libzstreamer`, `libzstreamer-elements`, plugins, or a supported combination
+- [ ] Install public headers and optional convenience headers
+- [ ] Install official plugin `.so` files to a stable plugin directory
+- [ ] Add CMake/pkg-config metadata so users can link core and official elements cleanly
+
+### Test Deliverables
+
+- [ ] Existing plugin ABI loads during transition
+- [ ] Registry lists built-in elements
+- [ ] Registry lists dynamically loaded plugin elements
+- [ ] Descriptors for official elements contain expected properties and pads
+- [ ] `zst_element_factory_make()` creates the same element whether backed by built-in registration or plugin registration
+- [ ] Typed property helpers set/get values correctly
+- [ ] Typed helper validation rejects wrong property types where metadata is available
+- [ ] Public convenience headers compile and link from an external-style test target
+- [ ] Third-party test plugin descriptors are discoverable
+
+### User-Facing Examples
+
+Generic plugin-friendly API:
+
+```c
+zst_plugin_registry_init();
+zst_register_builtin_elements();
+zst_plugin_registry_scan_env();
+
+zst_element_t* src = zst_element_factory_make("filesrc");
+zst_element_set_property_string(src, "path", "input.h264");
+zst_element_set_property_uint(src, "chunk-size", 4096);
+
+zst_element_t* sink = zst_element_factory_make("filesink");
+zst_element_set_property_string(sink, "path", "output.h264");
+```
+
+Optional official convenience API:
+
+```c
+#include "zstreamer/elements/zst_file_source.h"
+#include "zstreamer/elements/zst_file_sink.h"
+
+zst_element_t* src = zst_file_source_create("input.h264");
+zst_element_t* sink = zst_file_sink_create("output.h264");
+```
