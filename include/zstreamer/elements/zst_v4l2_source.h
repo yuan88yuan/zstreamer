@@ -1,0 +1,18 @@
+/*=============================================================================
+    zst_v4l2_source.h — V4L2 Source convenience API
+=============================================================================*/
+#pragma once
+
+#include "zst_element.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define ZST_V4L2_SOURCE_FACTORY "v4l2src"
+
+zst_element_t* zst_v4l2_source_create(void);
+
+#ifdef __cplusplus
+}
+#endif
