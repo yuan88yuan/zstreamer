@@ -17,6 +17,9 @@ typedef struct {
     char text[256];
     char font_path[256];
     int font_size;
+    int timecode;
+    int x;
+    int y;
 
     zst_pad_t* sinkpad;
     zst_pad_t* srcpad;
@@ -127,16 +130,9 @@ text_overlay_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
         return ZST_OK;
     }
 
-    zst_buffer_t* out_buf = NULL;
-    if (in->refcount == 1) {
-        out_buf = zst_buffer_ref(in);
-    } else {
-        /* In a real pipeline with multiple consumers, we should copy the buffer.
-           For now, to avoid deep copying complexities, we just use a reference,
-           acknowledging that this mutates shared memory. Typically, elements use
-           a buffer pool ensuring refcount == 1. */
-        out_buf = zst_buffer_ref(in);
-    }
+    /* In-place transform. Return a reference so direct process() callers own
+       the output; the default pad path drops this extra ref after pushing. */
+    zst_buffer_t* out_buf = zst_buffer_ref(in);
 
     /* Draw text */
     /* Wait, we need to know pixel format to draw */
@@ -160,8 +156,8 @@ text_overlay_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     }
 
     /* Word wrapping and text rendering loop */
-    int start_x = 10;
-    int start_y = 50; /* Baseline */
+    int start_x = s->x;
+    int start_y = s->y; /* Baseline */
     int x = start_x;
     int y = start_y;
     int line_height = s->face->size->metrics.height >> 6;
@@ -169,10 +165,20 @@ text_overlay_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
 
     int max_x = vf->width - 10;
 
-    /* Decide which text to render: active subtitle or static text */
+    /* Decide which text to render: generated timecode, active subtitle, or static text */
+    char timecode_text[64];
     const char* render_text = s->text;
+    if (s->timecode) {
+        uint64_t total_ms = in->pts / 1000000ULL;
+        unsigned hh = (unsigned)(total_ms / 3600000ULL);
+        unsigned mm = (unsigned)((total_ms / 60000ULL) % 60ULL);
+        unsigned ss = (unsigned)((total_ms / 1000ULL) % 60ULL);
+        unsigned ms = (unsigned)(total_ms % 1000ULL);
+        snprintf(timecode_text, sizeof(timecode_text), "%02u:%02u:%02u.%03u", hh, mm, ss, ms);
+        render_text = timecode_text;
+    }
     pthread_mutex_lock(&s->text_lock);
-    if (s->subtitle_text[0] != '\0' && in->pts <= s->subtitle_end_ns) {
+    if (!s->timecode && s->subtitle_text[0] != '\0' && in->pts <= s->subtitle_end_ns) {
         render_text = s->subtitle_text;
     }
     /* If subtitle expired, clear it */
@@ -284,6 +290,61 @@ text_overlay_get_caps(zst_element_t* el, zst_pad_t* pad, const zst_caps_t* filte
     return caps;
 }
 
+static zst_result_t
+text_overlay_set_property(zst_element_t* el, const char* name, const char* value)
+{
+    text_overlay_t* s = el->priv;
+    if (strcmp(name, "text") == 0 || strcmp(name, "text-content") == 0) {
+        strncpy(s->text, value, sizeof(s->text) - 1);
+        s->text[sizeof(s->text) - 1] = '\0';
+        return ZST_OK;
+    } else if (strcmp(name, "timecode") == 0 || strcmp(name, "show-timecode") == 0) {
+        s->timecode = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcmp(value, "yes") == 0);
+        return ZST_OK;
+    } else if (strcmp(name, "font-size") == 0 || strcmp(name, "font_size") == 0) {
+        s->font_size = atoi(value);
+        if (s->face) FT_Set_Pixel_Sizes(s->face, 0, s->font_size > 0 ? s->font_size : 48);
+        return ZST_OK;
+    } else if (strcmp(name, "font-path") == 0 || strcmp(name, "font_path") == 0) {
+        strncpy(s->font_path, value, sizeof(s->font_path) - 1);
+        s->font_path[sizeof(s->font_path) - 1] = '\0';
+        return ZST_OK;
+    } else if (strcmp(name, "x") == 0) {
+        s->x = atoi(value);
+        return ZST_OK;
+    } else if (strcmp(name, "y") == 0) {
+        s->y = atoi(value);
+        return ZST_OK;
+    }
+    return ZST_ERROR;
+}
+
+static zst_result_t
+text_overlay_get_property(zst_element_t* el, const char* name, char* value_out, size_t max_len)
+{
+    text_overlay_t* s = el->priv;
+    if (strcmp(name, "text") == 0 || strcmp(name, "text-content") == 0) {
+        snprintf(value_out, max_len, "%s", s->text);
+        return ZST_OK;
+    } else if (strcmp(name, "timecode") == 0 || strcmp(name, "show-timecode") == 0) {
+        snprintf(value_out, max_len, "%s", s->timecode ? "true" : "false");
+        return ZST_OK;
+    } else if (strcmp(name, "font-size") == 0 || strcmp(name, "font_size") == 0) {
+        snprintf(value_out, max_len, "%d", s->font_size);
+        return ZST_OK;
+    } else if (strcmp(name, "font-path") == 0 || strcmp(name, "font_path") == 0) {
+        snprintf(value_out, max_len, "%s", s->font_path);
+        return ZST_OK;
+    } else if (strcmp(name, "x") == 0) {
+        snprintf(value_out, max_len, "%d", s->x);
+        return ZST_OK;
+    } else if (strcmp(name, "y") == 0) {
+        snprintf(value_out, max_len, "%d", s->y);
+        return ZST_OK;
+    }
+    return ZST_ERROR;
+}
+
 static const zst_element_ops_t g_ops = {
     .name = "textoverlay",
     .open = text_overlay_open,
@@ -292,7 +353,9 @@ static const zst_element_ops_t g_ops = {
     .stop = NULL,
     .process = text_overlay_process,
     .get_caps = text_overlay_get_caps,
-    .provide_clock = NULL
+    .provide_clock = NULL,
+    .set_property = text_overlay_set_property,
+    .get_property = text_overlay_get_property
 };
 
 zst_element_t*
@@ -307,6 +370,9 @@ zst_text_overlay_create(const char* text)
         strcpy(priv->text, "Hello ZStreamer");
     }
     priv->font_size = 48;
+    priv->timecode = 0;
+    priv->x = 10;
+    priv->y = 50;
 
     zst_element_t* el = zst_element_create(&g_ops, priv);
     if (!el) {

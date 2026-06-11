@@ -35,6 +35,7 @@ typedef struct {
     int64_t num_samples;
     int64_t num_buffers;
     bool loop;
+    bool use_clock;
 
     uint64_t sample_count;
     uint64_t buffer_count;
@@ -387,11 +388,12 @@ audio_test_src_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     s->sample_count += nb_samples;
     s->buffer_count++;
 
-    if (el->clock) {
+    if (s->use_clock && el->clock) {
         buf->pts = zst_clock_get_time(el->clock);
     } else {
         buf->pts = start_sample * 1000000000ULL / s->sample_rate;
     }
+    buf->dts = buf->pts;
     buf->duration = (uint64_t)nb_samples * 1000000000ULL / s->sample_rate;
 
     *out = buf;
@@ -465,6 +467,9 @@ audio_test_src_set_property(zst_element_t* el, const char* name, const char* val
     } else if (strcmp(name, "loop") == 0) {
         s->loop = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcmp(value, "yes") == 0);
         return ZST_OK;
+    } else if (strcmp(name, "use-clock") == 0 || strcmp(name, "do-timestamp") == 0) {
+        s->use_clock = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcmp(value, "yes") == 0);
+        return ZST_OK;
     }
 
     return ZST_ERROR;
@@ -504,6 +509,9 @@ audio_test_src_get_property(zst_element_t* el, const char* name, char* value_out
         return ZST_OK;
     } else if (strcmp(name, "loop") == 0) {
         snprintf(value_out, max_len, "%s", s->loop ? "true" : "false");
+        return ZST_OK;
+    } else if (strcmp(name, "use-clock") == 0 || strcmp(name, "do-timestamp") == 0) {
+        snprintf(value_out, max_len, "%s", s->use_clock ? "true" : "false");
         return ZST_OK;
     }
 
@@ -575,6 +583,7 @@ zst_audio_test_src_create(void)
     priv->num_samples = -1;
     priv->num_buffers = -1;
     priv->loop = false;
+    priv->use_clock = false;
     audio_test_src_reset_signal_state(priv);
 
     zst_element_t* el = zst_element_create(&g_ops, priv);

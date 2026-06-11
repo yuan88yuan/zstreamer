@@ -27,6 +27,7 @@ typedef struct {
     char pixel_format[32];
     int num_buffers;
     bool loop;
+    bool use_clock;
     int x;
     int y;
 
@@ -323,12 +324,13 @@ static zst_result_t text_source_process(zst_element_t* el, zst_buffer_t* in, zst
         }
     }
 
-    uint64_t dur_ns = 1000000ULL / s->fps;
-    if (el->clock) {
+    uint64_t dur_ns = 1000000000ULL / s->fps;
+    if (s->use_clock && el->clock) {
         buf->pts = zst_clock_get_time(el->clock);
     } else {
         buf->pts = s->frame_count * dur_ns;
     }
+    buf->dts = buf->pts;
     buf->duration = dur_ns;
 
     s->frame_count++;
@@ -391,6 +393,9 @@ static zst_result_t text_source_set_property(zst_element_t* el, const char* name
     } else if (strcmp(name, "loop") == 0) {
         s->loop = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0);
         return ZST_OK;
+    } else if (strcmp(name, "use-clock") == 0 || strcmp(name, "do-timestamp") == 0) {
+        s->use_clock = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcmp(value, "yes") == 0);
+        return ZST_OK;
     } else if (strcmp(name, "x") == 0) {
         s->x = atoi(value);
         return ZST_OK;
@@ -437,6 +442,9 @@ static zst_result_t text_source_get_property(zst_element_t* el, const char* name
     } else if (strcmp(name, "loop") == 0) {
         strncpy(value_out, s->loop ? "true" : "false", max_len);
         return ZST_OK;
+    } else if (strcmp(name, "use-clock") == 0 || strcmp(name, "do-timestamp") == 0) {
+        strncpy(value_out, s->use_clock ? "true" : "false", max_len);
+        return ZST_OK;
     } else if (strcmp(name, "x") == 0) {
         snprintf(value_out, max_len, "%d", s->x);
         return ZST_OK;
@@ -473,6 +481,7 @@ zst_element_t* zst_text_source_create(void)
     strcpy(priv->pixel_format, "YUV420P");
     priv->num_buffers = -1;
     priv->loop = false;
+    priv->use_clock = false;
     priv->x = 10;
     priv->y = 50;
     priv->frame_count = 0;

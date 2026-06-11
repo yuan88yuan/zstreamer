@@ -41,6 +41,12 @@ default_sink_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
             ret = zst_pad_push(el->src_pads[0], out_buf);
             if (out_buf != buf) {
                 zst_buffer_unref(out_buf);
+            } else if (out_buf->refcount > 1) {
+                /* Some in-place elements return zst_buffer_ref(in) so direct
+                   process() callers own an output reference.  Drop that extra
+                   reference in the pad-driven path while preserving the
+                   upstream caller's original reference. */
+                zst_buffer_unref(out_buf);
             }
         }
     }

@@ -65,6 +65,8 @@ h264_init_encoder(h264_encoder_t* s, uint32_t width, uint32_t height)
     s->param.i_width = width;
     s->param.i_height = height;
     s->param.b_vfr_input = 0;
+    s->param.b_annexb = 1;
+    s->param.b_repeat_headers = 1;
     s->param.i_fps_num = 30;
     s->param.i_fps_den = 1;
     
@@ -157,16 +159,34 @@ h264_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
 
         uint8_t* enc_data = pkt->memory.data;
 
-        /* Concatenate all NAL units */
+        /* Concatenate NAL units as Annex-B.  x264_nal_t payloads may be raw
+           NAL payloads depending on build/API settings, so add a start code
+           when one is not already present. */
         uint8_t* ptr = enc_data;
         for (int i = 0; i < i_nals; i++) {
-            memcpy(ptr, nals[i].p_payload, nals[i].i_payload);
-            ptr += nals[i].i_payload;
+            uint8_t* payload = nals[i].p_payload;
+            int payload_size = nals[i].i_payload;
+            int has_start_code = 0;
+            if (payload_size >= 4 && payload[0] == 0 && payload[1] == 0 && payload[2] == 0 && payload[3] == 1) {
+                has_start_code = 1;
+            } else if (payload_size >= 3 && payload[0] == 0 && payload[1] == 0 && payload[2] == 1) {
+                has_start_code = 1;
+            }
+            if (!has_start_code) {
+                ptr[0] = 0;
+                ptr[1] = 0;
+                ptr[2] = 0;
+                ptr[3] = 1;
+                ptr += 4;
+            }
+            memcpy(ptr, payload, payload_size);
+            ptr += payload_size;
         }
 
-        pkt->memory.size = frame_size;
+        pkt->memory.size = (size_t)(ptr - enc_data);
         pkt->pts = s->pic_out.i_pts;
         pkt->dts = s->pic_out.i_dts;
+        pkt->duration = in->duration;
 
         *out = pkt;
     } else {
