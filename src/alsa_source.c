@@ -218,6 +218,14 @@ alsa_provide_clock(zst_element_t* el)
     return clock;
 }
 
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    alsa_source_t* s = el->priv;
+    return s->pool;
+}
+
 static zst_element_ops_t g_ops = {
     .name          = "alsasrc",
     .open          = alsa_open,
@@ -225,6 +233,7 @@ static zst_element_ops_t g_ops = {
     .start         = alsa_start,
     .process       = alsa_process,
     .provide_clock = alsa_provide_clock,
+    .get_pool = element_get_pool
 };
 
 zst_element_t*

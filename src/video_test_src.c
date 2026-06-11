@@ -308,6 +308,14 @@ static zst_result_t video_test_src_get_property(zst_element_t* el, const char* n
     return ZST_ERROR;
 }
 
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    video_test_src_t* s = el->priv;
+    return s->pool;
+}
+
 static zst_element_ops_t g_ops = {
     .name = "videotestsrc",
     .open = video_test_src_open,
@@ -316,6 +324,7 @@ static zst_element_ops_t g_ops = {
     .get_caps = video_test_src_get_caps,
     .set_property = video_test_src_set_property,
     .get_property = video_test_src_get_property,
+    .get_pool = element_get_pool
 };
 
 zst_element_t* zst_video_test_src_create(void)

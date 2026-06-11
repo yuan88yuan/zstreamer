@@ -5,6 +5,8 @@
 #include "zst_pipeline.h"
 #include "zst_bus.h"
 #include "zst_clock.h"
+#include "zst_buffer_pool.h"
+#include "zst_element_factory.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -113,6 +115,17 @@ zst_pipeline_remove(zst_pipeline_t* pipe, zst_element_t* el)
     return ZST_ERROR;
 }
 
+static void apply_pool_config_cb(zst_element_t* el, void* user_data)
+{
+    zst_pipeline_t* pipe = user_data;
+    zst_buffer_pool_t* pool = zst_element_get_pool(el);
+    if (pool) {
+        zst_buffer_pool_config_t config = zst_buffer_pool_get_config(pool);
+        zst_pool_config_default_size(&config, pipe);
+        zst_buffer_pool_set_config(pool, &config);
+    }
+}
+
 zst_result_t
 zst_pipeline_set_state(zst_pipeline_t* pipe, zst_state_t state)
 {
@@ -120,6 +133,10 @@ zst_pipeline_set_state(zst_pipeline_t* pipe, zst_state_t state)
 
     zst_state_t old_state = pipe->state;
     if (old_state == state) return ZST_OK;
+
+    if (old_state < ZST_STATE_PLAYING && state == ZST_STATE_PLAYING) {
+        zst_pipeline_foreach_element(pipe, apply_pool_config_cb, pipe);
+    }
 
     /* Transition to PLAYING: Auto-select clock if none exists */
     if (old_state < ZST_STATE_PLAYING && state == ZST_STATE_PLAYING && !pipe->clock) {
@@ -256,4 +273,36 @@ zst_pipeline_topological_sort(zst_pipeline_t* pipe)
 
     free(visited);
     free(temp);
+}
+
+int
+zst_pipeline_count_elements_of_type(zst_pipeline_t* pipe, const char* type_name)
+{
+    if (!pipe || !type_name) return 0;
+
+    int count = 0;
+    for (uint32_t i = 0; i < pipe->nb_elements; i++) {
+        zst_element_t* el = pipe->elements[i];
+        const char* name = NULL;
+        if (el->desc && el->desc->name) {
+            name = el->desc->name;
+        } else if (el->ops && el->ops->name) {
+            name = el->ops->name;
+        }
+
+        if (name && strcmp(name, type_name) == 0) {
+            count++;
+        }
+    }
+    return count;
+}
+
+void
+zst_pipeline_foreach_element(zst_pipeline_t* pipe, void (*func)(zst_element_t*, void*), void* user_data)
+{
+    if (!pipe || !func) return;
+
+    for (uint32_t i = 0; i < pipe->nb_elements; i++) {
+        func(pipe->elements[i], user_data);
+    }
 }

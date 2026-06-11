@@ -545,6 +545,14 @@ audio_test_src_provide_clock(zst_element_t* el)
     return clock;
 }
 
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    audio_test_src_t* s = el->priv;
+    return s->pool;
+}
+
 static zst_element_ops_t g_ops = {
     .name = "audiotestsrc",
     .open = audio_test_src_open,
@@ -556,6 +564,7 @@ static zst_element_ops_t g_ops = {
     .provide_clock = audio_test_src_provide_clock,
     .set_property = audio_test_src_set_property,
     .get_property = audio_test_src_get_property,
+    .get_pool = element_get_pool
 };
 
 zst_element_t*

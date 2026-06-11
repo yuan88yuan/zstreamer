@@ -483,12 +483,21 @@ resampler_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     return ZST_OK;
 }
 
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    audio_resampler_t* s = el->priv;
+    return s->pool;
+}
+
 static zst_element_ops_t g_ops = {
     .name     = "audioresampler",
     .open     = resampler_open,
     .close    = resampler_close,
     .process  = resampler_process,
     .get_caps = resampler_get_caps,
+    .get_pool = element_get_pool
 };
 
 zst_element_t*

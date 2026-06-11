@@ -539,6 +539,14 @@ net_source_get_property(zst_element_t* el, const char* name, char* value_out, si
     return ZST_ERROR;
 }
 
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    net_source_t* s = el->priv;
+    return s->pool;
+}
+
 static zst_element_ops_t g_ops = {
     .name = "netsrc",
     .open = net_source_open,
@@ -549,6 +557,7 @@ static zst_element_ops_t g_ops = {
     .get_caps = net_source_get_caps,
     .set_property = net_source_set_property,
     .get_property = net_source_get_property,
+    .get_pool = element_get_pool
 };
 
 zst_element_t*

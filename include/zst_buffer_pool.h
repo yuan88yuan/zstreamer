@@ -54,11 +54,17 @@ void zst_buffer_pool_destroy(
 
 zst_buffer_pool_config_t zst_buffer_pool_get_config(zst_buffer_pool_t* pool);
 
+zst_result_t zst_buffer_pool_set_config(zst_buffer_pool_t* pool, const zst_buffer_pool_config_t* config);
+
 zst_buffer_pool_config_t zst_buffer_pool_config_from_caps(const zst_caps_t* caps);
 
 void zst_buffer_pool_prefill(zst_buffer_pool_t* pool);
 
 void zst_buffer_pool_drain(zst_buffer_pool_t* pool);
+
+void zst_pool_config_default_size(
+    zst_buffer_pool_config_t* config,
+    zst_pipeline_t* pipeline);
 
 #ifdef __cplusplus
 }

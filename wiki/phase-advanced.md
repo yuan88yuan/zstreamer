@@ -107,9 +107,9 @@
     remain agnostic of the pipeline they live in (important once Phase 8c's Element
     Bin allows nested pipelines).
 
-    - [ ] Implement `zst_pipeline_count_elements_of_type(pipeline, type_name)`
-    - [ ] Implement `zst_pool_config_default_size()` helper
-    - [ ] Wire into pipeline start sequence or provide a convenience wrapper
+    - [x] Implement `zst_pipeline_count_elements_of_type(pipeline, type_name)`
+    - [x] Implement `zst_pool_config_default_size()` helper
+    - [x] Wire into pipeline start sequence or provide a convenience wrapper
 
   **Test deliverables:**
   - [ ] Unit test: acquire/recycle loop (N buffers, M cycles, no net allocation)

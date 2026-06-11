@@ -301,6 +301,14 @@ file_source_get_property(zst_element_t* el, const char* name, char* value_out, s
     return ZST_ERROR;
 }
 
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    file_source_t* s = el->priv;
+    return s->pool;
+}
+
 static zst_element_ops_t g_ops = {
     .name = "filesrc",
     .open = file_source_open,
@@ -308,7 +316,8 @@ static zst_element_ops_t g_ops = {
     .process = file_source_process,
     .get_caps = file_source_get_caps,
     .set_property = file_source_set_property,
-    .get_property = file_source_get_property
+    .get_property = file_source_get_property,
+    .get_pool = element_get_pool
 };
 
 zst_element_t*

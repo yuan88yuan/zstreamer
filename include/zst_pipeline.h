@@ -72,6 +72,15 @@ int zst_pipeline_get_clock_sync(
 void zst_pipeline_topological_sort(
     zst_pipeline_t* pipe);
 
+int zst_pipeline_count_elements_of_type(
+    zst_pipeline_t* pipe,
+    const char* type_name);
+
+void zst_pipeline_foreach_element(
+    zst_pipeline_t* pipe,
+    void (*func)(zst_element_t*, void*),
+    void* user_data);
+
 #ifdef __cplusplus
 }
 #endif
