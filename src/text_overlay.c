@@ -9,6 +9,8 @@
 #include FT_FREETYPE_H
 
 #include "zst_element.h"
+#include "zst_element_factory.h"
+#include "zstreamer/elements/zst_text_overlay.h"
 #include "zst_pad.h"
 #include "zst_buffer.h"
 #include "zst_log.h"
@@ -389,6 +391,29 @@ zst_text_overlay_create(const char* text)
     zst_element_add_pad(el, priv->sinkpad);
     zst_element_add_pad(el, priv->textpad);
     zst_element_add_pad(el, priv->srcpad);
+
+    return el;
+}
+
+zst_element_t*
+zst_text_overlay_create_with_config(const zst_text_overlay_config_t* config)
+{
+    if (!config || config->struct_size < sizeof(zst_text_overlay_config_t)) return NULL;
+    zst_element_t* el = zst_element_factory_make("textoverlay");
+    if (!el) return NULL;
+
+    if (config->text) {
+        zst_element_set_property_string(el, "text", config->text);
+    }
+    zst_element_set_property_bool(el, "timecode", config->timecode);
+    if (config->font_size > 0) {
+        zst_element_set_property_int(el, "font-size", config->font_size);
+    }
+    if (config->font_path) {
+        zst_element_set_property_string(el, "font-path", config->font_path);
+    }
+    zst_element_set_property_int(el, "x", config->x);
+    zst_element_set_property_int(el, "y", config->y);
 
     return el;
 }

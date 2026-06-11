@@ -23,6 +23,13 @@
 #include "zst_plugin.h"
 #include "zst_element_factory.h"
 #include "zst_log.h"
+#include "zstreamer/elements/zst_file_source.h"
+#include "zstreamer/elements/zst_file_sink.h"
+#include "zstreamer/elements/zst_fake_sink.h"
+#include "zstreamer/elements/zst_video_test_src.h"
+#include "zstreamer/elements/zst_audio_test_src.h"
+#include "zstreamer/elements/zst_text_overlay.h"
+#include "zstreamer/elements/zst_mp4_muxer.h"
 #include "zst_allocator.h"
 #include "zst_buffer_pool.h"
 #include "zst_clock.h"
@@ -1379,6 +1386,170 @@ test_element_factory_introspection_and_typed_properties(void)
     assert(zst_element_set_property_double(fake, "drop-probability", 0.25) == ZST_OK);
     assert(zst_element_set_property_uint(fake, "total-buffers", 10) == ZST_ERROR);
     zst_element_destroy(fake);
+
+    // Test config-based creators
+    zst_file_source_config_t src_cfg = {
+        .struct_size = sizeof(zst_file_source_config_t),
+        .path = "config_input.bin",
+        .chunk_size = 1024,
+        .loop = true,
+        .offset = 100,
+        .length = 500
+    };
+    zst_element_t* cfg_src = zst_file_source_create_with_config(&src_cfg);
+    assert(cfg_src != NULL);
+    assert(zst_element_get_property_string(cfg_src, "path", path, sizeof(path)) == ZST_OK);
+    assert(strcmp(path, "config_input.bin") == 0);
+    uint64_t cfg_chunk_size = 0;
+    assert(zst_element_get_property_uint(cfg_src, "chunk-size", &cfg_chunk_size) == ZST_OK);
+    assert(cfg_chunk_size == 1024);
+    bool cfg_loop = false;
+    assert(zst_element_get_property_bool(cfg_src, "loop", &cfg_loop) == ZST_OK);
+    assert(cfg_loop == true);
+    int64_t cfg_offset = 0;
+    assert(zst_element_get_property_int(cfg_src, "offset", &cfg_offset) == ZST_OK);
+    assert(cfg_offset == 100);
+    int64_t cfg_length = 0;
+    assert(zst_element_get_property_int(cfg_src, "length", &cfg_length) == ZST_OK);
+    assert(cfg_length == 500);
+    zst_element_destroy(cfg_src);
+
+    zst_file_sink_config_t sink_cfg = {
+        .struct_size = sizeof(zst_file_sink_config_t),
+        .path = "config_output.bin"
+    };
+    zst_element_t* cfg_sink = zst_file_sink_create_with_config(&sink_cfg);
+    assert(cfg_sink != NULL);
+    assert(zst_element_get_property_string(cfg_sink, "path", path, sizeof(path)) == ZST_OK);
+    assert(strcmp(path, "config_output.bin") == 0);
+    zst_element_destroy(cfg_sink);
+
+    zst_fake_sink_config_t fake_cfg = {
+        .struct_size = sizeof(zst_fake_sink_config_t),
+        .drop_probability = 0.75
+    };
+    zst_element_t* cfg_fake = zst_fake_sink_create_with_config(&fake_cfg);
+    assert(cfg_fake != NULL);
+    double cfg_drop_prob = 0.0;
+    assert(zst_element_get_property_double(cfg_fake, "drop-probability", &cfg_drop_prob) == ZST_OK);
+    assert(cfg_drop_prob == 0.75);
+    zst_element_destroy(cfg_fake);
+
+    // Test more element config-based creators
+    zst_video_test_src_config_t vts_cfg = {
+        .struct_size = sizeof(zst_video_test_src_config_t),
+        .width = 1280,
+        .height = 720,
+        .fps = 60,
+        .pattern = "gradient",
+        .pixel_format = "RGB",
+        .num_buffers = 100,
+        .loop = true,
+        .use_clock = true
+    };
+    zst_element_t* cfg_vts = zst_video_test_src_create_with_config(&vts_cfg);
+    assert(cfg_vts != NULL);
+    uint64_t vts_width = 0, vts_height = 0, vts_fps = 0;
+    assert(zst_element_get_property_uint(cfg_vts, "width", &vts_width) == ZST_OK);
+    assert(vts_width == 1280);
+    assert(zst_element_get_property_uint(cfg_vts, "height", &vts_height) == ZST_OK);
+    assert(vts_height == 720);
+    assert(zst_element_get_property_uint(cfg_vts, "fps", &vts_fps) == ZST_OK);
+    assert(vts_fps == 60);
+    char vts_pattern[32], vts_format[32];
+    assert(zst_element_get_property_string(cfg_vts, "pattern", vts_pattern, sizeof(vts_pattern)) == ZST_OK);
+    assert(strcmp(vts_pattern, "gradient") == 0);
+    assert(zst_element_get_property_string(cfg_vts, "pixel-format", vts_format, sizeof(vts_format)) == ZST_OK);
+    assert(strcmp(vts_format, "RGB") == 0);
+    zst_element_destroy(cfg_vts);
+
+    zst_audio_test_src_config_t ats_cfg = {
+        .struct_size = sizeof(zst_audio_test_src_config_t),
+        .sample_rate = 48000,
+        .channels = 6,
+        .sample_format = "F32LE",
+        .wave = "square",
+        .frequency = 880.0,
+        .volume = 0.5,
+        .samples_per_buffer = 512,
+        .num_samples = 480000,
+        .num_buffers = 937,
+        .loop = true,
+        .use_clock = true
+    };
+    zst_element_t* cfg_ats = zst_audio_test_src_create_with_config(&ats_cfg);
+    assert(cfg_ats != NULL);
+    uint64_t ats_rate = 0, ats_ch = 0;
+    assert(zst_element_get_property_uint(cfg_ats, "sample-rate", &ats_rate) == ZST_OK);
+    assert(ats_rate == 48000);
+    assert(zst_element_get_property_uint(cfg_ats, "channels", &ats_ch) == ZST_OK);
+    assert(ats_ch == 6);
+    char ats_format[32], ats_wave[32];
+    assert(zst_element_get_property_string(cfg_ats, "sample-format", ats_format, sizeof(ats_format)) == ZST_OK);
+    assert(strcmp(ats_format, "F32LE") == 0);
+    assert(zst_element_get_property_string(cfg_ats, "wave", ats_wave, sizeof(ats_wave)) == ZST_OK);
+    assert(strcmp(ats_wave, "square") == 0);
+    double ats_freq = 0.0, ats_vol = 0.0;
+    assert(zst_element_get_property_double(cfg_ats, "frequency", &ats_freq) == ZST_OK);
+    assert(ats_freq == 880.0);
+    assert(zst_element_get_property_double(cfg_ats, "volume", &ats_vol) == ZST_OK);
+    assert(ats_vol == 0.5);
+    zst_element_destroy(cfg_ats);
+
+    zst_text_overlay_config_t to_cfg = {
+        .struct_size = sizeof(zst_text_overlay_config_t),
+        .text = "Hello Config",
+        .timecode = true,
+        .font_size = 36,
+        .font_path = "/usr/share/fonts/dejavu.ttf",
+        .x = 20,
+        .y = 50
+    };
+    zst_element_t* cfg_to = zst_text_overlay_create_with_config(&to_cfg);
+    assert(cfg_to != NULL);
+    char to_text[64], to_path[256];
+    assert(zst_element_get_property_string(cfg_to, "text", to_text, sizeof(to_text)) == ZST_OK);
+    assert(strcmp(to_text, "Hello Config") == 0);
+    bool to_tc = false;
+    assert(zst_element_get_property_bool(cfg_to, "timecode", &to_tc) == ZST_OK);
+    assert(to_tc == true);
+    int64_t to_sz = 0, to_x = 0, to_y = 0;
+    assert(zst_element_get_property_int(cfg_to, "font-size", &to_sz) == ZST_OK);
+    assert(to_sz == 36);
+    assert(zst_element_get_property_string(cfg_to, "font-path", to_path, sizeof(to_path)) == ZST_OK);
+    assert(strcmp(to_path, "/usr/share/fonts/dejavu.ttf") == 0);
+    assert(zst_element_get_property_int(cfg_to, "x", &to_x) == ZST_OK);
+    assert(to_x == 20);
+    assert(zst_element_get_property_int(cfg_to, "y", &to_y) == ZST_OK);
+    assert(to_y == 50);
+    zst_element_destroy(cfg_to);
+
+    zst_mp4_muxer_config_t mux_cfg = {
+        .struct_size = sizeof(zst_mp4_muxer_config_t),
+        .width = 1920,
+        .height = 1080,
+        .fps = 30,
+        .sample_rate = 44100,
+        .channels = 2,
+        .location = "config_output.mp4"
+    };
+    zst_element_t* cfg_mux = zst_mp4_muxer_create_with_config(&mux_cfg);
+    assert(cfg_mux != NULL);
+    uint64_t mux_width = 0, mux_height = 0, mux_fps = 0, mux_rate = 0, mux_ch = 0;
+    assert(zst_element_get_property_uint(cfg_mux, "width", &mux_width) == ZST_OK);
+    assert(mux_width == 1920);
+    assert(zst_element_get_property_uint(cfg_mux, "height", &mux_height) == ZST_OK);
+    assert(mux_height == 1080);
+    assert(zst_element_get_property_uint(cfg_mux, "fps", &mux_fps) == ZST_OK);
+    assert(mux_fps == 30);
+    assert(zst_element_get_property_uint(cfg_mux, "sample-rate", &mux_rate) == ZST_OK);
+    assert(mux_rate == 44100);
+    assert(zst_element_get_property_uint(cfg_mux, "channels", &mux_ch) == ZST_OK);
+    assert(mux_ch == 2);
+    char mux_loc[256];
+    assert(zst_element_get_property_string(cfg_mux, "location", mux_loc, sizeof(mux_loc)) == ZST_OK);
+    assert(strcmp(mux_loc, "config_output.mp4") == 0);
+    zst_element_destroy(cfg_mux);
 
     zst_plugin_registry_deinit();
 

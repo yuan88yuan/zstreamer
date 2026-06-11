@@ -9,6 +9,8 @@
 #include <stdbool.h>
 
 #include "zst_element.h"
+#include "zst_element_factory.h"
+#include "zstreamer/elements/zst_video_test_src.h"
 #include "zst_log.h"
 #include "zst_buffer.h"
 #include "zst_buffer_pool.h"
@@ -337,6 +339,35 @@ zst_element_t* zst_video_test_src_create(void)
 
     src = zst_pad_create("src", ZST_PAD_SRC);
     zst_element_add_pad(el, src);
+
+    return el;
+}
+
+zst_element_t*
+zst_video_test_src_create_with_config(const zst_video_test_src_config_t* config)
+{
+    if (!config || config->struct_size < sizeof(zst_video_test_src_config_t)) return NULL;
+    zst_element_t* el = zst_element_factory_make("videotestsrc");
+    if (!el) return NULL;
+
+    if (config->width > 0) {
+        zst_element_set_property_uint(el, "width", config->width);
+    }
+    if (config->height > 0) {
+        zst_element_set_property_uint(el, "height", config->height);
+    }
+    if (config->fps > 0) {
+        zst_element_set_property_uint(el, "fps", config->fps);
+    }
+    if (config->pattern) {
+        zst_element_set_property_string(el, "pattern", config->pattern);
+    }
+    if (config->pixel_format) {
+        zst_element_set_property_string(el, "pixel-format", config->pixel_format);
+    }
+    zst_element_set_property_int(el, "num-buffers", config->num_buffers);
+    zst_element_set_property_bool(el, "loop", config->loop);
+    zst_element_set_property_bool(el, "use-clock", config->use_clock);
 
     return el;
 }

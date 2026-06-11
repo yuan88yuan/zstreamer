@@ -10,6 +10,8 @@
 #include <libavutil/mem.h>
 
 #include "zst_element.h"
+#include "zst_element_factory.h"
+#include "zstreamer/elements/zst_mp4_muxer.h"
 #include "zst_pad.h"
 #include "zst_buffer.h"
 #include "zst_bus.h"
@@ -595,6 +597,35 @@ zst_mp4_muxer_create(void)
     zst_element_add_pad(el, video);
     zst_element_add_pad(el, audio);
     zst_element_add_pad(el, src);
+
+    return el;
+}
+
+zst_element_t*
+zst_mp4_muxer_create_with_config(const zst_mp4_muxer_config_t* config)
+{
+    if (!config || config->struct_size < sizeof(zst_mp4_muxer_config_t)) return NULL;
+    zst_element_t* el = zst_element_factory_make("mp4mux");
+    if (!el) return NULL;
+
+    if (config->width > 0) {
+        zst_element_set_property_uint(el, "width", config->width);
+    }
+    if (config->height > 0) {
+        zst_element_set_property_uint(el, "height", config->height);
+    }
+    if (config->fps > 0) {
+        zst_element_set_property_uint(el, "fps", config->fps);
+    }
+    if (config->sample_rate > 0) {
+        zst_element_set_property_uint(el, "sample-rate", config->sample_rate);
+    }
+    if (config->channels > 0) {
+        zst_element_set_property_uint(el, "channels", config->channels);
+    }
+    if (config->location) {
+        zst_element_set_property_string(el, "location", config->location);
+    }
 
     return el;
 }

@@ -8,6 +8,8 @@
 #include <stdbool.h>
 
 #include "zst_element.h"
+#include "zstreamer/elements/zst_file_source.h"
+#include "zst_element_factory.h"
 #include "zst_buffer.h"
 #include "zst_buffer_pool.h"
 #include "zst_log.h"
@@ -342,6 +344,26 @@ zst_file_source_create(const char* path)
     }
 
     zst_element_add_pad(el, src);
+    return el;
+}
+
+zst_element_t*
+zst_file_source_create_with_config(const zst_file_source_config_t* config)
+{
+    if (!config || config->struct_size < sizeof(zst_file_source_config_t)) return NULL;
+    zst_element_t* el = zst_element_factory_make("filesrc");
+    if (!el) return NULL;
+
+    if (config->path) {
+        zst_element_set_property_string(el, "path", config->path);
+    }
+    if (config->chunk_size > 0) {
+        zst_element_set_property_uint(el, "chunk-size", config->chunk_size);
+    }
+    zst_element_set_property_bool(el, "loop", config->loop);
+    zst_element_set_property_int(el, "offset", config->offset);
+    zst_element_set_property_int(el, "length", config->length);
+
     return el;
 }
 

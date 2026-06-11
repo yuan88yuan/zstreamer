@@ -3,6 +3,8 @@
 #include <string.h>
 
 #include "zst_element.h"
+#include "zstreamer/elements/zst_fake_sink.h"
+#include "zst_element_factory.h"
 #include "zst_buffer.h"
 
 typedef struct {
@@ -112,6 +114,17 @@ zst_fake_sink_create(void)
     sink = zst_pad_create("sink", ZST_PAD_SINK);
     zst_element_add_pad(el, sink);
 
+    return el;
+}
+
+zst_element_t*
+zst_fake_sink_create_with_config(const zst_fake_sink_config_t* config)
+{
+    if (!config || config->struct_size < sizeof(zst_fake_sink_config_t)) return NULL;
+    zst_element_t* el = zst_element_factory_make("fakesink");
+    if (!el) return NULL;
+
+    zst_element_set_property_double(el, "drop-probability", config->drop_probability);
     return el;
 }
 

@@ -161,7 +161,7 @@ Expose the features of all official, dynamic, and future elements through a stab
 - [x] Make elements self-describing: factory name, category, description, properties, pads, caps, and creation function
 - [x] Keep element private structs private; users interact through `zst_element_t`, pads, caps, properties, and introspection
 - [x] Preserve the current string property API for compatibility while adding typed helpers
-- [ ] Provide optional official convenience headers for first-party elements only (started for `filesrc`, `filesink`, `fakesink`)
+- [x] Provide optional official convenience headers for first-party elements only
 
 ### Plugin / Element Metadata
 
@@ -329,8 +329,8 @@ Each descriptor should document:
 - [x] long name, category, and description
 - [x] source and sink pad templates
 - [ ] supported/static caps where known
-- [ ] readable/writable properties and defaults (started for `filesrc`, `filesink`, `fakesink`)
-- [ ] read-only statistics where applicable (started for `fakesink`)
+- [ ] readable/writable properties and defaults
+- [ ] read-only statistics where applicable
 
 ### Optional Official Convenience Headers
 
@@ -346,10 +346,10 @@ include/zstreamer/elements/zst_h264_encoder.h
 
 These headers may expose constructor convenience functions, property name macros, and optional config structs with `struct_size` for ABI extension.
 
-- [ ] Add convenience headers for official elements where useful (started for `filesrc`, `filesink`, `fakesink`)
-- [ ] Add property name macros to avoid string literals in user code (started for `filesrc`, `filesink`, `fakesink`)
-- [ ] Use `struct_size` in config structs for forward-compatible extension
-- [ ] Implement wrappers on top of the same element implementations; do not bypass the generic factory/property model
+- [x] Add convenience headers for official elements where useful
+- [x] Add property name macros to avoid string literals in user code
+- [x] Use `struct_size` in config structs for forward-compatible extension
+- [x] Implement wrappers on top of the same element implementations; do not bypass the generic factory/property model
 
 Example:
 

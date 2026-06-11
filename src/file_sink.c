@@ -3,6 +3,8 @@
 #include <string.h>
 
 #include "zst_element.h"
+#include "zstreamer/elements/zst_file_sink.h"
+#include "zst_element_factory.h"
 #include "zst_buffer.h"
 
 typedef struct {
@@ -126,6 +128,19 @@ zst_file_sink_create(
 
     zst_element_add_pad(el, sink);
 
+    return el;
+}
+
+zst_element_t*
+zst_file_sink_create_with_config(const zst_file_sink_config_t* config)
+{
+    if (!config || config->struct_size < sizeof(zst_file_sink_config_t)) return NULL;
+    zst_element_t* el = zst_element_factory_make("filesink");
+    if (!el) return NULL;
+
+    if (config->path) {
+        zst_element_set_property_string(el, "path", config->path);
+    }
     return el;
 }
 

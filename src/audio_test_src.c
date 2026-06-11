@@ -9,6 +9,8 @@
 #include <stdint.h>
 
 #include "zst_element.h"
+#include "zst_element_factory.h"
+#include "zstreamer/elements/zst_audio_test_src.h"
 #include "zst_buffer.h"
 #include "zst_buffer_pool.h"
 #include "zst_clock.h"
@@ -587,6 +589,42 @@ zst_audio_test_src_create(void)
         zst_element_destroy(el);
         return NULL;
     }
+
+    return el;
+}
+
+zst_element_t*
+zst_audio_test_src_create_with_config(const zst_audio_test_src_config_t* config)
+{
+    if (!config || config->struct_size < sizeof(zst_audio_test_src_config_t)) return NULL;
+    zst_element_t* el = zst_element_factory_make("audiotestsrc");
+    if (!el) return NULL;
+
+    if (config->sample_rate > 0) {
+        zst_element_set_property_uint(el, "sample-rate", config->sample_rate);
+    }
+    if (config->channels > 0) {
+        zst_element_set_property_uint(el, "channels", config->channels);
+    }
+    if (config->sample_format) {
+        zst_element_set_property_string(el, "sample-format", config->sample_format);
+    }
+    if (config->wave) {
+        zst_element_set_property_string(el, "wave", config->wave);
+    }
+    if (config->frequency >= 0.0) {
+        zst_element_set_property_double(el, "frequency", config->frequency);
+    }
+    if (config->volume >= 0.0) {
+        zst_element_set_property_double(el, "volume", config->volume);
+    }
+    if (config->samples_per_buffer > 0) {
+        zst_element_set_property_uint(el, "samples-per-buffer", config->samples_per_buffer);
+    }
+    zst_element_set_property_int(el, "num-samples", config->num_samples);
+    zst_element_set_property_int(el, "num-buffers", config->num_buffers);
+    zst_element_set_property_bool(el, "loop", config->loop);
+    zst_element_set_property_bool(el, "use-clock", config->use_clock);
 
     return el;
 }
