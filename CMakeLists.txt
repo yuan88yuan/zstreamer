@@ -306,12 +306,6 @@ if(BUILD_TESTS)
     # -- deterministic 10s colorbar/timecode H.264 + 1kHz AAC MP4 demo --
     add_executable(demo_colorbar_mp4
         tests/demo_colorbar_mp4.c
-        src/video_test_src.c
-        src/text_overlay.c
-        src/h264_encoder.c
-        src/audio_test_src.c
-        src/aac_encoder.c
-        src/mp4_muxer.c
     )
     target_include_directories(demo_colorbar_mp4
         PRIVATE ${ZSTREAMER_INCLUDE_DIR}
@@ -319,7 +313,14 @@ if(BUILD_TESTS)
     )
     target_link_libraries(demo_colorbar_mp4
         PRIVATE zstreamer
-        PRIVATE ${ELEMENT_LIBRARIES}
+    )
+    add_dependencies(demo_colorbar_mp4
+        zst_videotestsrc
+        zst_textoverlay
+        zst_h264encoder
+        zst_audiotestsrc
+        zst_aacencoder
+        zst_mp4muxer
     )
 
     # Register with CTest

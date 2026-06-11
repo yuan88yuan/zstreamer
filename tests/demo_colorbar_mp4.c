@@ -1,19 +1,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "zst_pipeline.h"
 #include "zst_scheduler.h"
 #include "zst_element.h"
 #include "zst_pad.h"
 #include "zst_bus.h"
-
-zst_element_t* zst_video_test_src_create(void);
-zst_element_t* zst_audio_test_src_create(void);
-zst_element_t* zst_text_overlay_create(const char* text);
-zst_element_t* zst_h264_encoder_create(void);
-zst_element_t* zst_aac_encoder_create(void);
-zst_element_t* zst_mp4_muxer_create(void);
+#include "zst_plugin.h"
 
 #define CHECK_OK(expr, label) \
     do { \
@@ -31,6 +26,29 @@ zst_element_t* zst_mp4_muxer_create(void);
             goto fail; \
         } \
     } while (0)
+
+static void scan_demo_plugins(const char* argv0)
+{
+    /* Prefer explicit user configuration, then common build-tree layouts. */
+    zst_plugin_registry_scan_env();
+
+    if (argv0) {
+        const char* slash = strrchr(argv0, '/');
+        if (slash) {
+            char path[1024];
+            size_t dir_len = (size_t)(slash - argv0);
+            if (dir_len >= sizeof(path)) dir_len = sizeof(path) - 1;
+            memcpy(path, argv0, dir_len);
+            path[dir_len] = '\0';
+            snprintf(path + dir_len, sizeof(path) - dir_len, "/plugins");
+            zst_plugin_registry_scan(path);
+        }
+    }
+
+    zst_plugin_registry_scan("./plugins");
+    zst_plugin_registry_scan("build/plugins");
+    zst_plugin_registry_scan("build-docker/plugins");
+}
 
 int main(int argc, char** argv)
 {
@@ -52,6 +70,9 @@ int main(int argc, char** argv)
     zst_element_t* mux = NULL;
     int rc = 1;
 
+    CHECK_OK(zst_plugin_registry_init(), "plugin registry init");
+    scan_demo_plugins(argv[0]);
+
     pipe = zst_pipeline_create();
     CHECK_PTR(pipe, "zst_pipeline_create");
 
@@ -62,19 +83,19 @@ int main(int argc, char** argv)
     sched = zst_scheduler_create(&cfg);
     CHECK_PTR(sched, "zst_scheduler_create");
 
-    video_src = zst_video_test_src_create();
-    overlay = zst_text_overlay_create(NULL);
-    h264 = zst_h264_encoder_create();
-    audio_src = zst_audio_test_src_create();
-    aac = zst_aac_encoder_create();
-    mux = zst_mp4_muxer_create();
+    video_src = zst_element_factory_make("videotestsrc");
+    overlay = zst_element_factory_make("textoverlay");
+    h264 = zst_element_factory_make("h264enc");
+    audio_src = zst_element_factory_make("audiotestsrc");
+    aac = zst_element_factory_make("aacenc");
+    mux = zst_element_factory_make("mp4mux");
 
-    CHECK_PTR(video_src, "zst_video_test_src_create");
-    CHECK_PTR(overlay, "zst_text_overlay_create");
-    CHECK_PTR(h264, "zst_h264_encoder_create");
-    CHECK_PTR(audio_src, "zst_audio_test_src_create");
-    CHECK_PTR(aac, "zst_aac_encoder_create");
-    CHECK_PTR(mux, "zst_mp4_muxer_create");
+    CHECK_PTR(video_src, "factory make videotestsrc");
+    CHECK_PTR(overlay, "factory make textoverlay");
+    CHECK_PTR(h264, "factory make h264enc");
+    CHECK_PTR(audio_src, "factory make audiotestsrc");
+    CHECK_PTR(aac, "factory make aacenc");
+    CHECK_PTR(mux, "factory make mp4mux");
 
     CHECK_OK(zst_element_set_property(video_src, "width", "320"), "video width");
     CHECK_OK(zst_element_set_property(video_src, "height", "240"), "video height");
@@ -155,6 +176,7 @@ fail:
     if (pipe) zst_pipeline_set_state(pipe, ZST_STATE_NULL);
     if (sched) zst_scheduler_destroy(sched);
     if (pipe) zst_pipeline_destroy(pipe);
+    zst_plugin_registry_deinit();
 
     if (rc == 0) {
         printf("Done: %s\n", output);
