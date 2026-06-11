@@ -1,29 +1,68 @@
 # zstreamer
 
-`zstreamer` is a lightweight, modular multimedia streaming and pipeline framework written in C11. It implements a GStreamer-like architecture with elements connected by pads, data carried in reference-counted buffers, and a scheduler that drives pipeline execution.
+A lightweight, modular multimedia streaming and pipeline framework written in **C11**.
+`zstreamer` implements a **GStreamer-inspired** architecture: elements connected via pads,
+data flowing as reference-counted buffers through thread-safe queues, driven by a
+configurable scheduler.
 
-## Features
+---
 
-- Core pipeline framework with elements, pads, buffers, queueing, caps negotiation, and async event bus
-- Thread-safe bounded queue and first-class queue element
-- Video/audio conversion and streaming building blocks
-- Dynamic plugin loading via `dlopen` plugins
-- Built-in support for real multimedia components: V4L2, ALSA, x264, FFmpeg, libswscale, libswresample, FreeType
-- RTSP source/sink and multi-session RTSP server support
-- Unit tests and example apps included
+## ✨ Highlights
 
-## Repository Layout
+- **GStreamer-like pipeline model** — elements, pads, buffers, queues, caps negotiation
+- **24 built-in elements** — capture, encode/decode, mux, network I/O, RTSP, text overlay
+- **Thread-safe design** — bounded queues, atomic ref-counting, multi-threaded scheduler
+- **Real codec support** — x264, FFmpeg (H.264/H.265/AAC encode & decode), libswscale, libswresample
+- **RTSP server & client** — multi-session server (TCP interleaved + UDP), RTSP source/sink
+- **Dynamic plugins** — `dlopen`-based element loading at runtime
+- **Async event bus** — error, EOS, state-change, and warning notifications
+- **Clock & A/V sync** — system clock, QoS dropping, clock slaving
+- **Buffer pools** — pre-allocated buffer recycling with custom allocator interface
+- **Lightweight logging** — compile-time level filtering with custom handler support
+- **54 unit tests** — core framework, scheduler, caps, bus, plugins, conversion, clock, elements
 
-- `include/` — Public API headers
-- `src/` — Core framework and element implementations
-- `tests/` — Unit tests and examples
-- `wiki/` — Architecture docs and implementation plan
-- `CMakeLists.txt` — Build configuration
-- `Dockerfile` — Ubuntu 24.04 dev/test container
+---
 
-## Build
+## 📂 Repository Layout
 
-### Native
+```
+.
+├── include/              Public API headers (17 headers)
+│   └── zstreamer/
+│       └── elements/     Per-element convenience headers (24 headers)
+├── src/                  Core framework + 24 element implementations
+├── tests/                Unit tests, examples, demos
+│   ├── test_core.c       54 unit tests covering all core modules
+│   ├── test_net_source.c Network source smoke test
+│   ├── test_net_sink.c   Network sink smoke test
+│   ├── example_record.c  V4L2 + ALSA → H.264/AAC → MP4 pipeline
+│   ├── demo_colorbar_mp4.c  Colorbar + timecode + tone → MP4 demo
+│   └── example_text_overlay.c  Text overlay example
+├── wiki/                 Architecture docs & implementation plan
+├── cmake/                pkg-config & CMake export templates
+├── CMakeLists.txt        Build configuration
+├── Dockerfile            Ubuntu 24.04 dev/CI container
+└── AGENTS.md             Project context for AI coding agents
+```
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+| Library | Package (Ubuntu 24.04) |
+|---------|------------------------|
+| FFmpeg (libavformat, libavcodec, libavutil) | `libavformat-dev libavcodec-dev libavutil-dev` |
+| x264 | `libx264-dev` |
+| libswscale | `libswscale-dev` |
+| libswresample | `libswresample-dev` |
+| ALSA | `libasound2-dev` |
+| V4L2 | `libv4l-dev` |
+| FreeType | `libfreetype-dev` |
+| pthreads | (system) |
+
+### Build (Native)
 
 ```bash
 mkdir -p build && cd build
@@ -32,102 +71,292 @@ make -j$(nproc)
 ctest --output-on-failure
 ```
 
-### Docker
+### Build (Docker) — Fastest
 
 ```bash
+# One-shot: build + test
 docker build -t zstreamer .
 docker run --rm zstreamer
-```
 
-Verbose test output:
-
-```bash
-docker run --rm --entrypoint bash zstreamer \
-    -c "/workspace/build/ctest -V"
-```
-
-Interactive container shell:
-
-```bash
+# Interactive shell
 docker run --rm -it zstreamer bash
-# then inside container:
-cd /workspace/build && ctest -V
+
+# Live code mount (edit on host, rebuild in container)
+docker run --rm -it -v $(pwd):/workspace zstreamer bash
+# inside: cd /workspace/build && cmake .. && make -j && ctest -V
 ```
 
-Live code mount (edit on host, rebuild in container):
+### CMake Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `BUILD_TESTS` | `ON` | Build test programs and examples |
+| `BUILD_SHARED` | `OFF` | Build core as `.so` instead of `.a` |
+| `ENABLE_PLUGINS` | `ON` | Enable `dlopen`-based plugin loading |
+
+---
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        zst_pipeline                         │
+│  (container — owns elements, propagates state, holds clock) │
+│                                                             │
+│   ┌──────────┐    ┌──────────┐    ┌──────────┐             │
+│   │ element  │    │  queue   │    │ element  │             │
+│   │ [src]────┼───►│ [sink]   │───►│ [sink]   │             │
+│   │          │pad │ [src]────┼pad │          │             │
+│   └──────────┘    └──────────┘    └──────────┘             │
+│                                                             │
+│   zst_buffer (ref-counted) flows through pads & queues      │
+│   zst_scheduler drives push/pull across the graph           │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Core Components
+
+| Component | Role |
+|-----------|------|
+| **zst_pipeline** | Element container; state propagation; holds pipeline clock |
+| **zst_element** | Processing node with src/sink pads + ops vtable |
+| **zst_pad** | Peer-to-peer connection point between elements |
+| **zst_buffer** | Ref-counted data carrier with typed memory + timestamps |
+| **zst_queue** | Thread-safe bounded queue (mutex + condvar) |
+| **zst_queue_element** | Queue as a first-class pipeline element with worker thread |
+| **zst_scheduler** | Pipeline driver — single-thread inline or multi-thread pool |
+| **zst_caps** | Media type negotiation (format, resolution, sample rate) |
+| **zst_bus** | Async event bus for error/EOS/state/warning notifications |
+| **zst_plugin** | `dlopen()`-based dynamic element loading |
+| **zst_clock** | System clock + pipeline-level A/V sync with QoS |
+| **zst_allocator** | Memory allocator interface |
+| **zst_buffer_pool** | Pre-allocated buffer recycling |
+| **zst_log** | Lightweight logging with compile-time level filtering |
+
+### State Machine
+
+```
+ZST_STATE_NULL  ──open──►  ZST_STATE_READY  ──start──►  ZST_STATE_PLAYING
+     ▲                          │                              │
+     └────────close─────────────┘               stop───────────┘
+```
+
+---
+
+## 🔌 Supported Elements (24)
+
+### Sources
+
+| Element | Description |
+|---------|-------------|
+| `v4l2_source` | V4L2 camera capture (real V4L2 + mock fallback) |
+| `alsa_source` | ALSA audio capture (real ALSA + mock fallback) |
+| `file_source` | FILE* reader |
+| `video_test_src` | Synthetic video test pattern (colour bars) |
+| `audio_test_src` | Synthetic audio tone generator |
+| `text_source` | Timed text / subtitle source |
+| `net_source` | TCP/UDP network source (raw bytes) |
+| `rtsp_source` | RTSP client source (TCP interleaved + UDP) |
+
+### Encoders / Decoders
+
+| Element | Description |
+|---------|-------------|
+| `h264_encoder` | H.264 encoder via x264 |
+| `h264_decoder` | H.264 decoder via FFmpeg libavcodec |
+| `h265_encoder` | H.265/HEVC encoder via FFmpeg libavcodec |
+| `h265_decoder` | H.265/HEVC decoder via FFmpeg libavcodec |
+| `aac_encoder` | AAC audio encoder via FFmpeg libavcodec |
+| `aac_decoder` | AAC audio decoder via FFmpeg libavcodec |
+
+### Filters / Converters
+
+| Element | Description |
+|---------|-------------|
+| `video_scaler` | Pixel format + resolution conversion via libswscale |
+| `audio_resampler` | Sample rate + format conversion via libswresample |
+| `text_overlay` | Burn text / timecode onto video frames (FreeType) |
+| `srt_parser` | SRT subtitle file parser |
+
+### Muxers / Sinks / Servers
+
+| Element | Description |
+|---------|-------------|
+| `mp4_muxer` | MP4 container muxer via libavformat |
+| `file_sink` | FILE* writer |
+| `fake_sink` | Null sink (for testing / benchmarks) |
+| `net_sink` | TCP/UDP network sink (raw bytes) |
+| `rtsp_sink` | RTSP client sink |
+| `rtsp_server` | Multi-session RTSP server (TCP interleaved + UDP unicast) |
+
+---
+
+## 💡 Usage Example
+
+A minimal pipeline that captures video and audio, encodes, muxes to MP4 and writes to disk:
+
+```c
+#include "zst_pipeline.h"
+#include "zst_scheduler.h"
+#include "zst_element.h"
+#include "zst_element_factory.h"
+#include "zst_pad.h"
+
+int main(void) {
+    zst_register_builtin_elements();
+
+    zst_pipeline_t* pipe = zst_pipeline_create();
+
+    /* Create elements via factory */
+    zst_element_t* vsrc  = zst_element_factory_make("videotestsrc",  "vsrc");
+    zst_element_t* h264  = zst_element_factory_make("h264enc",       "enc");
+    zst_element_t* asrc  = zst_element_factory_make("audiotestsrc",  "asrc");
+    zst_element_t* aac   = zst_element_factory_make("aacenc",        "aac");
+    zst_element_t* mux   = zst_element_factory_make("mp4mux",        "mux");
+    zst_element_t* sink  = zst_element_factory_make("filesink",      "out");
+
+    zst_element_set_property_string(sink, "location", "output.mp4");
+
+    /* Add to pipeline */
+    zst_pipeline_add(pipe, vsrc);
+    zst_pipeline_add(pipe, h264);
+    zst_pipeline_add(pipe, asrc);
+    zst_pipeline_add(pipe, aac);
+    zst_pipeline_add(pipe, mux);
+    zst_pipeline_add(pipe, sink);
+
+    /* Link: vsrc→h264→mux, asrc→aac→mux, mux→sink */
+    zst_pad_link(vsrc->src_pad, h264->sink_pad);
+    zst_pad_link(h264->src_pad, zst_element_get_pad(mux, "video"));
+    zst_pad_link(asrc->src_pad, aac->sink_pad);
+    zst_pad_link(aac->src_pad,  zst_element_get_pad(mux, "audio"));
+    zst_pad_link(mux->src_pad,  sink->sink_pad);
+
+    /* Run */
+    zst_scheduler_config_t cfg = {
+        .mode = ZST_SCHEDULER_MULTI_THREAD,
+        .worker_threads = 4
+    };
+    zst_scheduler_t* sched = zst_scheduler_create(&cfg);
+    zst_scheduler_set_pipeline(sched, pipe);
+    zst_pipeline_set_state(pipe, ZST_STATE_PLAYING);
+    zst_scheduler_run(sched);
+
+    /* Cleanup */
+    zst_scheduler_destroy(sched);
+    zst_pipeline_destroy(pipe);
+    return 0;
+}
+```
+
+See [`tests/demo_colorbar_mp4.c`](tests/demo_colorbar_mp4.c) for a complete working demo with typed properties.
+
+---
+
+## 🧪 Testing
 
 ```bash
-docker run --rm -it \
-    -v $(pwd):/workspace \
-    zstreamer bash
+# Run all CTest tests (from build directory)
+ctest --output-on-failure
+
+# Verbose output
+ctest -V
 ```
 
-## CMake Options
+**Test suites registered with CTest:**
 
-- `BUILD_TESTS` (default `ON`) — Build test programs
-- `BUILD_SHARED` (default `OFF`) — Build core library as shared instead of static
-- `ENABLE_PLUGINS` (default `ON`) — Enable dlopen-based plugin loading
+| Test | Description |
+|------|-------------|
+| `test_core` | 54 unit tests: buffer, pad, element, pipeline, queue, scheduler, caps, bus, plugins, logging, scaler, resampler, decoders, allocator, clock, text overlay, elements |
+| `test_net_source` | Network source smoke test |
+| `test_net_sink` | Network sink smoke test |
+| `test_install` | Verifies `cmake --install` layout (headers, libs, pkg-config, plugins) |
 
-## Supported Elements
+---
 
-Built-in elements include:
+## 📦 Installation
 
-- `v4l2_source`
-- `alsa_source`
-- `h264_encoder`
-- `h265_encoder`
-- `aac_encoder`
-- `h264_decoder`
-- `h265_decoder`
-- `aac_decoder`
-- `mp4_muxer`
-- `file_sink`
-- `file_source`
-- `fake_sink`
-- `video_scaler`
-- `audio_resampler`
-- `video_test_src`
-- `audio_test_src`
-- `text_overlay`
-- `text_source`
-- `srt_parser`
-- `net_source`
-- `net_sink`
-- `rtsp_source`
-- `rtsp_sink`
-- `rtsp_server`
+```bash
+cd build
+cmake --install . --prefix /usr/local
+```
 
-## Architecture Overview
+**Installed layout:**
 
-The framework is organized around:
+```
+/usr/local/
+├── include/zstreamer/          # Public API headers
+│   └── elements/               # Per-element convenience headers
+├── lib/
+│   ├── libzstreamer.a          # Core framework
+│   ├── libzstreamer-elements.a # All built-in elements
+│   ├── zstreamer/plugins/      # Dynamic plugin .so files
+│   ├── pkgconfig/
+│   │   ├── zstreamer.pc
+│   │   └── zstreamer-elements.pc
+│   └── cmake/zstreamer/        # CMake export files
+│       ├── zstreamerConfig.cmake
+│       ├── zstreamerConfigVersion.cmake
+│       └── zstreamerTargets.cmake
+```
 
-- `zst_pipeline` — pipeline container and state propagation
-- `zst_element` — processing node with source/sink pads
-- `zst_pad` — peer-to-peer connections between elements
-- `zst_buffer` — reference-counted data carrier with typed memory
-- `zst_queue` — thread-safe bounded queue
-- `zst_scheduler` — pipeline driver (single-thread or multi-thread)
-- `zst_caps` — media caps negotiation
-- `zst_bus` — async event notifications
-- `zst_plugin` — dynamic plugin loading support
+**Using from another CMake project:**
 
-## Docs
+```cmake
+find_package(zstreamer REQUIRED)
+target_link_libraries(my_app PRIVATE zstreamer::zstreamer zstreamer::zstreamer-elements)
+```
 
-See `wiki/` for design documentation and implementation plans:
+**Using with pkg-config:**
 
-- `wiki/architecture.md`
-- `wiki/implementation-plan.md`
-- `wiki/pipeline-flow.md`
-- `wiki/future.md`
-- `wiki/rtsp-server-example.md`
+```bash
+gcc my_app.c $(pkg-config --cflags --libs zstreamer-elements) -o my_app
+```
 
-## Development Notes
+---
 
-- Language standard: C11
-- Public API prefix: `zst_`
-- Error handling: `zst_result_t` with `ZST_OK` (0) on success
-- Core modules are not thread-safe; thread safety is provided through queue primitives and scheduler design
+## 📖 Documentation
+
+| Document | Description |
+|----------|-------------|
+| [`wiki/architecture.md`](wiki/architecture.md) | Detailed design — buffers, pads, elements, scheduler |
+| [`wiki/implementation-plan.md`](wiki/implementation-plan.md) | Top-level roadmap index |
+| [`wiki/pipeline-flow.md`](wiki/pipeline-flow.md) | Scheduler push/pull flow diagram |
+| [`wiki/clock-slaving.md`](wiki/clock-slaving.md) | A/V sync and clock slaving details |
+| [`wiki/rtsp-server-example.md`](wiki/rtsp-server-example.md) | Multi-session RTSP server usage |
+| [`wiki/future.md`](wiki/future.md) | Planned features |
+
+---
+
+## 🔧 Development Conventions
+
+| Convention | Detail |
+|------------|--------|
+| Language | C11 (`-std=c11`) |
+| Naming | `zst_` prefix, `snake_case` |
+| Error handling | `zst_result_t` — `ZST_OK` (0) on success, negative on error |
+| Ownership | Buffers are ref-counted; elements own pads; pipeline owns elements |
+| Thread safety | Queue is MT-safe; buffer refcount is atomic; element/pipeline ops serialised by scheduler |
+
+---
+
+## 📋 Project Status
+
+| Area | Status |
+|------|--------|
+| Core framework (buffer, pad, element, pipeline, queue, scheduler) | ✅ Complete |
+| Caps negotiation, event bus, dynamic plugins, logging | ✅ Complete |
+| 24 element implementations | ✅ Complete |
+| Clock, A/V sync, QoS | ✅ Complete |
+| Allocator & buffer pool | ✅ Complete |
+| Element public API (factory, descriptors, typed properties) | ✅ Complete |
+| Installation (pkg-config, CMake export) | ✅ Complete |
+| RTMP source / sink | 📝 Planned |
+| Element bins | 📝 Planned |
+| CI pipeline | 📝 Planned |
+
+---
 
 ## License
 
-License information is not included in the repository. Add a LICENSE file if needed.
+License information is not included in the repository. Add a `LICENSE` file if needed.
