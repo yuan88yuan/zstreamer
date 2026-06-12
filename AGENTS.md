@@ -217,6 +217,8 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 
 ## Coding Conventions
 
+- The project provides a DMABUF allocator fallback using `memfd_create`. Use `zst_allocator_dmabuf_create()` to create it, `zst_allocator_dmabuf_get_fd()` to export the file descriptor, and `zst_allocator_dmabuf_import()` to map an existing fd into the allocator.
+
 - **Language:** C11 (`-std=c11`)
 - **Naming:** `zst_` prefix for all public symbols, `snake_case`
 - **Error handling:** Return `zst_result_t` — `ZST_OK` (0) on success, negative on error
