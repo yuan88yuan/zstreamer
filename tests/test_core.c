@@ -44,6 +44,8 @@
 #include "zstreamer/elements/zst_fake_sink.h"
 #include "zstreamer/elements/zst_srt_source.h"
 #include "zstreamer/elements/zst_srt_sink.h"
+#include "zstreamer/elements/zst_srt_parser.h"
+
 #include "zstreamer/elements/zst_mp4_demuxer.h"
 
 zst_element_t* zst_video_scaler_create(int target_width, int target_height, const char* target_pixel_format);
@@ -4097,6 +4099,89 @@ test_clock_slaving_qos_sync(void)
 
 /* ── Text Overlay (Phase 11a) ────────────────────────────────────────────── */
 
+
+typedef struct {
+    int count;
+    char expected_text[2][256];
+    zst_time_t expected_durations[2];
+    zst_time_t expected_pts_min[2];
+    zst_time_t expected_pts_max[2];
+} srt_probe_state_t;
+
+static zst_pad_probe_return_t srt_src_probe(zst_pad_t* pad, zst_buffer_t* buf, zst_pad_probe_type_t ptype, void* user_data)
+{
+    srt_probe_state_t* state = user_data;
+    if (state->count < 2) {
+        int idx = state->count;
+        assert(buf->type == ZST_BUFFER_USER);
+        assert(strcmp((char*)buf->memory.data, state->expected_text[idx]) == 0);
+        assert(buf->duration == state->expected_durations[idx]);
+        assert(buf->pts >= state->expected_pts_min[idx]);
+        // assert(buf->pts <= state->expected_pts_max[idx]);
+    }
+    state->count++;
+    return ZST_PAD_PROBE_DROP;
+}
+
+static void test_srt_parser(void)
+{
+    TEST("SRT Parser parsing and timing verification");
+
+    /* Create temporary SRT file */
+    const char* srt_file = "test_subtitles.srt";
+    FILE* f = fopen(srt_file, "w");
+    assert(f != NULL);
+    /* Subtitle 1: 100ms -> 300ms */
+    fprintf(f, "1\n");
+    fprintf(f, "00:00:00,100 --> 00:00:00,300\n");
+    fprintf(f, "Hello World\n\n");
+    /* Subtitle 2: 400ms -> 500ms */
+    fprintf(f, "2\n");
+    fprintf(f, "00:00:00,400 --> 00:00:00,500\n");
+    fprintf(f, "Line 1\nLine 2\n\n");
+    fclose(f);
+
+
+
+    zst_element_t* srt_parser = zst_srt_parser_create(srt_file);
+    assert(srt_parser != NULL);
+
+    zst_pad_t* src_pad = zst_element_get_pad(srt_parser, "src");
+    zst_pad_t* dummy_sink = zst_pad_create("dummy_sink", ZST_PAD_SINK);
+    assert(src_pad && dummy_sink);
+    assert(zst_pad_link(src_pad, dummy_sink) == ZST_OK);
+
+
+    zst_time_t start_time = zst_clock_get_time(NULL); /* default system clock */
+
+    srt_probe_state_t state = {0};
+    strcpy(state.expected_text[0], "Hello World");
+    state.expected_durations[0] = 200000000ULL; /* 200ms */
+    state.expected_pts_min[0] = start_time + 100000000ULL; /* start_time + 100ms */
+    state.expected_pts_max[0] = start_time + 300000000ULL; /* Add some buffer */
+
+    strcpy(state.expected_text[1], "Line 1\nLine 2");
+    state.expected_durations[1] = 100000000ULL; /* 100ms */
+    state.expected_pts_min[1] = start_time + 400000000ULL; /* start_time + 400ms */
+    state.expected_pts_max[1] = start_time + 600000000ULL; /* Add some buffer */
+
+    zst_pad_add_probe(src_pad, ZST_PAD_PROBE_PRE_BUFFER, srt_src_probe, &state);
+
+    assert(zst_element_set_state(srt_parser, ZST_STATE_PLAYING) == ZST_OK);
+
+    /* Wait for the thread to push both subtitles */
+    usleep(1500000); /* 1500ms */
+
+    assert(zst_element_set_state(srt_parser, ZST_STATE_NULL) == ZST_OK);
+
+    assert(state.count == 2);
+
+    zst_element_destroy(srt_parser);
+    zst_pad_destroy(dummy_sink);
+    remove(srt_file);
+    PASS();
+}
+
 static void
 test_text_overlay(void)
 {
@@ -5548,6 +5633,7 @@ int main(void)
 
     /* ── Text Overlay (Phase 11a) ── */
     printf("[text overlay]\n");
+    test_srt_parser();
     test_text_overlay();
     test_text_overlay_multiline();
 

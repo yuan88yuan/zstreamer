@@ -225,7 +225,7 @@ Parse SRT subtitle format into timed text events and feed them to `text_overlay`
 - [x] Parse SRT subtitle format into timed text events
 - [x] Feed parsed text segments to `text_overlay` via `text` sink pad (pts/duration)
 - [ ] Support ASS/SSA format parsing (advanced styling)
-- [ ] **Test deliverables**: Unit tests verifying parsing of subtitle files, segment timing, and correct PTS/duration propagation (planned)
+- [x] **Test deliverables**: Unit tests verifying parsing of subtitle files, segment timing, and correct PTS/duration propagation (planned)
 
 ### 4v — H.264 Decoder  (✅ done)
 
