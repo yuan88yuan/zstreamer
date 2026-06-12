@@ -106,7 +106,7 @@
   - [ ] Unit test: pool-backed buffer unref returns buffer to pool
   - [ ] Unit test: pool flush frees all cached buffers
   - [x] Unit test: topology-aware pool sizing with downstream queues
-  - [ ] Integration test: `v4l2src → queue → filesink` with pool, verify zero
+  - [ ] Integration test: `videotestsrc → queue → filesink` with pool, verify zero
         calls to `malloc` after warm-up phase
     - [x] Unit test: basic allocator create/alloc/free/destroy
     - [x] Unit test: nonblock acquire with `ZST_POOL_ACQUIRE_NONBLOCK` flag
@@ -130,7 +130,7 @@ A container element that groups multiple elements into a single logical element 
 - [x] State propagation: `NULL→READY→PAUSED→PLAYING` cascade to all children
 - [x] Error aggregation: child errors bubble up through the bin's bus
 - [x] EOS passthrough: bin converges EOS from all sink-pad branches before signalling src
-- [ ] Use case: package `v4l2src → queue → h264enc` as a reusable "capture" bin
+- [ ] Use case: package `videotestsrc → queue → h264enc` as a reusable "capture" bin
 - [ ] Use case: create custom muxer bins with internal format conversion
 - [ ] Use case: isolate a sub-pipeline for separate threading / scheduling
 
