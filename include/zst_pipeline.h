@@ -81,6 +81,9 @@ void zst_pipeline_foreach_element(
     void (*func)(zst_element_t*, void*),
     void* user_data);
 
+void zst_pipeline_update_buffer_pool_sizing(
+    zst_pipeline_t* pipe);
+
 #ifdef __cplusplus
 }
 #endif

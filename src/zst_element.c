@@ -31,6 +31,7 @@ zst_element_create(const zst_element_ops_t* ops, void* priv)
     el->plugin       = NULL;
     el->desc         = NULL;
     el->clock        = NULL;
+    el->pipeline     = NULL;
 
     return el;
 }

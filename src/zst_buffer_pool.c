@@ -257,18 +257,69 @@ zst_buffer_pool_destroy(zst_buffer_pool_t* pool)
 }
 
 zst_buffer_pool_config_t zst_buffer_pool_get_config(zst_buffer_pool_t* pool) {
-    if (!pool) {
-        zst_buffer_pool_config_t empty = {0};
-        return empty;
-    }
-    return pool->config;
+    zst_buffer_pool_config_t config = {0};
+    if (!pool) return config;
+
+    pthread_mutex_lock(&pool->lock);
+    config = pool->config;
+    pthread_mutex_unlock(&pool->lock);
+    return config;
 }
 
 zst_result_t zst_buffer_pool_set_config(zst_buffer_pool_t* pool, const zst_buffer_pool_config_t* config) {
     if (!pool || !config) return ZST_ERROR;
 
+    zst_buffer_pool_config_t new_config = *config;
+    if (new_config.max_buffers == 0) {
+        new_config.max_buffers = 32;
+    }
+    if (new_config.min_buffers > new_config.max_buffers) {
+        new_config.min_buffers = new_config.max_buffers;
+    }
+
     pthread_mutex_lock(&pool->lock);
-    pool->config = *config;
+
+    /* Free idle buffers first if the new cap is smaller than the current idle
+     * count. Checked-out buffers may still make total_allocated temporarily
+     * exceed max_buffers; excess returned buffers will be destroyed in
+     * zst_buffer_pool_release() instead of being stored. */
+    while (pool->count > new_config.max_buffers) {
+        zst_buffer_t* buf = pool->buffers[--pool->count];
+        buf->pool = NULL;
+        if (buf->memory.release && buf->memory.priv)
+            buf->memory.release(buf->memory.priv);
+        if (buf->destroy)
+            buf->destroy(buf);
+        free(buf);
+        pool->total_allocated--;
+    }
+
+    if (new_config.max_buffers != pool->config.max_buffers) {
+        zst_buffer_t** buffers = realloc(pool->buffers,
+                                         new_config.max_buffers * sizeof(zst_buffer_t*));
+        if (!buffers) {
+            pthread_mutex_unlock(&pool->lock);
+            return ZST_ERROR;
+        }
+        pool->buffers = buffers;
+    }
+
+    pool->config = new_config;
+
+    /* Honor a raised min_buffers immediately for idle/open pools. */
+    while (pool->active && pool->total_allocated < pool->config.min_buffers) {
+        zst_buffer_t* buf = zst_buffer_create_with_allocator(
+            pool->config.buffer_type, pool->allocator, pool->config.buffer_size);
+        if (!buf) {
+            pthread_mutex_unlock(&pool->lock);
+            return ZST_ERROR;
+        }
+        buf->pool = pool;
+        pool->buffers[pool->count++] = buf;
+        pool->total_allocated++;
+    }
+
+    pthread_cond_broadcast(&pool->cond);
     pthread_mutex_unlock(&pool->lock);
 
     return ZST_OK;

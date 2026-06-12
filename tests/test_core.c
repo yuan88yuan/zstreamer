@@ -329,6 +329,115 @@ test_pipeline_state_propagation(void)
     PASS();
 }
 
+typedef struct {
+    zst_buffer_pool_t* pool;
+} test_pool_priv_t;
+
+static zst_result_t
+test_pool_open(zst_element_t* el)
+{
+    test_pool_priv_t* priv = el->priv;
+    zst_buffer_pool_config_t cfg = {
+        .min_buffers = 1,
+        .max_buffers = 1,
+        .buffer_size = 64,
+        .buffer_type = ZST_BUFFER_USER
+    };
+    priv->pool = zst_buffer_pool_create(NULL, &cfg);
+    return priv->pool ? ZST_OK : ZST_ERROR;
+}
+
+static zst_result_t
+test_pool_close(zst_element_t* el)
+{
+    test_pool_priv_t* priv = el->priv;
+    if (priv->pool) {
+        zst_buffer_pool_destroy(priv->pool);
+        priv->pool = NULL;
+    }
+    return ZST_OK;
+}
+
+static zst_buffer_pool_t*
+test_pool_get_pool(zst_element_t* el)
+{
+    test_pool_priv_t* priv = el->priv;
+    return priv->pool;
+}
+
+static zst_element_ops_t g_test_pool_ops = {
+    .name = "test_pool",
+    .open = test_pool_open,
+    .close = test_pool_close,
+    .get_pool = test_pool_get_pool,
+};
+
+static void
+test_pipeline_foreach_count_cb(zst_element_t* el, void* user_data)
+{
+    (void)el;
+    int* count = user_data;
+    (*count)++;
+}
+
+static void
+test_pipeline_topology_pool_sizing(void)
+{
+    TEST("pipeline topology buffer pool sizing");
+
+    zst_pipeline_t* pipe = zst_pipeline_create();
+    assert(pipe != NULL);
+
+    test_pool_priv_t* priv = calloc(1, sizeof(*priv));
+    assert(priv != NULL);
+    zst_element_t* pool_el = zst_element_create(&g_test_pool_ops, priv);
+    zst_element_t* q1 = zst_queue_element_create(NULL);
+    zst_element_t* q2 = zst_queue_element_create(NULL);
+    assert(pool_el != NULL && q1 != NULL && q2 != NULL);
+
+    zst_pad_t* pool_src = zst_pad_create("src", ZST_PAD_SRC);
+    assert(pool_src != NULL);
+    assert(zst_element_add_pad(pool_el, pool_src) == ZST_OK);
+
+    assert(zst_pipeline_add(pipe, pool_el) == ZST_OK);
+    assert(zst_pipeline_add(pipe, q1) == ZST_OK);
+    assert(zst_pipeline_add(pipe, q2) == ZST_OK);
+
+    assert(zst_pad_link(pool_src, zst_element_get_pad(q1, "sink")) == ZST_OK);
+    assert(zst_pad_link(zst_element_get_pad(q1, "src"), zst_element_get_pad(q2, "sink")) == ZST_OK);
+
+    assert(zst_pipeline_count_elements_of_type(pipe, "queue") == 2);
+    int foreach_count = 0;
+    zst_pipeline_foreach_element(pipe, test_pipeline_foreach_count_cb, &foreach_count);
+    assert(foreach_count == 3);
+
+    /* Direct NULL -> PLAYING must open elements first, then size pools before
+     * start. This pool began as min=max=1 and should become queue_count + 2. */
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_PLAYING) == ZST_OK);
+    zst_buffer_pool_t* pool = zst_element_get_pool(pool_el);
+    assert(pool != NULL);
+    zst_buffer_pool_config_t cfg = zst_buffer_pool_get_config(pool);
+    assert(cfg.min_buffers == 4);
+    assert(cfg.max_buffers >= cfg.min_buffers);
+
+    /* Verify zst_buffer_pool_set_config resized the internal pointer storage,
+     * not just the public max_buffers value. */
+    zst_buffer_pool_prefill(pool);
+    zst_buffer_t* bufs[16] = {0};
+    assert(cfg.max_buffers <= 16);
+    for (uint32_t i = 0; i < cfg.max_buffers; i++) {
+        assert(zst_buffer_pool_acquire(pool, &bufs[i], 0, ZST_POOL_ACQUIRE_NONBLOCK) == ZST_OK);
+        assert(bufs[i] != NULL);
+    }
+    for (uint32_t i = 0; i < cfg.max_buffers; i++) {
+        zst_buffer_unref(bufs[i]);
+    }
+
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_NULL) == ZST_OK);
+    zst_pipeline_destroy(pipe);
+    PASS();
+}
+
 /* ═══════════════════════════════════════════════════════════════
    Queue tests
    ═══════════════════════════════════════════════════════════════ */
@@ -3061,6 +3170,7 @@ int main(void)
     test_pipeline_create_destroy();
     test_pipeline_add_remove();
     test_pipeline_state_propagation();
+    test_pipeline_topology_pool_sizing();
     test_pipeline_topological_sort_check();
 
     /* ── Queue ── */

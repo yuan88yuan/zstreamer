@@ -77,39 +77,27 @@
   - [x] **Default pool sizing** — topology-aware `min_buffers` adjustment
 
     **Problem:** `zst_buffer_pool_config_from_caps()` only receives caps and has no
-    access to the pipeline topology. Elements themselves don't (and shouldn't) hold a
-    `zst_pipeline_t*` reference, making it impossible to count queue elements from
-    inside an element's `open()` callback.
+    access to the pipeline topology, and many pools are created during `open()` or
+    lazily during first processing rather than when the graph is assembled.
 
     **Design decision — two-step configuration:**
 
     1. **Format sizing** (existing, unchanged): `config_from_caps(caps)` sets
        `buffer_size` from resolution/sample rate, with `min_buffers=2, max_buffers=8`.
 
-    2. **Topology sizing** (new, at pipeline-build time): a pipeline-level helper
-       queries the element graph and adjusts pool configs before `start()`:
+    2. **Topology sizing** (new, at pipeline-build/run time): pipeline helpers
+       query the linked downstream graph and adjust exposed pool configs before
+       `start()`. A lightweight element back-reference also lets pad/scheduler
+       paths re-apply sizing after lazily-created pools appear during processing.
 
-    ```c
-    void zst_pool_config_default_size(zst_buffer_pool_config_t* config,
-                                       zst_pipeline_t* pipeline)
-    {
-        int n_queues = zst_pipeline_count_elements_of_type(pipeline, "queue");
-        if (n_queues > 0 && config->min_buffers < n_queues + 2) {
-            config->min_buffers = n_queues + 2;
-            if (config->max_buffers < config->min_buffers)
-                config->max_buffers = config->min_buffers * 2;
-        }
-    }
-    ```
-
-    Called via `zst_pipeline_foreach_element()` before the pipeline transitions to
-    PLAYING. This keeps topology decisions at the composition layer — elements
-    remain agnostic of the pipeline they live in (important once Phase 8c's Element
-    Bin allows nested pipelines).
+       Effective rule: for each element-owned output pool, count reachable
+       downstream queue elements and ensure `min_buffers >= downstream_queues + 2`;
+       raise `max_buffers` as needed.
 
     - [x] Implement `zst_pipeline_count_elements_of_type(pipeline, type_name)`
     - [x] Implement `zst_pool_config_default_size()` helper
-    - [x] Wire into pipeline start sequence or provide a convenience wrapper
+    - [x] Wire into pipeline start sequence and lazy-pool update paths
+    - [x] Safely resize pool storage when `max_buffers` changes
 
   **Test deliverables:**
   - [ ] Unit test: acquire/recycle loop (N buffers, M cycles, no net allocation)
@@ -117,6 +105,7 @@
   - [ ] Unit test: acquire with timeout returns NULL on expiry
   - [ ] Unit test: pool-backed buffer unref returns buffer to pool
   - [ ] Unit test: pool flush frees all cached buffers
+  - [x] Unit test: topology-aware pool sizing with downstream queues
   - [ ] Integration test: `v4l2src → queue → filesink` with pool, verify zero
         calls to `malloc` after warm-up phase
     - [x] Unit test: basic allocator create/alloc/free/destroy

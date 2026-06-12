@@ -110,6 +110,11 @@ worker_loop(void* arg)
                             }
                             zst_pad_push(el->src_pads[0], out_buf);
                             zst_buffer_unref(out_buf);
+                            /* Downstream elements can lazily create pools while
+                             * processing the pushed buffer. Re-apply topology
+                             * sizing so those late pools are fixed before the
+                             * next buffer burst. */
+                            zst_pipeline_update_buffer_pool_sizing(pipe);
                         }
                     } else if (ret == ZST_EOF) {
                         // Propagate EOS
@@ -159,6 +164,7 @@ zst_scheduler_run(zst_scheduler_t* sched)
 
     if (sched->pipeline) {
         zst_pipeline_topological_sort(sched->pipeline);
+        zst_pipeline_update_buffer_pool_sizing(sched->pipeline);
     }
 
     __atomic_store_n(&p->running, 1, __ATOMIC_RELEASE);

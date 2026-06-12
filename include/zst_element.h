@@ -84,6 +84,8 @@ struct zst_element {
     const zst_element_desc_t* desc;
 
     zst_clock_t* clock;
+
+    zst_pipeline_t* pipeline;
 };
 
 zst_element_t* zst_element_create(
