@@ -100,6 +100,8 @@ zst_buffer_pool_acquire(zst_buffer_pool_t* pool, zst_buffer_t** out_buf, int tim
 {
     if (!pool || !out_buf) return ZST_ERROR;
 
+    *out_buf = NULL;
+
     pthread_mutex_lock(&pool->lock);
 
     while (pool->active && pool->count == 0) {

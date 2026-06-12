@@ -189,7 +189,7 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | Dynamic Plugins             | ✅ Done                          |
 | Logging System              | ✅ Done                          |
 | Unit Tests                  | ✅ 65 core tests + test_net_source + test_net_sink + install test, all passing |
-| Allocator API + Pool        | ✅ Mostly done (allocator interface, pool, elements migrated, topology-aware sizing; some pool stress tests pending) |
+| Allocator API + Pool        | ✅ Done (allocator interface, pool, elements migrated, topology-aware sizing, comprehensive tests) |
 | Clock                       | ✅ Done (system clock + pipeline integration) |
 | Element Public API (8d)     | ✅ Done (Descriptor ABI, plugin introspection, typed properties, official metadata, convenience headers, library & installation layout) |
 | Text Overlay (4s)           | ✅ Included in Element Implementations |

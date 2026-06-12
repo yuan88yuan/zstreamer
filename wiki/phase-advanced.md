@@ -101,9 +101,9 @@
 
   **Test deliverables:**
   - [x] Unit test: acquire/recycle loop (N buffers, M cycles, no net allocation)
-  - [ ] Unit test: acquire blocks when pool exhausted, unblocks on release
-  - [ ] Unit test: acquire with timeout returns NULL on expiry
-  - [ ] Unit test: pool-backed buffer unref returns buffer to pool
+  - [x] Unit test: acquire blocks when pool exhausted, unblocks on release
+  - [x] Unit test: acquire with timeout returns NULL on expiry
+  - [x] Unit test: pool-backed buffer unref returns buffer to pool
   - [x] Unit test: pool flush frees all cached buffers
   - [x] Unit test: topology-aware pool sizing with downstream queues
   - [ ] Integration test: `videotestsrc → queue → filesink` with pool, verify zero

@@ -26,7 +26,7 @@ All phases are now documented in separate files for easier maintenance.
 | Caps Negotiation (5) | ✅ Done | Intersection, auto-negotiation |
 | Event Bus (6) | ✅ Done | Error/state/EOS notifications |
 | Dynamic Plugins (7) | ✅ Done | dlopen-based loading |
-| Allocator API (8a) | ✅ Mostly done | Pool + elements migration done; default sizing & tests pending |
+| Allocator API (8a) | ✅ Done | Pool + elements migration done; comprehensive pool unit tests completed |
 | Clock (8b) | ✅ Done | System clock, pipeline integration |
 | Testing & CI (9) | ⬜ Planned | CI pipeline, stress tests, static analysis |
 | Documentation (10) | ⬜ Planned | Doxygen API ref, tutorials |
