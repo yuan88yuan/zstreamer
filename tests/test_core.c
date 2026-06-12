@@ -2945,6 +2945,48 @@ test_allocator_pool_nonblock(void)
 }
 
 static void
+test_allocator_pool_recycle_loop(void)
+{
+    TEST("pool acquire/recycle loop");
+
+    zst_allocator_t* alloc = zst_allocator_cpu_create();
+
+    zst_buffer_pool_config_t config = {0};
+    config.min_buffers = 2;
+    config.max_buffers = 4;
+    config.buffer_size = 512;
+    config.buffer_type = ZST_BUFFER_USER;
+
+    zst_buffer_pool_t* pool = zst_buffer_pool_create(alloc, &config);
+    assert(pool != NULL);
+
+    for (int i = 0; i < 100; i++) {
+        zst_buffer_t* buf = NULL;
+        assert(zst_buffer_pool_acquire(pool, &buf, 0, 0) == ZST_OK);
+        assert(buf != NULL);
+        ((uint8_t*)buf->memory.data)[0] = 0xAA;
+        zst_buffer_unref(buf);
+    }
+
+    zst_buffer_t* buf1 = NULL;
+    zst_buffer_t* buf2 = NULL;
+
+    assert(zst_buffer_pool_acquire(pool, &buf1, 0, 0) == ZST_OK);
+    assert(buf1 != NULL);
+
+    assert(zst_buffer_pool_acquire(pool, &buf2, 0, 0) == ZST_OK);
+    assert(buf2 != NULL);
+
+    zst_buffer_unref(buf1);
+    zst_buffer_unref(buf2);
+
+    zst_buffer_pool_destroy(pool);
+    zst_allocator_unref(alloc);
+
+    PASS();
+}
+
+static void
 test_clock_basic(void)
 {
     TEST("clock create / time / wait / destroy");
@@ -4213,6 +4255,7 @@ int main(void)
     printf("[allocator]\n");
     test_allocator_basic();
     test_allocator_pool_nonblock();
+    test_allocator_pool_recycle_loop();
 
     /* ── Clock (Phase 8b) ── */
     printf("[clock]\n");

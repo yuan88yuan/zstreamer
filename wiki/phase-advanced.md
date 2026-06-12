@@ -100,7 +100,7 @@
     - [x] Safely resize pool storage when `max_buffers` changes
 
   **Test deliverables:**
-  - [ ] Unit test: acquire/recycle loop (N buffers, M cycles, no net allocation)
+  - [x] Unit test: acquire/recycle loop (N buffers, M cycles, no net allocation)
   - [ ] Unit test: acquire blocks when pool exhausted, unblocks on release
   - [ ] Unit test: acquire with timeout returns NULL on expiry
   - [ ] Unit test: pool-backed buffer unref returns buffer to pool
