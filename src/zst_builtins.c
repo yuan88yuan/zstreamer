@@ -62,6 +62,7 @@ zst_element_t* zst_srt_source_create(void);
 zst_element_t* zst_srt_sink_create(void);
 zst_element_t* zst_mpegts_muxer_create(void);
 zst_element_t* zst_mpegts_demuxer_create(void);
+zst_element_t* zst_mp4_demuxer_create(void);
 
 /*──────────────────────────────────────────────────────────────────────────
   Pad template tables (used by descriptor tables below).
@@ -102,6 +103,10 @@ static const zst_pad_template_t g_pad_tsmux[]       = {
 };
 
 static const zst_pad_template_t g_pad_tsdemux[]     = {
+    { "sink", ZST_PAD_SINK, "ANY" }, { "video", ZST_PAD_SRC, "ANY" }, { "audio", ZST_PAD_SRC, "ANY" }
+};
+
+static const zst_pad_template_t g_pad_mp4demux[]     = {
     { "sink", ZST_PAD_SINK, "ANY" }, { "video", ZST_PAD_SRC, "ANY" }, { "audio", ZST_PAD_SRC, "ANY" }
 };
 
@@ -217,6 +222,10 @@ static const zst_property_spec_t g_builtin_tsdemux_props[] = {
     { "location", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Input file path (optional)" }
 };
 
+static const zst_property_spec_t g_builtin_mp4demux_props[] = {
+    { "location", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Input MP4 file path (optional; enables direct-file mode)" }
+};
+
 /*──────────────────────────────────────────────────────────────────────────
   create_element callback — constructs an element by name using direct
   constructor calls (no weak symbols).
@@ -256,6 +265,7 @@ create_builtin_element(const char* name)
     if (strcmp(name, "srtsink") == 0)      return zst_srt_sink_create();
     if (strcmp(name, "tsmux") == 0)        return zst_mpegts_muxer_create();
     if (strcmp(name, "tsdemux") == 0)      return zst_mpegts_demuxer_create();
+    if (strcmp(name, "mp4demux") == 0)     return zst_mp4_demuxer_create();
     return NULL;
 }
 
@@ -296,7 +306,8 @@ static const zst_element_desc_t g_builtin_descs[] = {
     DESC("srtsrc",   "SRT Source",       "Source/Network","Receives buffers over Secure Reliable Transport (SRT)",                                                                 g_builtin_srtsrc_props,         sizeof(g_builtin_srtsrc_props) / sizeof(g_builtin_srtsrc_props[0]), g_pad_src),
     DESC("srtsink",  "SRT Sink",         "Sink/Network", "Sends buffers over Secure Reliable Transport (SRT)",                                                                   g_builtin_srtsink_props,        sizeof(g_builtin_srtsink_props) / sizeof(g_builtin_srtsink_props[0]), g_pad_sink),
     DESC("tsmux",    "MPEG-TS Muxer",    "Muxer/File",   "Muxes encoded audio/video into MPEG-TS (.ts)",                                                                         g_builtin_tsmux_props,          sizeof(g_builtin_tsmux_props) / sizeof(g_builtin_tsmux_props[0]), g_pad_tsmux),
-    DESC("tsdemux",  "MPEG-TS Demuxer",  "Demuxer",      "Demuxes MPEG-TS (.ts) into encoded audio/video",                                                                       g_builtin_tsdemux_props,        sizeof(g_builtin_tsdemux_props) / sizeof(g_builtin_tsdemux_props[0]), g_pad_tsdemux)
+    DESC("tsdemux",  "MPEG-TS Demuxer",  "Demuxer",      "Demuxes MPEG-TS (.ts) into encoded audio/video",                                                                       g_builtin_tsdemux_props,        sizeof(g_builtin_tsdemux_props) / sizeof(g_builtin_tsdemux_props[0]), g_pad_tsdemux),
+    DESC("mp4demux", "MP4 Demuxer",      "Demuxer/File", "Demuxes MP4 (.mp4/.mov/.m4a/.m4v) into encoded audio/video",                                                             g_builtin_mp4demux_props,       sizeof(g_builtin_mp4demux_props) / sizeof(g_builtin_mp4demux_props[0]), g_pad_mp4demux)
 };
 
 /*──────────────────────────────────────────────────────────────────────────

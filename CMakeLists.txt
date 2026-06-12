@@ -147,6 +147,7 @@ set(ELEMENT_LIBRARY_SOURCES
     src/srt_sink.c
     src/mpegts_muxer.c
     src/mpegts_demuxer.c
+    src/mp4_demuxer.c
 )
 
 if(BUILD_SHARED)
@@ -321,7 +322,11 @@ add_library(zst_mpegtsdemux SHARED src/mpegts_demuxer.c)
 target_compile_definitions(zst_mpegtsdemux PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_mpegtsdemux PRIVATE zstreamer ${AVFORMAT_LIBRARIES} ${AVCODEC_LIBRARIES} ${AVUTIL_LIBRARIES})
 
-set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_rtspsource zst_rtspsink zst_rtsp_server zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_textsource zst_netsrc zst_netsink zst_h264decoder zst_h265encoder zst_h265decoder zst_aacdecoder zst_rtmpsource zst_rtmpsink zst_srtsource zst_srtsink zst_mpegtsmux zst_mpegtsdemux)
+add_library(zst_mp4demux SHARED src/mp4_demuxer.c)
+target_compile_definitions(zst_mp4demux PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_mp4demux PRIVATE zstreamer ${AVFORMAT_LIBRARIES} ${AVCODEC_LIBRARIES} ${AVUTIL_LIBRARIES})
+
+set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_rtspsource zst_rtspsink zst_rtsp_server zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_textsource zst_netsrc zst_netsink zst_h264decoder zst_h265encoder zst_h265decoder zst_aacdecoder zst_rtmpsource zst_rtmpsink zst_srtsource zst_srtsink zst_mpegtsmux zst_mpegtsdemux zst_mp4demux)
 foreach(plugin ${PLUGIN_TARGETS})
     target_include_directories(${plugin} PRIVATE ${ZSTREAMER_INCLUDE_DIR} PRIVATE ${ELEMENT_INCLUDE_DIRS})
     set_target_properties(${plugin} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")

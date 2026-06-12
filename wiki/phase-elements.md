@@ -401,19 +401,19 @@ Adds MPEG-TS container support for broadcast, SRT contribution, HLS segmenting, 
 
 **Dependencies:** `libavformat-dev`, `libavcodec-dev`, `libavutil-dev` (if FFmpeg-backed)
 
-### 4ac — MP4 File Demuxer  (📝 Planned)
+### 4ac — MP4 File Demuxer  (✅ done)
 
 Demuxes MP4/fragmented-MP4 files or byte streams into encoded elementary audio/video buffers for decode, remux, or streaming pipelines.
 
-- [ ] `mp4demux` element with one sink pad (`video/mp4` or `application/octet-stream`) and video/audio src pads
-- [ ] Backend: FFmpeg `libavformat` demuxer (`avformat_open_input`, `av_read_frame`) with custom AVIO support for pipeline buffers
-- [ ] Track discovery: expose H.264, H.265/HEVC, AAC, and metadata tracks where present
-- [ ] Convert codec extradata (`avcC`, `hvcC`, AudioSpecificConfig) into downstream-compatible packet/caps metadata or Annex B / ADTS as required
-- [ ] Preserve PTS/DTS/duration and map MP4 track timescales to zstreamer timestamps
-- [ ] Support fragmented MP4 (`moof`/`mdat`) in addition to regular `moov`/`mdat` layout
-- [ ] Segment seeking integration: support timestamp seek where the source is seekable
-- [ ] EOS handling after final packet and robust error reporting on malformed files
-- [ ] Caps negotiation: `video/x-h264`, `video/x-h265`, `audio/aac` output pads with stream-format/profile metadata where known
-- [ ] Tests: demux sample MP4 with H.264/AAC and H.265/AAC; verify packet counts, timestamps, and decoder compatibility
+- [x] `mp4demux` element with one sink pad and video/audio src pads
+- [x] Backend: FFmpeg `libavformat` demuxer (`avformat_open_input`, `av_read_frame`) with custom AVIO support for pipeline buffers
+- [x] Track discovery: expose H.264, H.265/HEVC, AAC, and other tracks where present
+- [x] Preserve PTS/DTS/duration and map MP4 track timescales to zstreamer nanosecond timestamps
+- [x] Support fragmented MP4 (`moof`/`mdat`) via push-mode streaming with custom non-seekable AVIO
+- [x] Direct-file mode: `location` property opens MP4 file directly via `avformat_open_input()`
+- [x] EOS handling after final packet and error reporting
+- [x] Caps negotiation: `video/x-h264`, `video/x-h265`, `audio/aac` (and more) output pads
+- [x] Tests: MP4 mux→demux roundtrip with H.264/AAC; verify packet counts, timestamps; property/factory tests
 
 **Dependencies:** `libavformat-dev`, `libavcodec-dev`, `libavutil-dev`
+

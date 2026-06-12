@@ -325,7 +325,8 @@ mp4_mux_write_header(zst_element_t* el)
     
     AVDictionary* opts = NULL;
     if (!s->direct_file) {
-        av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
+        av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof+frag_discont", 0);
+        av_dict_set(&opts, "avoid_negative_ts", "disabled", 0);
     }
     if (avformat_write_header(s->fc, &opts) < 0) {
         av_dict_free(&opts);
@@ -372,7 +373,8 @@ mp4_mux_write(zst_element_t* el, zst_buffer_t* buf, int stream_idx)
     pkt->dts = av_rescale_q(buf->dts, (AVRational){1, 1000000000}, s->fc->streams[stream_idx]->time_base);
     pkt->duration = av_rescale_q(buf->duration, (AVRational){1, 1000000000}, s->fc->streams[stream_idx]->time_base);
     pkt->stream_index = stream_idx;
-    
+
+
     if (av_interleaved_write_frame(s->fc, pkt) < 0) {
         free(converted);
         av_packet_free(&pkt);
@@ -393,6 +395,10 @@ mp4_mux_check_eos(zst_element_t* el)
     if (s->audio_linked && !s->audio_eos) all_eos = 0;
     
     if (all_eos) {
+        if (s->fc && s->header_written) {
+            av_write_trailer(s->fc);
+            s->header_written = 0;
+        }
         zst_pad_t* src_pad = zst_element_get_pad(el, "src");
         if (src_pad && src_pad->peer) {
             zst_buffer_t* eos_buf = zst_buffer_create(ZST_BUFFER_USER);

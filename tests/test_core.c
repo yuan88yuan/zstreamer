@@ -44,6 +44,7 @@
 #include "zstreamer/elements/zst_fake_sink.h"
 #include "zstreamer/elements/zst_srt_source.h"
 #include "zstreamer/elements/zst_srt_sink.h"
+#include "zstreamer/elements/zst_mp4_demuxer.h"
 
 zst_element_t* zst_video_scaler_create(int target_width, int target_height, const char* target_pixel_format);
 zst_element_t* zst_audio_resampler_create(int target_sample_rate, int target_channels, const char* target_format);
@@ -4539,6 +4540,267 @@ static void test_mpegts_elements(void)
     PASS();
 }
 
+/* ── MP4 demuxer test helpers ──────────────────────────────────────────── */
+
+static int g_mp4_video_received = 0;
+static int g_mp4_audio_received = 0;
+static uint64_t g_mp4_video_pts = 0;
+static uint64_t g_mp4_audio_pts = 0;
+
+static zst_result_t
+test_mp4_video_push(zst_pad_t* pad, zst_buffer_t* buf)
+{
+    (void)pad;
+    if (!(buf->flags & ZST_BUFFER_FLAG_EOS)) {
+        g_mp4_video_received++;
+        g_mp4_video_pts = buf->pts;
+    }
+    return ZST_OK;
+}
+
+static zst_result_t
+test_mp4_audio_push(zst_pad_t* pad, zst_buffer_t* buf)
+{
+    (void)pad;
+    if (!(buf->flags & ZST_BUFFER_FLAG_EOS)) {
+        g_mp4_audio_received++;
+        g_mp4_audio_pts = buf->pts;
+    }
+    return ZST_OK;
+}
+
+static void test_mp4_demuxer_elements(void)
+{
+    TEST("MP4 muxer and demuxer roundtrip");
+
+    zst_plugin_registry_init();
+    assert(zst_register_builtin_elements() == ZST_OK);
+
+    zst_element_t* mux = zst_element_factory_make("mp4mux");
+    zst_element_t* demux = zst_element_factory_make("mp4demux");
+    assert(mux != NULL && demux != NULL);
+
+    assert(zst_element_set_property_int(mux, "width", 320) == ZST_OK);
+    assert(zst_element_set_property_int(mux, "height", 240) == ZST_OK);
+    assert(zst_element_set_property_int(mux, "fps", 30) == ZST_OK);
+    assert(zst_element_set_property_int(mux, "sample-rate", 44100) == ZST_OK);
+    assert(zst_element_set_property_int(mux, "channels", 2) == ZST_OK);
+
+    /* Link mux src → demux sink */
+    zst_pad_t* mux_src = zst_element_get_pad(mux, "src");
+    zst_pad_t* demux_sink = zst_element_get_pad(demux, "sink");
+    assert(mux_src != NULL && demux_sink != NULL);
+    assert(zst_pad_link(mux_src, demux_sink) == ZST_OK);
+
+    /* Create dummy src pads → link to muxer inputs */
+    zst_pad_t* dummy_video_src = zst_pad_create("video_src", ZST_PAD_SRC);
+    zst_pad_t* dummy_audio_src = zst_pad_create("audio_src", ZST_PAD_SRC);
+    zst_pad_t* mux_video = zst_element_get_pad(mux, "video");
+    zst_pad_t* mux_audio = zst_element_get_pad(mux, "audio");
+    assert(mux_video != NULL && mux_audio != NULL);
+    assert(zst_pad_link(dummy_video_src, mux_video) == ZST_OK);
+    assert(zst_pad_link(dummy_audio_src, mux_audio) == ZST_OK);
+
+    /* Create dummy sink pads with push callbacks → link to demuxer outputs */
+    zst_pad_t* dummy_video_sink = zst_pad_create("video_sink", ZST_PAD_SINK);
+    zst_pad_t* dummy_audio_sink = zst_pad_create("audio_sink", ZST_PAD_SINK);
+    dummy_video_sink->push = test_mp4_video_push;
+    dummy_audio_sink->push = test_mp4_audio_push;
+
+    zst_pad_t* demux_video = zst_element_get_pad(demux, "video");
+    zst_pad_t* demux_audio = zst_element_get_pad(demux, "audio");
+    assert(demux_video != NULL && demux_audio != NULL);
+    assert(zst_pad_link(demux_video, dummy_video_sink) == ZST_OK);
+    assert(zst_pad_link(demux_audio, dummy_audio_sink) == ZST_OK);
+
+    /* Set states */
+    assert(zst_element_set_state(mux, ZST_STATE_READY) == ZST_OK);
+    assert(zst_element_set_state(demux, ZST_STATE_READY) == ZST_OK);
+    assert(zst_element_set_state(mux, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_element_set_state(demux, ZST_STATE_PLAYING) == ZST_OK);
+
+    g_mp4_video_received = 0;
+    g_mp4_audio_received = 0;
+
+    /* Encode a real H.264 frame */
+    zst_element_t* video_enc = zst_h264_encoder_create();
+    assert(video_enc != NULL);
+    assert(zst_element_set_state(video_enc, ZST_STATE_READY) == ZST_OK);
+    zst_buffer_t* v_buf = NULL;
+    for (int n = 0; n < 5 && !v_buf; n++) {
+        zst_buffer_t* raw_v = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
+        assert(raw_v != NULL);
+        raw_v->pts = 1000000000;
+        raw_v->dts = 1000000000;
+        raw_v->memory.size = 320u * 240u * 3u / 2u;
+        raw_v->memory.data = calloc(1, raw_v->memory.size);
+        raw_v->payload = calloc(1, sizeof(zst_video_frame_t));
+        raw_v->destroy = decoder_test_buf_free;
+        assert(raw_v->memory.data != NULL && raw_v->payload != NULL);
+        zst_video_frame_t* vf = raw_v->payload;
+        vf->width = 320;
+        vf->height = 240;
+        vf->format = 0;
+        vf->plane[0] = raw_v->memory.data;
+        vf->plane[1] = (uint8_t*)raw_v->memory.data + 320 * 240;
+        vf->plane[2] = (uint8_t*)raw_v->memory.data + 320 * 240 + 320 * 240 / 4;
+        vf->stride[0] = 320;
+        vf->stride[1] = 160;
+        vf->stride[2] = 160;
+        memset(vf->plane[0], 80, 320 * 240);
+        memset(vf->plane[1], 90, 320 * 240 / 4);
+        memset(vf->plane[2], 100, 320 * 240 / 4);
+        assert(video_enc->ops->process(video_enc, raw_v, &v_buf) == ZST_OK);
+        zst_buffer_unref(raw_v);
+    }
+    assert(v_buf != NULL && v_buf->memory.size > 0);
+    v_buf->pts = 1000000000;
+    v_buf->dts = 1000000000;
+    v_buf->duration = 33333333;
+
+    /* Encode a real AAC frame */
+    zst_element_t* audio_enc = zst_aac_encoder_create();
+    assert(audio_enc != NULL);
+    assert(zst_element_set_state(audio_enc, ZST_STATE_READY) == ZST_OK);
+    zst_buffer_t* a_buf_raw = NULL;
+    for (int n = 0; n < 5 && !a_buf_raw; n++) {
+        zst_buffer_t* raw_a = zst_buffer_create(ZST_BUFFER_AUDIO_FRAME);
+        assert(raw_a != NULL);
+        raw_a->pts = 1000000000;
+        raw_a->dts = 1000000000;
+        raw_a->memory.size = 1024u * 2u * sizeof(int16_t);
+        raw_a->memory.data = calloc(1, raw_a->memory.size);
+        raw_a->payload = calloc(1, sizeof(zst_audio_frame_t));
+        raw_a->destroy = decoder_test_buf_free;
+        assert(raw_a->memory.data != NULL && raw_a->payload != NULL);
+        zst_audio_frame_t* af = raw_a->payload;
+        af->sample_rate = 44100;
+        af->channels = 2;
+        af->format = 0;
+        af->nb_samples = 1024;
+        af->data = raw_a->memory.data;
+        int16_t* pcm = raw_a->memory.data;
+        for (int i = 0; i < 1024 * 2; i++) {
+            pcm[i] = (int16_t)((i % 100) - 50);
+        }
+        assert(audio_enc->ops->process(audio_enc, raw_a, &a_buf_raw) == ZST_OK);
+        zst_buffer_unref(raw_a);
+    }
+    assert(a_buf_raw != NULL && a_buf_raw->memory.size > 0);
+
+    zst_buffer_t* a_buf = zst_buffer_ref(a_buf_raw);
+    a_buf->pts = 1000000000;
+    a_buf->dts = 1000000000;
+    a_buf->duration = 23219954;
+    zst_buffer_unref(a_buf_raw);
+
+    /* Push video and audio through the muxer */
+    assert(zst_pad_push(dummy_video_src, v_buf) == ZST_OK);
+    assert(zst_pad_push(dummy_audio_src, a_buf) == ZST_OK);
+
+    /* Push EOS to both inputs to flush the muxer and demuxer */
+    zst_buffer_t* a_eos = zst_buffer_create(ZST_BUFFER_AUDIO_PACKET);
+    a_eos->flags |= ZST_BUFFER_FLAG_EOS;
+    assert(zst_pad_push(dummy_audio_src, a_eos) == ZST_OK);
+    zst_buffer_unref(a_eos);
+
+    zst_buffer_t* v_eos = zst_buffer_create(ZST_BUFFER_VIDEO_PACKET);
+    v_eos->flags |= ZST_BUFFER_FLAG_EOS;
+    assert(zst_pad_push(dummy_video_src, v_eos) == ZST_OK);
+    zst_buffer_unref(v_eos);
+
+    printf("DEBUG: g_mp4_video_received = %d, video_pts = %lu\n", g_mp4_video_received, g_mp4_video_pts);
+    printf("DEBUG: g_mp4_audio_received = %d, audio_pts = %lu\n", g_mp4_audio_received, g_mp4_audio_pts);
+
+    assert(g_mp4_video_received > 0);
+    assert(g_mp4_audio_received > 0);
+    assert(g_mp4_video_pts == 1000000000);
+    assert(g_mp4_audio_pts == 1000000000);
+
+    /* Cleanup */
+    zst_buffer_unref(v_buf);
+    zst_buffer_unref(a_buf);
+
+    assert(zst_element_set_state(mux, ZST_STATE_NULL) == ZST_OK);
+    assert(zst_element_set_state(demux, ZST_STATE_NULL) == ZST_OK);
+    assert(zst_element_set_state(video_enc, ZST_STATE_NULL) == ZST_OK);
+    assert(zst_element_set_state(audio_enc, ZST_STATE_NULL) == ZST_OK);
+
+    zst_pad_unlink(dummy_video_src);
+    zst_pad_unlink(dummy_audio_src);
+    zst_pad_destroy(dummy_video_src);
+    zst_pad_destroy(dummy_audio_src);
+
+    zst_pad_unlink(demux_video);
+    zst_pad_unlink(demux_audio);
+    zst_pad_destroy(dummy_video_sink);
+    zst_pad_destroy(dummy_audio_sink);
+
+    zst_element_destroy(mux);
+    zst_element_destroy(demux);
+    zst_element_destroy(video_enc);
+    zst_element_destroy(audio_enc);
+
+    zst_plugin_registry_deinit();
+
+    PASS();
+}
+
+static void test_mp4_demuxer_properties(void)
+{
+    TEST("MP4 demuxer properties and factory");
+
+    zst_plugin_registry_init();
+    assert(zst_register_builtin_elements() == ZST_OK);
+
+    /* Create via factory */
+    zst_element_t* demux = zst_element_factory_make("mp4demux");
+    assert(demux != NULL);
+
+    /* Set and get location property */
+    assert(zst_element_set_property(demux, "location", "/tmp/test.mp4") == ZST_OK);
+    char val[256];
+    assert(zst_element_get_property(demux, "location", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "/tmp/test.mp4") == 0);
+
+    /* Also accept "path" alias */
+    assert(zst_element_set_property(demux, "path", "/tmp/other.mp4") == ZST_OK);
+    assert(zst_element_get_property(demux, "path", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "/tmp/other.mp4") == 0);
+
+    /* Invalid property */
+    assert(zst_element_set_property(demux, "nonexistent", "val") == ZST_ERROR);
+
+    /* Verify pads exist */
+    assert(zst_element_get_pad(demux, "sink") != NULL);
+    assert(zst_element_get_pad(demux, "video") != NULL);
+    assert(zst_element_get_pad(demux, "audio") != NULL);
+
+    /* Verify descriptor via introspection */
+    const zst_element_desc_t* desc = zst_element_factory_get_desc("mp4demux");
+    assert(desc != NULL);
+    assert(strcmp(desc->name, "mp4demux") == 0);
+    assert(strcmp(desc->category, "Demuxer/File") == 0);
+    assert(desc->nb_pads == 3);
+    assert(desc->nb_properties == 1);
+
+    /* Create with config */
+    zst_mp4_demuxer_config_t config = {
+        .struct_size = sizeof(config),
+        .location = "/tmp/configured.mp4"
+    };
+    zst_element_t* demux2 = zst_mp4_demuxer_create_with_config(&config);
+    assert(demux2 != NULL);
+    assert(zst_element_get_property(demux2, "location", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "/tmp/configured.mp4") == 0);
+
+    zst_element_destroy(demux);
+    zst_element_destroy(demux2);
+    zst_plugin_registry_deinit();
+
+    PASS();
+}
+
 static void test_rtmp_elements(void)
 {
     TEST("rtmp/rtsp source/sink properties and caps");
@@ -4805,6 +5067,10 @@ int main(void)
 
     printf("[mpegts muxer/demuxer]\n");
     test_mpegts_elements();
+
+    printf("[mp4 demuxer]\n");
+    test_mp4_demuxer_properties();
+    test_mp4_demuxer_elements();
 
     /* ── Summary ── */
     printf("\n──────────────────────────────────────────────────\n");

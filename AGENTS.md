@@ -78,7 +78,8 @@ It provides a **GStreamer-like** pipeline architecture: elements connected via p
 │   ├── rtsp_sink.c        ← RTSP client sink
 │   ├── rtsp_server.c      ← Multi-session RTSP server (TCP interleaved + UDP)
 │   ├── rtmp_source.c      ← RTMP source (FLV demux)
-│   └── rtmp_sink.c        ← RTMP sink (FLV mux/publish)
+│   ├── rtmp_sink.c        ← RTMP sink (FLV mux/publish)
+│   └── mp4_demuxer.c      ← FFmpeg libavformat MP4 demuxer
 ├── tests/
 │   ├── test_core.c    ← 62 unit tests: core + scheduler + queue + caps + bus + plugins + log + conversion + codecs + advanced features
 │   └── example_record.c ← Full pipeline demo with queue elements
@@ -159,6 +160,7 @@ The Dockerfile has two build targets:
 | **zst_log**      | Lightweight logging system with compile-time levels   |
 | **video_scaler** | Pixel format + resolution conversion via `libswscale`  |
 | **audio_resampler** | Sample rate + format conversion via `libswresample` |
+| **mp4_demuxer**  | MP4/fMP4 file demuxer via `libavformat`                |
 
 ### State Machine
 
@@ -180,13 +182,13 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | Core Framework              | ✅ All 8 core modules implemented|
 | Scheduler Integration       | ✅ Topological sort, push/pull, EOS, state hardening |
 | Queue Element               | ✅ First-class queue with worker thread |
-| Real Element Implementations| ✅ 30 elements: v4l2_source, alsa_source, h264_encoder, h264_decoder, h265_encoder, h265_decoder, aac_encoder, aac_decoder, mp4_muxer, file_sink, file_source, fake_sink, video_scaler, audio_resampler, video_test_src, audio_test_src, text_overlay, text_source, srt_parser, net_source, net_sink, rtsp_source, rtsp_sink, rtsp_server, rtmp_source, rtmp_sink, srt_source, srt_sink, mpegts_muxer, mpegts_demuxer |
-| Planned Element Additions   | 📝 MP4 demuxer |
+| Real Element Implementations| ✅ 31 elements: v4l2_source, alsa_source, h264_encoder, h264_decoder, h265_encoder, h265_decoder, aac_encoder, aac_decoder, mp4_muxer, mp4_demuxer, file_sink, file_source, fake_sink, video_scaler, audio_resampler, video_test_src, audio_test_src, text_overlay, text_source, srt_parser, net_source, net_sink, rtsp_source, rtsp_sink, rtsp_server, rtmp_source, rtmp_sink, srt_source, srt_sink, mpegts_muxer, mpegts_demuxer |
+| Planned Element Additions   | 📝 (none remaining) |
 | Caps Negotiation            | ✅ Done                          |
 | Event Bus                   | ✅ Done                          |
 | Dynamic Plugins             | ✅ Done                          |
 | Logging System              | ✅ Done                          |
-| Unit Tests                  | ✅ 63 core tests + test_net_source + test_net_sink + install test, all passing |
+| Unit Tests                  | ✅ 65 core tests + test_net_source + test_net_sink + install test, all passing |
 | Allocator API + Pool        | ✅ Mostly done (allocator interface, pool, elements migrated, topology-aware sizing; some pool stress tests pending) |
 | Clock                       | ✅ Done (system clock + pipeline integration) |
 | Element Public API (8d)     | ✅ Done (Descriptor ABI, plugin introspection, typed properties, official metadata, convenience headers, library & installation layout) |
@@ -208,7 +210,7 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | Segment Seeking (8c)        | ✅ Done                          |
 | SRT Transport Protocols     | ✅ Done                          |
 | MPEG-TS mux/demux           | ✅ Done                          |
-| MP4 Demuxer                 | 📝 Planned                       |
+| MP4 Demuxer                 | ✅ Done                        |
 | CI Pipeline                 | 📝 Future                        |
 
 ---
