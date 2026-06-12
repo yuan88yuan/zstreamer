@@ -3493,7 +3493,8 @@ test_log_custom_handler(void)
    ═══════════════════════════════════════════════════════════════ */
 static void* delayed_release_thread(void* arg) {
     zst_buffer_t* buf = (zst_buffer_t*)arg;
-    usleep(50000); // 50ms
+    struct timespec ts = { .tv_sec = 0, .tv_nsec = 50000000 }; // 50ms
+    nanosleep(&ts, NULL);
     zst_buffer_unref(buf);
     return NULL;
 }

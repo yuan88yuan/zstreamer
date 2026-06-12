@@ -102,6 +102,17 @@ zst_buffer_pool_acquire(zst_buffer_pool_t* pool, zst_buffer_t** out_buf, int tim
 
     *out_buf = NULL;
 
+    struct timespec ts;
+    if (timeout_ms > 0) {
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_sec += timeout_ms / 1000;
+        ts.tv_nsec += (timeout_ms % 1000) * 1000000;
+        if (ts.tv_nsec >= 1000000000) {
+            ts.tv_sec += 1;
+            ts.tv_nsec -= 1000000000;
+        }
+    }
+
     pthread_mutex_lock(&pool->lock);
 
     while (pool->active && pool->count == 0) {
@@ -129,14 +140,6 @@ zst_buffer_pool_acquire(zst_buffer_pool_t* pool, zst_buffer_t** out_buf, int tim
             pthread_mutex_unlock(&pool->lock);
             return ZST_TIMEOUT;
         } else {
-            struct timespec ts;
-            clock_gettime(CLOCK_REALTIME, &ts);
-            ts.tv_sec += timeout_ms / 1000;
-            ts.tv_nsec += (timeout_ms % 1000) * 1000000;
-            if (ts.tv_nsec >= 1000000000) {
-                ts.tv_sec += 1;
-                ts.tv_nsec -= 1000000000;
-            }
             int err = pthread_cond_timedwait(&pool->cond, &pool->lock, &ts);
             if (err != 0) {
                 pthread_mutex_unlock(&pool->lock);
