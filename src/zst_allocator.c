@@ -2,6 +2,8 @@
     zst_allocator.c
 =============================================================================*/
 
+#define _GNU_SOURCE
+
 #include "zst_allocator.h"
 #include <stdlib.h>
 
@@ -76,7 +78,6 @@ zst_allocator_cpu_create(void)
 }
 
 
-#define _GNU_SOURCE
 #include <sys/mman.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -274,4 +275,264 @@ zst_allocator_dmabuf_get_fd(zst_allocator_t* allocator, void* ptr)
     }
     dmabuf_unlock(ctx);
     return fd;
+}
+
+#include <vulkan/vulkan.h>
+
+typedef struct {
+    VkDeviceMemory memory;
+    VkBuffer buffer;
+    void* mapped_ptr;
+    size_t size;
+} zst_vulkan_mem_t;
+
+typedef struct {
+    VkInstance instance;
+    VkPhysicalDevice physical_device;
+    VkDevice device;
+    uint32_t memory_type_index;
+
+    zst_vulkan_mem_t* mems;
+    size_t mem_capacity;
+    size_t mem_count;
+    int lock;
+} zst_vulkan_allocator_t;
+
+static void
+vulkan_lock(zst_vulkan_allocator_t* ctx)
+{
+    while (__sync_lock_test_and_set(&ctx->lock, 1)) {
+        // spin
+    }
+}
+
+static void
+vulkan_unlock(zst_vulkan_allocator_t* ctx)
+{
+    __sync_lock_release(&ctx->lock);
+}
+
+static int
+vulkan_add_mem(zst_vulkan_allocator_t* ctx, VkDeviceMemory memory, VkBuffer buffer, void* ptr, size_t size)
+{
+    vulkan_lock(ctx);
+    if (ctx->mem_count == ctx->mem_capacity) {
+        size_t new_cap = ctx->mem_capacity == 0 ? 16 : ctx->mem_capacity * 2;
+        zst_vulkan_mem_t* new_mems = realloc(ctx->mems, new_cap * sizeof(zst_vulkan_mem_t));
+        if (new_mems) {
+            ctx->mems = new_mems;
+            ctx->mem_capacity = new_cap;
+        } else {
+            vulkan_unlock(ctx);
+            return 0; // Failed to realloc
+        }
+    }
+    ctx->mems[ctx->mem_count].memory = memory;
+    ctx->mems[ctx->mem_count].buffer = buffer;
+    ctx->mems[ctx->mem_count].mapped_ptr = ptr;
+    ctx->mems[ctx->mem_count].size = size;
+    ctx->mem_count++;
+    vulkan_unlock(ctx);
+    return 1;
+}
+
+static int
+vulkan_remove_mem(zst_vulkan_allocator_t* ctx, void* ptr, VkDeviceMemory* out_memory, VkBuffer* out_buffer, size_t* out_size)
+{
+    vulkan_lock(ctx);
+    for (size_t i = 0; i < ctx->mem_count; i++) {
+        if (ctx->mems[i].mapped_ptr == ptr) {
+            if (out_memory) *out_memory = ctx->mems[i].memory;
+            if (out_buffer) *out_buffer = ctx->mems[i].buffer;
+            if (out_size) *out_size = ctx->mems[i].size;
+
+            // Move last element to this position
+            if (i < ctx->mem_count - 1) {
+                ctx->mems[i] = ctx->mems[ctx->mem_count - 1];
+            }
+            ctx->mem_count--;
+            vulkan_unlock(ctx);
+            return 1;
+        }
+    }
+    vulkan_unlock(ctx);
+    return 0;
+}
+
+static void*
+vulkan_alloc(zst_allocator_t* allocator, size_t size)
+{
+    zst_vulkan_allocator_t* ctx = (zst_vulkan_allocator_t*)allocator->priv;
+
+    VkBufferCreateInfo bufferInfo = {0};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = size;
+    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VkBuffer buffer;
+    if (vkCreateBuffer(ctx->device, &bufferInfo, NULL, &buffer) != VK_SUCCESS) {
+        return NULL;
+    }
+
+    VkMemoryRequirements memRequirements;
+    vkGetBufferMemoryRequirements(ctx->device, buffer, &memRequirements);
+
+    VkMemoryAllocateInfo allocInfo = {0};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = ctx->memory_type_index;
+
+    VkDeviceMemory memory;
+    if (vkAllocateMemory(ctx->device, &allocInfo, NULL, &memory) != VK_SUCCESS) {
+        vkDestroyBuffer(ctx->device, buffer, NULL);
+        return NULL;
+    }
+
+    vkBindBufferMemory(ctx->device, buffer, memory, 0);
+
+    void* mapped_ptr;
+    if (vkMapMemory(ctx->device, memory, 0, size, 0, &mapped_ptr) != VK_SUCCESS) {
+        vkFreeMemory(ctx->device, memory, NULL);
+        vkDestroyBuffer(ctx->device, buffer, NULL);
+        return NULL;
+    }
+
+    if (!vulkan_add_mem(ctx, memory, buffer, mapped_ptr, size)) {
+        vkUnmapMemory(ctx->device, memory);
+        vkFreeMemory(ctx->device, memory, NULL);
+        vkDestroyBuffer(ctx->device, buffer, NULL);
+        return NULL;
+    }
+
+    return mapped_ptr;
+}
+
+static void
+vulkan_free(zst_allocator_t* allocator, void* ptr)
+{
+    zst_vulkan_allocator_t* ctx = (zst_vulkan_allocator_t*)allocator->priv;
+    VkDeviceMemory memory;
+    VkBuffer buffer;
+    size_t size;
+    if (vulkan_remove_mem(ctx, ptr, &memory, &buffer, &size)) {
+        vkUnmapMemory(ctx->device, memory);
+        vkFreeMemory(ctx->device, memory, NULL);
+        vkDestroyBuffer(ctx->device, buffer, NULL);
+    }
+}
+
+static void
+vulkan_destroy(zst_allocator_t* allocator)
+{
+    zst_vulkan_allocator_t* ctx = (zst_vulkan_allocator_t*)allocator->priv;
+    if (ctx) {
+        // Free any remaining memory mappings
+        for (size_t i = 0; i < ctx->mem_count; i++) {
+            vkUnmapMemory(ctx->device, ctx->mems[i].memory);
+            vkFreeMemory(ctx->device, ctx->mems[i].memory, NULL);
+            vkDestroyBuffer(ctx->device, ctx->mems[i].buffer, NULL);
+        }
+        free(ctx->mems);
+
+        vkDestroyDevice(ctx->device, NULL);
+        vkDestroyInstance(ctx->instance, NULL);
+
+        free(ctx);
+    }
+}
+
+zst_allocator_t*
+zst_allocator_vulkan_create(void)
+{
+    zst_allocator_t* alloc = calloc(1, sizeof(*alloc));
+    if (!alloc) return NULL;
+
+    zst_vulkan_allocator_t* ctx = calloc(1, sizeof(zst_vulkan_allocator_t));
+    if (!ctx) {
+        free(alloc);
+        return NULL;
+    }
+
+    VkApplicationInfo appInfo = {0};
+    appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    appInfo.pApplicationName = "Zstreamer";
+    appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+    appInfo.pEngineName = "No Engine";
+    appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+    appInfo.apiVersion = VK_API_VERSION_1_0;
+
+    VkInstanceCreateInfo createInfo = {0};
+    createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    createInfo.pApplicationInfo = &appInfo;
+
+    if (vkCreateInstance(&createInfo, NULL, &ctx->instance) != VK_SUCCESS) {
+        free(ctx);
+        free(alloc);
+        return NULL;
+    }
+
+    uint32_t deviceCount = 0;
+    vkEnumeratePhysicalDevices(ctx->instance, &deviceCount, NULL);
+
+    if (deviceCount == 0) {
+        vkDestroyInstance(ctx->instance, NULL);
+        free(ctx);
+        free(alloc);
+        return NULL;
+    }
+
+    VkPhysicalDevice* devices = malloc(sizeof(VkPhysicalDevice) * deviceCount);
+    vkEnumeratePhysicalDevices(ctx->instance, &deviceCount, devices);
+    ctx->physical_device = devices[0]; // just pick the first one for simplicity
+    free(devices);
+
+    VkDeviceQueueCreateInfo queueCreateInfo = {0};
+    queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+    queueCreateInfo.queueFamilyIndex = 0; // Assume queue family 0 exists
+    queueCreateInfo.queueCount = 1;
+    float queuePriority = 1.0f;
+    queueCreateInfo.pQueuePriorities = &queuePriority;
+
+    VkDeviceCreateInfo deviceCreateInfo = {0};
+    deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    deviceCreateInfo.pQueueCreateInfos = &queueCreateInfo;
+    deviceCreateInfo.queueCreateInfoCount = 1;
+
+    if (vkCreateDevice(ctx->physical_device, &deviceCreateInfo, NULL, &ctx->device) != VK_SUCCESS) {
+        vkDestroyInstance(ctx->instance, NULL);
+        free(ctx);
+        free(alloc);
+        return NULL;
+    }
+
+    // Find memory type index for host visible & coherent memory
+    // To do this properly, we could create a dummy buffer and get its memory requirements,
+    // but typically memory type indices for host visible memory don't strictly require a specific buffer's typeFilter if we just want a generic host memory pool.
+    // Actually, we'll just query memory properties and find the first one with the flags.
+    VkPhysicalDeviceMemoryProperties memProperties;
+    vkGetPhysicalDeviceMemoryProperties(ctx->physical_device, &memProperties);
+    ctx->memory_type_index = -1;
+    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+        if ((memProperties.memoryTypes[i].propertyFlags & (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) == (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+            ctx->memory_type_index = i;
+            break;
+        }
+    }
+
+    if (ctx->memory_type_index == (uint32_t)-1) {
+        vkDestroyDevice(ctx->device, NULL);
+        vkDestroyInstance(ctx->instance, NULL);
+        free(ctx);
+        free(alloc);
+        return NULL;
+    }
+
+    alloc->refcount = 1;
+    alloc->alloc    = vulkan_alloc;
+    alloc->free     = vulkan_free;
+    alloc->destroy  = vulkan_destroy;
+    alloc->priv     = ctx;
+
+    return alloc;
 }

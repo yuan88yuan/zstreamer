@@ -20,6 +20,7 @@ if(ENABLE_PLUGINS)
 endif()
 
 find_package(PkgConfig REQUIRED)
+find_package(Vulkan REQUIRED)
 pkg_check_modules(AVFORMAT REQUIRED libavformat)
 pkg_check_modules(AVCODEC REQUIRED libavcodec)
 pkg_check_modules(AVUTIL REQUIRED libavutil)
@@ -107,7 +108,7 @@ set_target_properties(zstreamer PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 target_link_libraries(zstreamer
     PUBLIC  Threads::Threads
-    PRIVATE ${DL_LIB}
+    PRIVATE ${DL_LIB} Vulkan::Vulkan
 )
 
 target_compile_definitions(zstreamer PRIVATE
