@@ -231,6 +231,10 @@ zst_element_check_property_type(zst_element_t* el, const char* name,
     if ((spec->flags & access_flag) == 0) return ZST_ERROR;
     if (spec->type == expected) return ZST_OK;
     if (expected == ZST_PROPERTY_STRING && spec->type == ZST_PROPERTY_ENUM) return ZST_OK;
+    if ((expected == ZST_PROPERTY_INT && spec->type == ZST_PROPERTY_UINT) ||
+        (expected == ZST_PROPERTY_UINT && spec->type == ZST_PROPERTY_INT)) {
+        return ZST_OK;
+    }
     return ZST_ERROR;
 }
 

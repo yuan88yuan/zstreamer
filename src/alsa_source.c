@@ -264,7 +264,7 @@ plugin_create_element(const char* name)
 }
 
 static const zst_pad_template_t g_alsasrc_pads[] = {
-    { "src", ZST_PAD_SRC, "ANY" }
+    { "src", ZST_PAD_SRC, "audio/x-raw" }
 };
 
 static const zst_element_desc_t g_alsasrc_elements[] = {

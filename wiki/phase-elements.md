@@ -417,3 +417,21 @@ Demuxes MP4/fragmented-MP4 files or byte streams into encoded elementary audio/v
 
 **Dependencies:** `libavformat-dev`, `libavcodec-dev`, `libavutil-dev`
 
+### 4ad — HTTP Source  (📝 Planned)
+
+Fetches static files or progressive streams over HTTP or HTTPS and pushes the response body downstream as a sequence of buffers. Analogous to GStreamer's `souphttpsrc`.
+
+- [ ] `httpsrc` element with 1 src pad
+- [ ] Backend: FFmpeg libavformat network protocol handler or `libcurl`
+- [ ] Configurable `url` / `uri` property
+- [ ] Handle standard HTTP GET requests, redirection (301, 302, 307), and chunked transfer encoding
+- [ ] Support custom request headers (e.g. `User-Agent`, `Authorization`)
+- [ ] Connection timeout, receive timeout, and error recovery/retry logic
+- [ ] Emit `EOS` when Content-Length is reached or connection is closed by peer
+- [ ] Buffer pool integration for low-overhead memory recycling
+- [ ] Caps negotiation: advertise `application/octet-stream` or media-type based on `Content-Type` header (if known)
+- [ ] Tests: verify streaming from a mock HTTP server, check redirect handling, and verify EOS propagation
+
+**Dependencies:** `libcurl4-openssl-dev` or `libavformat-dev`
+
+

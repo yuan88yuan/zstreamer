@@ -475,10 +475,19 @@ plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_property_spec_t g_tsmux_properties[] = {
+    { "width", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "640", "Video width" },
+    { "height", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "480", "Video height" },
+    { "fps", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "30", "Video frame rate" },
+    { "sample-rate", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "44100", "Audio sample rate" },
+    { "channels", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "2", "Audio channels" },
+    { "location", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Output file path (optional)" }
+};
+
 static const zst_pad_template_t g_tsmux_pads[] = {
-    { "video", ZST_PAD_SINK, "ANY" },
-    { "audio", ZST_PAD_SINK, "ANY" },
-    { "src", ZST_PAD_SRC, "ANY" }
+    { "video", ZST_PAD_SINK, "video/x-h264" },
+    { "audio", ZST_PAD_SINK, "audio/x-aac" },
+    { "src", ZST_PAD_SRC, "video/mpegts" }
 };
 
 static const zst_element_desc_t g_tsmux_elements[] = {
@@ -488,8 +497,8 @@ static const zst_element_desc_t g_tsmux_elements[] = {
         .category = "Muxer/File",
         .description = "Muxes encoded audio/video into MPEG-TS (.ts)",
         .author = "zstreamer",
-        .properties = NULL,
-        .nb_properties = 0,
+        .properties = g_tsmux_properties,
+        .nb_properties = sizeof(g_tsmux_properties) / sizeof(g_tsmux_properties[0]),
         .pads = g_tsmux_pads,
         .nb_pads = sizeof(g_tsmux_pads) / sizeof(g_tsmux_pads[0]),
         .create = NULL

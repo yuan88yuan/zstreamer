@@ -555,10 +555,14 @@ plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_property_spec_t g_tsdemux_properties[] = {
+    { "location", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Input file path (optional)" }
+};
+
 static const zst_pad_template_t g_tsdemux_pads[] = {
-    { "sink", ZST_PAD_SINK, "ANY" },
-    { "video", ZST_PAD_SRC, "ANY" },
-    { "audio", ZST_PAD_SRC, "ANY" }
+    { "sink", ZST_PAD_SINK, "video/mpegts" },
+    { "video", ZST_PAD_SRC, "video/x-h264" },
+    { "audio", ZST_PAD_SRC, "audio/x-aac" }
 };
 
 static const zst_element_desc_t g_tsdemux_elements[] = {
@@ -568,8 +572,8 @@ static const zst_element_desc_t g_tsdemux_elements[] = {
         .category = "Demuxer",
         .description = "Demuxes MPEG-TS (.ts) into encoded audio/video",
         .author = "zstreamer",
-        .properties = NULL,
-        .nb_properties = 0,
+        .properties = g_tsdemux_properties,
+        .nb_properties = sizeof(g_tsdemux_properties) / sizeof(g_tsdemux_properties[0]),
         .pads = g_tsdemux_pads,
         .nb_pads = sizeof(g_tsdemux_pads) / sizeof(g_tsdemux_pads[0]),
         .create = NULL

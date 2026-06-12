@@ -448,8 +448,8 @@ plugin_create_element(const char* name)
 }
 
 static const zst_pad_template_t g_h264dec_pads[] = {
-    { "sink", ZST_PAD_SINK, "ANY" },
-    { "src", ZST_PAD_SRC, "ANY" }
+    { "sink", ZST_PAD_SINK, "video/x-h264" },
+    { "src", ZST_PAD_SRC, "video/x-raw" }
 };
 
 static const zst_element_desc_t g_h264dec_elements[] = {

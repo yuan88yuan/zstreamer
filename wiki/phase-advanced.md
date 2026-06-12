@@ -333,16 +333,16 @@ Add `zst_element_desc_t` metadata for every official element:
 - [x] `textoverlay`, `textsource`, `srtparser`
 - [x] `netsrc`, `netsink`
 - [x] `rtspsource`, `rtspsink`, `rtspserver`
-- [ ] future RTMP source/sink and other elements
+- [x] future RTMP source/sink and other elements
 
 Each descriptor should document:
 
 - [x] factory name
 - [x] long name, category, and description
 - [x] source and sink pad templates
-- [ ] supported/static caps where known
-- [ ] readable/writable properties and defaults
-- [ ] read-only statistics where applicable
+- [x] supported/static caps where known
+- [x] readable/writable properties and defaults
+- [x] read-only statistics where applicable
 
 ### Optional Official Convenience Headers
 
@@ -399,7 +399,7 @@ include/zstreamer/...        public headers
 - [x] Typed property helpers set/get values correctly
 - [x] Typed helper validation rejects wrong property types where metadata is available
 - [x] Public convenience headers compile and link from an external-style test target
-- [ ] Third-party test plugin descriptors are discoverable
+- [x] Third-party test plugin descriptors are discoverable
 
 ### User-Facing Examples
 

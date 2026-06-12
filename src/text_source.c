@@ -521,8 +521,34 @@ static zst_element_t* plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_property_spec_t g_textsource_properties[] = {
+    { "width", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "640", "Video width" },
+    { "height", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "480", "Video height" },
+    { "fps", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "30", "Video frame rate" },
+    { "text", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "Hello", "Text content to display" },
+    { "text-content", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "Hello", "Alias for text" },
+    { "font-size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "24", "Font size in pixels" },
+    { "font_size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "24", "Alias for font-size" },
+    { "font-path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Path to TrueType font file" },
+    { "font_path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Alias for font-path" },
+    { "bg-color", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "black", "Background color name or #RRGGBB hex" },
+    { "background-color", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "black", "Alias for bg-color" },
+    { "text-color", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "white", "Text color name or #RRGGBB hex" },
+    { "color", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "white", "Alias for text-color" },
+    { "text_color", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "white", "Alias for text-color" },
+    { "pixel-format", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "YUV420P", "Pixel format" },
+    { "pixel_format", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "YUV420P", "Alias for pixel-format" },
+    { "num-buffers", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Number of buffers to output before EOF" },
+    { "num_buffers", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Alias for num-buffers" },
+    { "loop", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Loop the source input" },
+    { "use-clock", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Use pipeline clock" },
+    { "do-timestamp", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Alias for use-clock" },
+    { "x", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "10", "X coordinate offset" },
+    { "y", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "10", "Y coordinate offset" }
+};
+
 static const zst_pad_template_t g_textsource_pads[] = {
-    { "src", ZST_PAD_SRC, "ANY" }
+    { "src", ZST_PAD_SRC, "video/x-raw" }
 };
 
 static const zst_element_desc_t g_textsource_elements[] = {
@@ -532,8 +558,8 @@ static const zst_element_desc_t g_textsource_elements[] = {
         .category = "Source/Video",
         .description = "Generates video frames containing text",
         .author = "zstreamer",
-        .properties = NULL,
-        .nb_properties = 0,
+        .properties = g_textsource_properties,
+        .nb_properties = sizeof(g_textsource_properties) / sizeof(g_textsource_properties[0]),
         .pads = g_textsource_pads,
         .nb_pads = sizeof(g_textsource_pads) / sizeof(g_textsource_pads[0]),
         .create = NULL

@@ -430,10 +430,19 @@ plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_property_spec_t g_textoverlay_properties[] = {
+    { "text", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Text to overlay" },
+    { "timecode", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Show timecode" },
+    { "font-size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "24", "Font size" },
+    { "font-path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Path to TTF font file" },
+    { "x", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "10", "X coordinate" },
+    { "y", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "10", "Y coordinate" }
+};
+
 static const zst_pad_template_t g_textoverlay_pads[] = {
-    { "sink", ZST_PAD_SINK, "ANY" },
-    { "text", ZST_PAD_SINK, "ANY" },
-    { "src", ZST_PAD_SRC, "ANY" }
+    { "sink", ZST_PAD_SINK, "video/x-raw" },
+    { "text", ZST_PAD_SINK, "text/x-raw" },
+    { "src", ZST_PAD_SRC, "video/x-raw" }
 };
 
 static const zst_element_desc_t g_textoverlay_elements[] = {
@@ -443,8 +452,8 @@ static const zst_element_desc_t g_textoverlay_elements[] = {
         .category = "Filter/Video",
         .description = "Overlays text on video frames",
         .author = "zstreamer",
-        .properties = NULL,
-        .nb_properties = 0,
+        .properties = g_textoverlay_properties,
+        .nb_properties = sizeof(g_textoverlay_properties) / sizeof(g_textoverlay_properties[0]),
         .pads = g_textoverlay_pads,
         .nb_pads = sizeof(g_textoverlay_pads) / sizeof(g_textoverlay_pads[0]),
         .create = NULL

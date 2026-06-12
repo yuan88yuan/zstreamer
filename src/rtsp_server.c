@@ -1427,9 +1427,16 @@ static zst_element_t* plugin_create(const char* name) {
     return NULL;
 }
 
+static const zst_property_spec_t g_rtspserver_properties[] = {
+    { "listen-port", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "8554", "RTSP server listen port" },
+    { "listen_port", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "8554", "Alias for listen-port" },
+    { "session_count", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE, "0", "Number of active RTSP streaming sessions" },
+    { "client_count", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE, "0", "Number of connected RTSP clients" }
+};
+
 static const zst_pad_template_t g_rtspserver_pads[] = {
-    { "video_%u", ZST_PAD_SINK, "ANY" },
-    { "audio_%u", ZST_PAD_SINK, "ANY" }
+    { "video_%u", ZST_PAD_SINK, "video/x-h264" },
+    { "audio_%u", ZST_PAD_SINK, "audio/x-aac" }
 };
 
 static const zst_element_desc_t g_rtspserver_elements[] = {
@@ -1439,8 +1446,8 @@ static const zst_element_desc_t g_rtspserver_elements[] = {
         .category = "Sink/Network",
         .description = "Serves RTP streams over RTSP",
         .author = "zstreamer",
-        .properties = NULL,
-        .nb_properties = 0,
+        .properties = g_rtspserver_properties,
+        .nb_properties = sizeof(g_rtspserver_properties) / sizeof(g_rtspserver_properties[0]),
         .pads = g_rtspserver_pads,
         .nb_pads = sizeof(g_rtspserver_pads) / sizeof(g_rtspserver_pads[0]),
         .create = NULL

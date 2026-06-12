@@ -727,10 +727,14 @@ plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_property_spec_t g_mp4demux_properties[] = {
+    { "location", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Input MP4 file path (optional; enables direct-file mode)" }
+};
+
 static const zst_pad_template_t g_mp4demux_pads[] = {
-    { "sink", ZST_PAD_SINK, "ANY" },
-    { "video", ZST_PAD_SRC, "ANY" },
-    { "audio", ZST_PAD_SRC, "ANY" }
+    { "sink", ZST_PAD_SINK, "video/quicktime" },
+    { "video", ZST_PAD_SRC, "video/x-h264" },
+    { "audio", ZST_PAD_SRC, "audio/x-aac" }
 };
 
 static const zst_element_desc_t g_mp4demux_elements[] = {
@@ -740,8 +744,8 @@ static const zst_element_desc_t g_mp4demux_elements[] = {
         .category = "Demuxer/File",
         .description = "Demuxes MP4 (.mp4/.mov/.m4a/.m4v) into encoded audio/video",
         .author = "zstreamer",
-        .properties = NULL,
-        .nb_properties = 0,
+        .properties = g_mp4demux_properties,
+        .nb_properties = sizeof(g_mp4demux_properties) / sizeof(g_mp4demux_properties[0]),
         .pads = g_mp4demux_pads,
         .nb_pads = sizeof(g_mp4demux_pads) / sizeof(g_mp4demux_pads[0]),
         .create = NULL

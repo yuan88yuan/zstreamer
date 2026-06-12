@@ -457,8 +457,8 @@ plugin_create_element(const char* name)
 }
 
 static const zst_pad_template_t g_aacdec_pads[] = {
-    { "sink", ZST_PAD_SINK, "ANY" },
-    { "src", ZST_PAD_SRC, "ANY" }
+    { "sink", ZST_PAD_SINK, "audio/x-aac" },
+    { "src", ZST_PAD_SRC, "audio/x-raw" }
 };
 
 static const zst_element_desc_t g_aacdec_elements[] = {
