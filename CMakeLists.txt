@@ -30,6 +30,10 @@ pkg_check_modules(SWSCALE REQUIRED libswscale)
 pkg_check_modules(SWRESAMPLE REQUIRED libswresample)
 pkg_check_modules(FREETYPE REQUIRED freetype2)
 pkg_check_modules(SRT REQUIRED srt)
+find_package(CUDAToolkit QUIET)
+if(CUDAToolkit_FOUND)
+    add_compile_definitions(HAS_CUDA=1)
+endif()
 
 set(ELEMENT_INCLUDE_DIRS
     ${AVFORMAT_INCLUDE_DIRS}
@@ -109,6 +113,13 @@ target_link_libraries(zstreamer
     PUBLIC  Threads::Threads
     PRIVATE ${DL_LIB}
 )
+
+if(CUDAToolkit_FOUND)
+    target_link_libraries(zstreamer PUBLIC CUDA::cudart)
+    set(ZSTREAMER_PKG_LIBS "-lcudart")
+else()
+    set(ZSTREAMER_PKG_LIBS "")
+endif()
 
 target_compile_definitions(zstreamer PRIVATE
     ZSTREAMER_DEFAULT_PLUGIN_DIR="${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/zstreamer/plugins"
