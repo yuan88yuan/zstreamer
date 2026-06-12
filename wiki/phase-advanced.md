@@ -100,11 +100,11 @@
     - [x] Safely resize pool storage when `max_buffers` changes
 
   **Test deliverables:**
-  - [ ] Unit test: acquire/recycle loop (N buffers, M cycles, no net allocation)
+  - [x] Unit test: acquire/recycle loop (N buffers, M cycles, no net allocation)
   - [ ] Unit test: acquire blocks when pool exhausted, unblocks on release
   - [ ] Unit test: acquire with timeout returns NULL on expiry
   - [ ] Unit test: pool-backed buffer unref returns buffer to pool
-  - [ ] Unit test: pool flush frees all cached buffers
+  - [x] Unit test: pool flush frees all cached buffers
   - [x] Unit test: topology-aware pool sizing with downstream queues
   - [ ] Integration test: `videotestsrc → queue → filesink` with pool, verify zero
         calls to `malloc` after warm-up phase

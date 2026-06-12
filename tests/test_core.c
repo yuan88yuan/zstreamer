@@ -3363,6 +3363,133 @@ test_allocator_pool_nonblock(void)
 }
 
 static void
+test_allocator_pool_recycle_loop(void)
+{
+    TEST("pool acquire/recycle loop");
+
+    zst_allocator_t* alloc = zst_allocator_cpu_create();
+
+    zst_buffer_pool_config_t config = {0};
+    config.min_buffers = 2;
+    config.max_buffers = 4;
+    config.buffer_size = 512;
+    config.buffer_type = ZST_BUFFER_USER;
+
+    zst_buffer_pool_t* pool = zst_buffer_pool_create(alloc, &config);
+    assert(pool != NULL);
+
+    for (int i = 0; i < 100; i++) {
+        zst_buffer_t* buf = NULL;
+        assert(zst_buffer_pool_acquire(pool, &buf, 0, 0) == ZST_OK);
+        assert(buf != NULL);
+        ((uint8_t*)buf->memory.data)[0] = 0xAA;
+        zst_buffer_unref(buf);
+    }
+
+    zst_buffer_t* buf1 = NULL;
+    zst_buffer_t* buf2 = NULL;
+
+    assert(zst_buffer_pool_acquire(pool, &buf1, 0, 0) == ZST_OK);
+    assert(buf1 != NULL);
+
+    assert(zst_buffer_pool_acquire(pool, &buf2, 0, 0) == ZST_OK);
+    assert(buf2 != NULL);
+
+    zst_buffer_unref(buf1);
+    zst_buffer_unref(buf2);
+
+    zst_buffer_pool_destroy(pool);
+    zst_allocator_unref(alloc);
+
+    PASS();
+}
+
+static void
+test_allocator_pool_drain(void)
+{
+    TEST("pool drain / flush");
+
+    zst_allocator_t* alloc = zst_allocator_cpu_create();
+
+    zst_buffer_pool_config_t config = {0};
+    config.min_buffers = 3;
+    config.max_buffers = 5;
+    config.buffer_size = 1024;
+    config.buffer_type = ZST_BUFFER_USER;
+
+    zst_buffer_pool_t* pool = zst_buffer_pool_create(alloc, &config);
+    assert(pool != NULL);
+
+    zst_buffer_pool_prefill(pool);
+
+    zst_buffer_t* buf1 = NULL;
+    zst_buffer_t* buf2 = NULL;
+    zst_buffer_t* buf3 = NULL;
+
+    assert(zst_buffer_pool_acquire(pool, &buf1, 0, 0) == ZST_OK);
+    assert(buf1 != NULL);
+    assert(zst_buffer_pool_acquire(pool, &buf2, 0, 0) == ZST_OK);
+    assert(buf2 != NULL);
+    assert(zst_buffer_pool_acquire(pool, &buf3, 0, 0) == ZST_OK);
+    assert(buf3 != NULL);
+
+    zst_buffer_unref(buf1);
+    zst_buffer_unref(buf2);
+    zst_buffer_unref(buf3);
+
+    zst_buffer_pool_drain(pool);
+
+    zst_buffer_t* buf4 = NULL;
+    assert(zst_buffer_pool_acquire(pool, &buf4, 0, 0) == ZST_OK);
+    assert(buf4 != NULL);
+
+    zst_buffer_unref(buf4);
+
+    zst_buffer_pool_destroy(pool);
+    zst_allocator_unref(alloc);
+
+    PASS();
+}
+
+static void
+test_allocator_pool_config(void)
+{
+    TEST("pool config get/set");
+
+    zst_allocator_t* alloc = zst_allocator_cpu_create();
+
+    zst_buffer_pool_config_t config = {0};
+    config.min_buffers = 2;
+    config.max_buffers = 4;
+    config.buffer_size = 1024;
+    config.buffer_type = ZST_BUFFER_USER;
+
+    zst_buffer_pool_t* pool = zst_buffer_pool_create(alloc, &config);
+    assert(pool != NULL);
+
+    zst_buffer_pool_config_t curr_config = zst_buffer_pool_get_config(pool);
+    assert(curr_config.min_buffers == 2);
+    assert(curr_config.max_buffers == 4);
+
+    zst_buffer_pool_config_t new_config = {0};
+    new_config.min_buffers = 3;
+    new_config.max_buffers = 6;
+    new_config.buffer_size = 1024;
+    new_config.buffer_type = ZST_BUFFER_USER;
+
+    assert(zst_buffer_pool_set_config(pool, &new_config) == ZST_OK);
+
+    zst_buffer_pool_config_t updated_config = zst_buffer_pool_get_config(pool);
+    assert(updated_config.min_buffers == 3);
+    assert(updated_config.max_buffers == 6);
+
+    zst_buffer_pool_destroy(pool);
+    zst_allocator_unref(alloc);
+
+    PASS();
+}
+
+static void
 test_clock_basic(void)
 {
     TEST("clock create / time / wait / destroy");
@@ -4638,6 +4765,10 @@ int main(void)
     printf("[allocator]\n");
     test_allocator_basic();
     test_allocator_pool_nonblock();
+    test_allocator_pool_recycle_loop();
+    printf("[allocator pool advanced]\n");
+    test_allocator_pool_drain();
+    test_allocator_pool_config();
 
     /* ── Clock (Phase 8b) ── */
     printf("[clock]\n");
