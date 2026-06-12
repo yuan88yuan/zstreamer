@@ -180,13 +180,13 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | Core Framework              | ✅ All 8 core modules implemented|
 | Scheduler Integration       | ✅ Topological sort, push/pull, EOS, state hardening |
 | Queue Element               | ✅ First-class queue with worker thread |
-| Real Element Implementations| ✅ 26 elements: v4l2_source, alsa_source, h264_encoder, h264_decoder, h265_encoder, h265_decoder, aac_encoder, aac_decoder, mp4_muxer, file_sink, file_source, fake_sink, video_scaler, audio_resampler, video_test_src, audio_test_src, text_overlay, text_source, srt_parser, net_source, net_sink, rtsp_source, rtsp_sink, rtsp_server, rtmp_source, rtmp_sink |
-| Planned Element Additions   | 📝 SRT transport source/sink, MPEG-TS muxer/demuxer, MP4 demuxer |
+| Real Element Implementations| ✅ 30 elements: v4l2_source, alsa_source, h264_encoder, h264_decoder, h265_encoder, h265_decoder, aac_encoder, aac_decoder, mp4_muxer, file_sink, file_source, fake_sink, video_scaler, audio_resampler, video_test_src, audio_test_src, text_overlay, text_source, srt_parser, net_source, net_sink, rtsp_source, rtsp_sink, rtsp_server, rtmp_source, rtmp_sink, srt_source, srt_sink, mpegts_muxer, mpegts_demuxer |
+| Planned Element Additions   | 📝 MP4 demuxer |
 | Caps Negotiation            | ✅ Done                          |
 | Event Bus                   | ✅ Done                          |
 | Dynamic Plugins             | ✅ Done                          |
 | Logging System              | ✅ Done                          |
-| Unit Tests                  | ✅ 62 core tests + test_net_source + test_net_sink + install test, all passing |
+| Unit Tests                  | ✅ 63 core tests + test_net_source + test_net_sink + install test, all passing |
 | Allocator API + Pool        | ✅ Mostly done (allocator interface, pool, elements migrated, topology-aware sizing; some pool stress tests pending) |
 | Clock                       | ✅ Done (system clock + pipeline integration) |
 | Element Public API (8d)     | ✅ Done (Descriptor ABI, plugin introspection, typed properties, official metadata, convenience headers, library & installation layout) |
@@ -206,8 +206,8 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | Element Bins (8c)           | ✅ Done (composite bins + ghost pads) |
 | Pad Probes / Blocking (8c)  | ✅ Done                          |
 | Segment Seeking (8c)        | ✅ Done                          |
-| SRT Transport Protocols     | 📝 Planned                       |
-| MPEG-TS mux/demux           | 📝 Planned                       |
+| SRT Transport Protocols     | ✅ Done                          |
+| MPEG-TS mux/demux           | ✅ Done                          |
 | MP4 Demuxer                 | 📝 Planned                       |
 | CI Pipeline                 | 📝 Future                        |
 

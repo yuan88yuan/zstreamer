@@ -3791,6 +3791,209 @@ static void test_srt_elements(void)
     PASS();
 }
 
+static int g_ts_video_received = 0;
+static int g_ts_audio_received = 0;
+static uint64_t g_ts_video_pts = 0;
+static uint64_t g_ts_audio_pts = 0;
+
+static zst_result_t
+test_ts_video_push(zst_pad_t* pad, zst_buffer_t* buf)
+{
+    if (!(buf->flags & ZST_BUFFER_FLAG_EOS)) {
+        g_ts_video_received++;
+        g_ts_video_pts = buf->pts;
+    }
+    return ZST_OK;
+}
+
+static zst_result_t
+test_ts_audio_push(zst_pad_t* pad, zst_buffer_t* buf)
+{
+    if (!(buf->flags & ZST_BUFFER_FLAG_EOS)) {
+        g_ts_audio_received++;
+        g_ts_audio_pts = buf->pts;
+    }
+    return ZST_OK;
+}
+
+static void test_mpegts_elements(void)
+{
+    TEST("MPEG-TS muxer and demuxer roundtrip");
+
+    zst_plugin_registry_init();
+    assert(zst_register_builtin_elements() == ZST_OK);
+    
+    zst_element_t* mux = zst_element_factory_make("tsmux");
+    zst_element_t* demux = zst_element_factory_make("tsdemux");
+    assert(mux != NULL && demux != NULL);
+    
+    assert(zst_element_set_property_int(mux, "width", 320) == ZST_OK);
+    assert(zst_element_set_property_int(mux, "height", 240) == ZST_OK);
+    assert(zst_element_set_property_int(mux, "fps", 30) == ZST_OK);
+    assert(zst_element_set_property_int(mux, "sample-rate", 44100) == ZST_OK);
+    assert(zst_element_set_property_int(mux, "channels", 2) == ZST_OK);
+    
+    zst_pad_t* mux_src = zst_element_get_pad(mux, "src");
+    zst_pad_t* demux_sink = zst_element_get_pad(demux, "sink");
+    assert(mux_src != NULL && demux_sink != NULL);
+    assert(zst_pad_link(mux_src, demux_sink) == ZST_OK);
+
+    zst_pad_t* dummy_video_src = zst_pad_create("video_src", ZST_PAD_SRC);
+    zst_pad_t* dummy_audio_src = zst_pad_create("audio_src", ZST_PAD_SRC);
+    zst_pad_t* mux_video = zst_element_get_pad(mux, "video");
+    zst_pad_t* mux_audio = zst_element_get_pad(mux, "audio");
+    assert(mux_video != NULL && mux_audio != NULL);
+    assert(zst_pad_link(dummy_video_src, mux_video) == ZST_OK);
+    assert(zst_pad_link(dummy_audio_src, mux_audio) == ZST_OK);
+    
+    zst_pad_t* dummy_video_sink = zst_pad_create("video_sink", ZST_PAD_SINK);
+    zst_pad_t* dummy_audio_sink = zst_pad_create("audio_sink", ZST_PAD_SINK);
+    dummy_video_sink->push = test_ts_video_push;
+    dummy_audio_sink->push = test_ts_audio_push;
+    
+    zst_pad_t* demux_video = zst_element_get_pad(demux, "video");
+    zst_pad_t* demux_audio = zst_element_get_pad(demux, "audio");
+    assert(demux_video != NULL && demux_audio != NULL);
+    assert(zst_pad_link(demux_video, dummy_video_sink) == ZST_OK);
+    assert(zst_pad_link(demux_audio, dummy_audio_sink) == ZST_OK);
+    
+    assert(zst_element_set_state(mux, ZST_STATE_READY) == ZST_OK);
+    assert(zst_element_set_state(demux, ZST_STATE_READY) == ZST_OK);
+    assert(zst_element_set_state(mux, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_element_set_state(demux, ZST_STATE_PLAYING) == ZST_OK);
+    
+    g_ts_video_received = 0;
+    g_ts_audio_received = 0;
+    
+    zst_element_t* video_enc = zst_h264_encoder_create();
+    assert(video_enc != NULL);
+    assert(zst_element_set_state(video_enc, ZST_STATE_READY) == ZST_OK);
+    zst_buffer_t* v_buf = NULL;
+    for (int n = 0; n < 5 && !v_buf; n++) {
+        zst_buffer_t* raw_v = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
+        assert(raw_v != NULL);
+        raw_v->pts = 1000000000;
+        raw_v->dts = 1000000000;
+        raw_v->memory.size = 320u * 240u * 3u / 2u;
+        raw_v->memory.data = calloc(1, raw_v->memory.size);
+        raw_v->payload = calloc(1, sizeof(zst_video_frame_t));
+        raw_v->destroy = decoder_test_buf_free;
+        assert(raw_v->memory.data != NULL && raw_v->payload != NULL);
+        zst_video_frame_t* vf = raw_v->payload;
+        vf->width = 320;
+        vf->height = 240;
+        vf->format = 0;
+        vf->plane[0] = raw_v->memory.data;
+        vf->plane[1] = (uint8_t*)raw_v->memory.data + 320 * 240;
+        vf->plane[2] = (uint8_t*)raw_v->memory.data + 320 * 240 + 320 * 240 / 4;
+        vf->stride[0] = 320;
+        vf->stride[1] = 160;
+        vf->stride[2] = 160;
+        memset(vf->plane[0], 80, 320 * 240);
+        memset(vf->plane[1], 90, 320 * 240 / 4);
+        memset(vf->plane[2], 100, 320 * 240 / 4);
+        assert(video_enc->ops->process(video_enc, raw_v, &v_buf) == ZST_OK);
+        zst_buffer_unref(raw_v);
+    }
+    assert(v_buf != NULL && v_buf->memory.size > 0);
+    v_buf->pts = 1000000000;
+    v_buf->dts = 1000000000;
+    v_buf->duration = 33333333;
+    
+    zst_element_t* audio_enc = zst_aac_encoder_create();
+    assert(audio_enc != NULL);
+    assert(zst_element_set_state(audio_enc, ZST_STATE_READY) == ZST_OK);
+    zst_buffer_t* a_buf_raw = NULL;
+    for (int n = 0; n < 5 && !a_buf_raw; n++) {
+        zst_buffer_t* raw_a = zst_buffer_create(ZST_BUFFER_AUDIO_FRAME);
+        assert(raw_a != NULL);
+        raw_a->pts = 1000000000;
+        raw_a->dts = 1000000000;
+        raw_a->memory.size = 1024u * 2u * sizeof(int16_t);
+        raw_a->memory.data = calloc(1, raw_a->memory.size);
+        raw_a->payload = calloc(1, sizeof(zst_audio_frame_t));
+        raw_a->destroy = decoder_test_buf_free;
+        assert(raw_a->memory.data != NULL && raw_a->payload != NULL);
+        zst_audio_frame_t* af = raw_a->payload;
+        af->sample_rate = 44100;
+        af->channels = 2;
+        af->format = 0;
+        af->nb_samples = 1024;
+        af->data = raw_a->memory.data;
+        int16_t* pcm = raw_a->memory.data;
+        for (int i = 0; i < 1024 * 2; i++) {
+            pcm[i] = (int16_t)((i % 100) - 50);
+        }
+        assert(audio_enc->ops->process(audio_enc, raw_a, &a_buf_raw) == ZST_OK);
+        zst_buffer_unref(raw_a);
+    }
+    assert(a_buf_raw != NULL && a_buf_raw->memory.size > 0);
+
+    zst_buffer_t* a_buf = zst_buffer_create(ZST_BUFFER_AUDIO_PACKET);
+    assert(a_buf != NULL);
+    a_buf->memory.size = a_buf_raw->memory.size + 7;
+    a_buf->memory.data = malloc(a_buf->memory.size);
+    a_buf->destroy = decoder_test_buf_free;
+    assert(a_buf->memory.data != NULL);
+    aac_test_write_adts(a_buf->memory.data, (int)a_buf_raw->memory.size, 44100, 2);
+    memcpy((uint8_t*)a_buf->memory.data + 7, a_buf_raw->memory.data, a_buf_raw->memory.size);
+    a_buf->pts = 1000000000;
+    a_buf->dts = 1000000000;
+    a_buf->duration = 23219954;
+    zst_buffer_unref(a_buf_raw);
+    
+    assert(zst_pad_push(dummy_video_src, v_buf) == ZST_OK);
+    assert(g_ts_video_received == 0);
+    
+    assert(zst_pad_push(dummy_audio_src, a_buf) == ZST_OK);
+
+    // Push EOS to both inputs to flush the muxer and demuxer
+    zst_buffer_t* a_eos = zst_buffer_create(ZST_BUFFER_AUDIO_PACKET);
+    a_eos->flags |= ZST_BUFFER_FLAG_EOS;
+    assert(zst_pad_push(dummy_audio_src, a_eos) == ZST_OK);
+    zst_buffer_unref(a_eos);
+
+    zst_buffer_t* v_eos = zst_buffer_create(ZST_BUFFER_VIDEO_PACKET);
+    v_eos->flags |= ZST_BUFFER_FLAG_EOS;
+    assert(zst_pad_push(dummy_video_src, v_eos) == ZST_OK);
+    zst_buffer_unref(v_eos);
+    
+    printf("DEBUG: g_ts_video_received = %d, video_pts = %lu\n", g_ts_video_received, g_ts_video_pts);
+    printf("DEBUG: g_ts_audio_received = %d, audio_pts = %lu\n", g_ts_audio_received, g_ts_audio_pts);
+
+    assert(g_ts_video_received > 0);
+    assert(g_ts_audio_received > 0);
+    assert(g_ts_video_pts == 1000000000);
+    assert(g_ts_audio_pts == 1000000000);
+    
+    zst_buffer_unref(v_buf);
+    zst_buffer_unref(a_buf);
+    
+    assert(zst_element_set_state(mux, ZST_STATE_NULL) == ZST_OK);
+    assert(zst_element_set_state(demux, ZST_STATE_NULL) == ZST_OK);
+    assert(zst_element_set_state(video_enc, ZST_STATE_NULL) == ZST_OK);
+    assert(zst_element_set_state(audio_enc, ZST_STATE_NULL) == ZST_OK);
+    
+    zst_pad_unlink(dummy_video_src);
+    zst_pad_unlink(dummy_audio_src);
+    zst_pad_destroy(dummy_video_src);
+    zst_pad_destroy(dummy_audio_src);
+
+    zst_pad_unlink(demux_video);
+    zst_pad_unlink(demux_audio);
+    zst_pad_destroy(dummy_video_sink);
+    zst_pad_destroy(dummy_audio_sink);
+    
+    zst_element_destroy(mux);
+    zst_element_destroy(demux);
+    zst_element_destroy(video_enc);
+    zst_element_destroy(audio_enc);
+    
+    zst_plugin_registry_deinit();
+
+    PASS();
+}
+
 static void test_rtmp_elements(void)
 {
     TEST("rtmp/rtsp source/sink properties and caps");
@@ -3852,6 +4055,30 @@ static void test_rtmp_elements(void)
     assert(zst_element_set_property(rtmpsink, "url", "rtmp://localhost/live/out") == ZST_OK);
     assert(zst_element_get_property(rtmpsink, "url", val, sizeof(val)) == ZST_OK);
     assert(strcmp(val, "rtmp://localhost/live/out") == 0);
+
+    assert(zst_element_set_property(rtmpsink, "rtmp_url", "rtmp://user:pass@127.0.0.1/live/out") == ZST_OK);
+    assert(zst_element_get_property(rtmpsink, "url", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "rtmp://user:pass@127.0.0.1/live/out") == 0);
+
+    assert(zst_element_set_property_bool(rtmpsink, "live", false) == ZST_OK);
+    bool sink_live = true;
+    assert(zst_element_get_property_bool(rtmpsink, "live", &sink_live) == ZST_OK);
+    assert(sink_live == false);
+
+    assert(zst_element_set_property_bool(rtmpsink, "reconnect", true) == ZST_OK);
+    bool sink_reconnect = false;
+    assert(zst_element_get_property_bool(rtmpsink, "reconnect", &sink_reconnect) == ZST_OK);
+    assert(sink_reconnect == true);
+
+    assert(zst_element_set_property_int(rtmpsink, "reconnect-delay-ms", 250) == ZST_OK);
+    int64_t sink_delay = 0;
+    assert(zst_element_get_property_int(rtmpsink, "reconnect-delay-ms", &sink_delay) == ZST_OK);
+    assert(sink_delay == 250);
+
+    assert(zst_element_set_property_int(rtmpsink, "max-reconnect-attempts", 5) == ZST_OK);
+    int64_t sink_attempts = 0;
+    assert(zst_element_get_property_int(rtmpsink, "max-reconnect-attempts", &sink_attempts) == ZST_OK);
+    assert(sink_attempts == 5);
 
     zst_pad_t* sink_vpad = zst_element_get_pad(rtmpsink, "video");
     assert(sink_vpad != NULL);
@@ -4019,6 +4246,9 @@ int main(void)
 
     printf("[srt source/sink]\n");
     test_srt_elements();
+
+    printf("[mpegts muxer/demuxer]\n");
+    test_mpegts_elements();
 
     /* ── Summary ── */
     printf("\n──────────────────────────────────────────────────\n");

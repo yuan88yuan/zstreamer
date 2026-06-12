@@ -27,5 +27,5 @@ This document tracks the tasks and status for hardening the RTMP Source and Sink
 - [x] **Sink: negotiate codec from upstream caps** — Currently hardcodes `AV_CODEC_ID_H264` / `AV_CODEC_ID_AAC`.  Should read upstream caps to support H.265 video.  ([rtmp_sink.c](file:///home/zzlee/zstreamer/src/rtmp_sink.c#L50-L100))
 - [x] **Sink: populate codec parameters** — Set `codecpar->width`, `height`, `sample_rate`, `channels` from upstream caps or metadata.
 - [x] **Source: accept URL at construction** — Change `zst_rtmp_source_create(void)` to `zst_rtmp_source_create(const char* url)` (NULL allowed) for API parity with RTSP source.
-- [ ] **Reconnection with back-off** — Both source and sink lack auto-reconnect on stream loss (planned in phase-elements.md 4q/4r).
-- [ ] **Additional properties** — `live`, `buffer_time`, `swf_url` for source; `live` for sink (planned in phase-elements.md).
+- [x] **Reconnection with back-off** — Both source and sink lack auto-reconnect on stream loss (planned in phase-elements.md 4q/4r).
+- [x] **Additional properties** — `live`, `buffer_time`, `swf_url` for source; `live` for sink (planned in phase-elements.md).

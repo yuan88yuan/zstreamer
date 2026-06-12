@@ -44,6 +44,6 @@ This document lists features that are still planned across all phases.
 
 | Item | Description | Status |
 |------|-------------|--------|
-| SRT source/sink | Secure Reliable Transport protocol (UDT-based) | 📝 Planned |
+| SRT source/sink | Secure Reliable Transport protocol (UDT-based) | ✅ Done |
 
 > **Note:** The `srt_parser` element (phase 4u) already implements SRT **subtitle** file parsing (`.srt`). The SRT **transport protocol** is a separate feature.

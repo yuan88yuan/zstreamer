@@ -60,6 +60,8 @@ zst_element_t* zst_rtmp_source_create(const char* url);
 zst_element_t* zst_rtmp_sink_create(void);
 zst_element_t* zst_srt_source_create(void);
 zst_element_t* zst_srt_sink_create(void);
+zst_element_t* zst_mpegts_muxer_create(void);
+zst_element_t* zst_mpegts_demuxer_create(void);
 
 /*──────────────────────────────────────────────────────────────────────────
   Pad template tables (used by descriptor tables below).
@@ -93,6 +95,14 @@ static const zst_pad_template_t g_pad_rtmp_src[]     = {
 static const zst_pad_template_t g_pad_rtmp_sink[]    = {
     { "video", ZST_PAD_SINK, "ANY" },
     { "audio", ZST_PAD_SINK, "ANY" }
+};
+
+static const zst_pad_template_t g_pad_tsmux[]       = {
+    { "video", ZST_PAD_SINK, "ANY" }, { "audio", ZST_PAD_SINK, "ANY" }, { "src", ZST_PAD_SRC, "ANY" }
+};
+
+static const zst_pad_template_t g_pad_tsdemux[]     = {
+    { "sink", ZST_PAD_SINK, "ANY" }, { "video", ZST_PAD_SRC, "ANY" }, { "audio", ZST_PAD_SRC, "ANY" }
 };
 
 /*──────────────────────────────────────────────────────────────────────────
@@ -129,7 +139,12 @@ static const zst_property_spec_t g_builtin_rtmpsrc_props[] = {
 };
 
 static const zst_property_spec_t g_builtin_rtmpsink_props[] = {
-    { "url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "RTMP Destination URL" }
+    { "url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "RTMP Destination URL" },
+    { "rtmp_url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Alias for url" },
+    { "live", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "true", "Use live RTMP mode" },
+    { "reconnect", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Reconnect on publish failure" },
+    { "reconnect-delay-ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "500", "Delay between reconnect attempts" },
+    { "max-reconnect-attempts", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Maximum reconnect attempts; -1 means unlimited" }
 };
 
 static const zst_property_spec_t g_builtin_srtsrc_props[] = {
@@ -189,6 +204,19 @@ static const zst_property_spec_t g_builtin_h265enc_props[] = {
     { "level", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "HEVC level (empty = encoder default)" }
 };
 
+static const zst_property_spec_t g_builtin_tsmux_props[] = {
+    { "width", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "640", "Video width" },
+    { "height", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "480", "Video height" },
+    { "fps", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "30", "Video frame rate" },
+    { "sample-rate", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "44100", "Audio sample rate" },
+    { "channels", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "2", "Audio channels" },
+    { "location", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Output file path (optional)" }
+};
+
+static const zst_property_spec_t g_builtin_tsdemux_props[] = {
+    { "location", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Input file path (optional)" }
+};
+
 /*──────────────────────────────────────────────────────────────────────────
   create_element callback — constructs an element by name using direct
   constructor calls (no weak symbols).
@@ -226,6 +254,8 @@ create_builtin_element(const char* name)
     if (strcmp(name, "rtmpsink") == 0)     return zst_rtmp_sink_create();
     if (strcmp(name, "srtsrc") == 0)       return zst_srt_source_create();
     if (strcmp(name, "srtsink") == 0)      return zst_srt_sink_create();
+    if (strcmp(name, "tsmux") == 0)        return zst_mpegts_muxer_create();
+    if (strcmp(name, "tsdemux") == 0)      return zst_mpegts_demuxer_create();
     return NULL;
 }
 
@@ -264,7 +294,9 @@ static const zst_element_desc_t g_builtin_descs[] = {
     DESC("rtmpsrc",  "RTMP Source",      "Source/Network","Receives audio/video from an RTMP endpoint",                                                                          g_builtin_rtmpsrc_props,        sizeof(g_builtin_rtmpsrc_props) / sizeof(g_builtin_rtmpsrc_props[0]), g_pad_rtmp_src),
     DESC("rtmpsink", "RTMP Sink",        "Sink/Network", "Publishes audio/video to an RTMP endpoint",                                                                             g_builtin_rtmpsink_props,       sizeof(g_builtin_rtmpsink_props) / sizeof(g_builtin_rtmpsink_props[0]), g_pad_rtmp_sink),
     DESC("srtsrc",   "SRT Source",       "Source/Network","Receives buffers over Secure Reliable Transport (SRT)",                                                                 g_builtin_srtsrc_props,         sizeof(g_builtin_srtsrc_props) / sizeof(g_builtin_srtsrc_props[0]), g_pad_src),
-    DESC("srtsink",  "SRT Sink",         "Sink/Network", "Sends buffers over Secure Reliable Transport (SRT)",                                                                   g_builtin_srtsink_props,        sizeof(g_builtin_srtsink_props) / sizeof(g_builtin_srtsink_props[0]), g_pad_sink)
+    DESC("srtsink",  "SRT Sink",         "Sink/Network", "Sends buffers over Secure Reliable Transport (SRT)",                                                                   g_builtin_srtsink_props,        sizeof(g_builtin_srtsink_props) / sizeof(g_builtin_srtsink_props[0]), g_pad_sink),
+    DESC("tsmux",    "MPEG-TS Muxer",    "Muxer/File",   "Muxes encoded audio/video into MPEG-TS (.ts)",                                                                         g_builtin_tsmux_props,          sizeof(g_builtin_tsmux_props) / sizeof(g_builtin_tsmux_props[0]), g_pad_tsmux),
+    DESC("tsdemux",  "MPEG-TS Demuxer",  "Demuxer",      "Demuxes MPEG-TS (.ts) into encoded audio/video",                                                                       g_builtin_tsdemux_props,        sizeof(g_builtin_tsdemux_props) / sizeof(g_builtin_tsdemux_props[0]), g_pad_tsdemux)
 };
 
 /*──────────────────────────────────────────────────────────────────────────

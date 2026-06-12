@@ -360,44 +360,44 @@ Publishes pipeline output to an RTMP ingest endpoint — the standard way to pus
 - [x] FLV muxing: wrap incoming H.264/AAC buffers into FLV tags, maintain correct tag boundaries
 - [x] AMF0 metadata injection: `@setDataFrame("onMetaData")` with `width`, `height`, `framerate`, `videocodecid`, `audiocodecid`, `duration`
 - [x] Timestamp generation: pipeline clock → FLV timestamps (milliseconds, monotonically increasing)
-- [ ] Configurable `rtmp_url`, `live` (true = no buffer, low latency)
-- [ ] Authentication: `rtmp://user:pass@host/app/streamkey`
-- [ ] Reconnection: auto-reconnect on publish failure, exponential back-off
+- [x] Configurable `rtmp_url`, `live` (true = no buffer, low latency)
+- [x] Authentication: `rtmp://user:pass@host/app/streamkey`
+- [x] Reconnection: auto-reconnect on publish failure, exponential back-off
 - [x] EOS passthrough: send `FCUnpublish` on stream end, clean disconnect
 
-### 4aa — SRT Transport Protocols (Secure Reliable Transport Source & Sink)  (📝 Planned)
+### 4aa — SRT Transport Protocols (Secure Reliable Transport Source & Sink)  (✅ Done)
 
 Adds Secure Reliable Transport (SRT) ingest and egress elements for low-latency, loss-resilient contribution workflows. This is a transport protocol and is distinct from **4u SRT Subtitle Parser** (SubRip text subtitles).
 
-- [ ] `srtsrc` element with 1+ src pads for received MPEG-TS or raw byte-stream payloads
-- [ ] `srtsink` element with 1 sink pad for MPEG-TS or raw byte-stream payloads
-- [ ] Backend: `libsrt` socket API (`srt_create_socket`, `srt_connect`, `srt_bind`, `srt_listen`, `srt_accept`, `srt_sendmsg2`, `srt_recvmsg2`)
-- [ ] Modes: caller, listener, and rendezvous
-- [ ] Configurable URI/properties: `uri`, `host`, `port`, `mode`, `latency`, `passphrase`, `pbkeylen`, `streamid`, `payload-size`
-- [ ] AES encryption support via SRT passphrase/key length
-- [ ] Reconnection and exponential back-off on link loss
-- [ ] Timestamp mapping from SRT packet time / pipeline clock to buffer PTS
-- [ ] EOS on socket close or graceful shutdown
-- [ ] Caps negotiation: advertise `video/mp2t` for MPEG-TS mode and `application/octet-stream` for raw mode
-- [ ] Optional integrated MPEG-TS demux/mux handoff for H.264/H.265/AAC pipelines
+- [x] `srtsrc` element with 1+ src pads for received MPEG-TS or raw byte-stream payloads
+- [x] `srtsink` element with 1 sink pad for MPEG-TS or raw byte-stream payloads
+- [x] Backend: `libsrt` socket API (`srt_create_socket`, `srt_connect`, `srt_bind`, `srt_listen`, `srt_accept`, `srt_sendmsg2`, `srt_recvmsg2`)
+- [x] Modes: caller, listener, and rendezvous
+- [x] Configurable URI/properties: `uri`, `host`, `port`, `mode`, `latency`, `passphrase`, `pbkeylen`, `streamid`, `payload-size`
+- [x] AES encryption support via SRT passphrase/key length
+- [x] Reconnection and exponential back-off on link loss
+- [x] Timestamp mapping from SRT packet time / pipeline clock to buffer PTS
+- [x] EOS on socket close or graceful shutdown
+- [x] Caps negotiation: advertise `video/mp2t` for MPEG-TS mode and `application/octet-stream` for raw mode
+- [x] Optional integrated MPEG-TS demux/mux handoff for H.264/H.265/AAC pipelines
 
 **Dependencies:** `libsrt-dev`
 
-### 4ab — MPEG Transport Stream Muxer / Demuxer (`.ts`)  (📝 Planned)
+### 4ab — MPEG Transport Stream Muxer / Demuxer (`.ts`)  (✅ Done)
 
 Adds MPEG-TS container support for broadcast, SRT contribution, HLS segmenting, and interoperability with common streaming tools. The muxer/demuxer should support encoded H.264, H.265/HEVC, and AAC payloads.
 
-- [ ] `tsmux` element with sink pads for `video/x-h264`, `video/x-h265`, and `audio/aac`, plus one `video/mp2t` src pad
-- [ ] `tsdemux` element with one `video/mp2t` sink pad and dynamic/static src pads for H.264, H.265, and AAC elementary streams
-- [ ] Backend: FFmpeg `libavformat` MPEG-TS muxer/demuxer or native TS packet writer/parser
-- [ ] PAT/PMT generation and parsing with stream type mapping for H.264 (`0x1b`), H.265 (`0x24`), and AAC (`0x0f`)
-- [ ] PES packetization/depacketization with correct PTS/DTS propagation
-- [ ] PCR generation, continuity counters, adaptation fields, and packet alignment to 188-byte TS packets
-- [ ] Annex B handling for H.264/H.265 payloads, including parameter-set propagation where needed
-- [ ] AAC ADTS / LATM handling strategy documented and implemented for mux/demux compatibility
-- [ ] EOS handling: flush partial PES/TS packets and propagate downstream EOS
-- [ ] Caps negotiation: `video/mp2t` container caps and elementary stream caps on demuxed pads
-- [ ] Tests: H.264/AAC and H.265/AAC mux → demux roundtrip preserves payload boundaries and timestamps
+- [x] `tsmux` element with sink pads for `video/x-h264`, `video/x-h265`, and `audio/aac`, plus one `video/mp2t` src pad
+- [x] `tsdemux` element with one `video/mp2t` sink pad and dynamic/static src pads for H.264, H.265, and AAC elementary streams
+- [x] Backend: FFmpeg `libavformat` MPEG-TS muxer/demuxer or native TS packet writer/parser
+- [x] PAT/PMT generation and parsing with stream type mapping for H.264 (`0x1b`), H.265 (`0x24`), and AAC (`0x0f`)
+- [x] PES packetization/depacketization with correct PTS/DTS propagation
+- [x] PCR generation, continuity counters, adaptation fields, and packet alignment to 188-byte TS packets
+- [x] Annex B handling for H.264/H.265 payloads, including parameter-set propagation where needed
+- [x] AAC ADTS / LATM handling strategy documented and implemented for mux/demux compatibility
+- [x] EOS handling: flush partial PES/TS packets and propagate downstream EOS
+- [x] Caps negotiation: `video/mp2t` container caps and elementary stream caps on demuxed pads
+- [x] Tests: H.264/AAC and H.265/AAC mux → demux roundtrip preserves payload boundaries and timestamps
 
 **Dependencies:** `libavformat-dev`, `libavcodec-dev`, `libavutil-dev` (if FFmpeg-backed)
 
