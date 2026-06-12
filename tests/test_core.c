@@ -10,12 +10,14 @@
 #include <assert.h>
 #include <time.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include "zst_types.h"
 #include "zst_buffer.h"
 #include "zst_pad.h"
 #include "zst_element.h"
 #include "zst_pipeline.h"
+#include "zst_bin.h"
 #include "zst_buffer_pool.h"
 #include "zst_queue.h"
 #include "zst_scheduler.h"
@@ -599,6 +601,448 @@ mock_sink_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     sink->sum += val;
 
     return ZST_OK;
+}
+
+typedef struct {
+    int opened;
+    int started;
+    int stopped;
+    int closed;
+} bin_state_counter_t;
+
+static zst_result_t
+bin_state_open(zst_element_t* el)
+{
+    bin_state_counter_t* c = el->priv;
+    c->opened++;
+    return ZST_OK;
+}
+
+static zst_result_t
+bin_state_start(zst_element_t* el)
+{
+    bin_state_counter_t* c = el->priv;
+    c->started++;
+    return ZST_OK;
+}
+
+static zst_result_t
+bin_state_stop(zst_element_t* el)
+{
+    bin_state_counter_t* c = el->priv;
+    c->stopped++;
+    return ZST_OK;
+}
+
+static zst_result_t
+bin_state_close(zst_element_t* el)
+{
+    bin_state_counter_t* c = el->priv;
+    c->closed++;
+    return ZST_OK;
+}
+
+static zst_element_ops_t g_bin_state_child_ops = {
+    .name = "bin_state_child",
+    .open = bin_state_open,
+    .start = bin_state_start,
+    .stop = bin_state_stop,
+    .close = bin_state_close,
+};
+
+static void
+test_bin_state_propagation(void)
+{
+    TEST("element bin child management / state propagation");
+
+    zst_pipeline_t* pipe = zst_pipeline_create();
+    assert(pipe != NULL);
+    zst_element_t* bin = zst_bin_create("state-bin");
+    assert(bin != NULL);
+
+    bin_state_counter_t* c = calloc(1, sizeof(*c));
+    assert(c != NULL);
+    zst_element_t* child = zst_element_create(&g_bin_state_child_ops, c);
+    assert(child != NULL);
+
+    assert(zst_bin_add(bin, child) == ZST_OK);
+    assert(zst_bin_get_child_count(bin) == 1);
+    assert(zst_bin_get_child(bin, 0) == child);
+
+    assert(zst_pipeline_add(pipe, bin) == ZST_OK);
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_PAUSED) == ZST_OK);
+    assert(bin->state == ZST_STATE_PAUSED);
+    assert(child->state == ZST_STATE_PAUSED);
+    assert(c->opened == 1);
+    assert(c->started == 0);
+    assert(child->bus == pipe->bus);
+
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_PLAYING) == ZST_OK);
+    assert(child->state == ZST_STATE_PLAYING);
+    assert(c->started == 1);
+
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_NULL) == ZST_OK);
+    assert(child->state == ZST_STATE_NULL);
+    assert(c->stopped == 1);
+    assert(c->closed == 1);
+
+    zst_pipeline_destroy(pipe);
+    PASS();
+}
+
+static void
+test_bin_ghost_pad_push(void)
+{
+    TEST("element bin ghost pads push through internal transform");
+
+    zst_element_t* bin = zst_bin_create("double-bin");
+    assert(bin != NULL);
+
+    static zst_element_ops_t transform_ops = {
+        .name = "mock_transform",
+        .process = mock_transform_process
+    };
+    zst_element_t* transform = zst_element_create(&transform_ops, NULL);
+    assert(transform != NULL);
+    zst_pad_t* trans_sink = zst_pad_create("sink", ZST_PAD_SINK);
+    zst_pad_t* trans_src = zst_pad_create("src", ZST_PAD_SRC);
+    assert(trans_sink != NULL && trans_src != NULL);
+    assert(zst_element_add_pad(transform, trans_sink) == ZST_OK);
+    assert(zst_element_add_pad(transform, trans_src) == ZST_OK);
+    assert(zst_bin_add(bin, transform) == ZST_OK);
+
+    zst_pad_t* ghost_sink = zst_ghost_pad_create("sink", trans_sink);
+    zst_pad_t* ghost_src = zst_ghost_pad_create("src", trans_src);
+    assert(ghost_sink != NULL && ghost_src != NULL);
+    assert(zst_bin_add_ghost_pad(bin, ghost_sink) == ZST_OK);
+    assert(zst_bin_add_ghost_pad(bin, ghost_src) == ZST_OK);
+    assert(zst_ghost_pad_get_target(ghost_sink) == trans_sink);
+    assert(zst_ghost_pad_get_target(ghost_src) == trans_src);
+
+    mock_sink_t* sink_data = calloc(1, sizeof(*sink_data));
+    assert(sink_data != NULL);
+    static zst_element_ops_t sink_ops = {
+        .name = "mock_sink",
+        .process = mock_sink_process
+    };
+    zst_element_t* sink = zst_element_create(&sink_ops, sink_data);
+    assert(sink != NULL);
+    zst_pad_t* sink_pad = zst_pad_create("sink", ZST_PAD_SINK);
+    assert(zst_element_add_pad(sink, sink_pad) == ZST_OK);
+
+    zst_pad_t* upstream_src = zst_pad_create("src", ZST_PAD_SRC);
+    assert(upstream_src != NULL);
+    assert(zst_pad_link(upstream_src, ghost_sink) == ZST_OK);
+    assert(zst_pad_link(ghost_src, sink_pad) == ZST_OK);
+
+    zst_buffer_t* in = zst_buffer_create(ZST_BUFFER_USER);
+    assert(in != NULL);
+    int* data = malloc(sizeof(*data));
+    assert(data != NULL);
+    *data = 21;
+    in->payload = data;
+    in->destroy = mock_buf_destroy;
+
+    assert(zst_pad_push(upstream_src, in) == ZST_OK);
+    assert(sink_data->count == 1);
+    assert(sink_data->sum == 42);
+
+    zst_buffer_unref(in);
+    zst_pad_destroy(upstream_src);
+    zst_element_destroy(sink);
+    zst_element_destroy(bin);
+    PASS();
+}
+
+typedef struct {
+    zst_pad_t* src;
+    zst_buffer_t* buf;
+    zst_result_t result;
+} probe_push_thread_t;
+
+static zst_pad_probe_return_t
+probe_drop_buffer_cb(zst_pad_t* pad, zst_buffer_t* buf,
+                     zst_pad_probe_type_t type, void* user_data)
+{
+    (void)pad;
+    (void)buf;
+    (void)type;
+    int* calls = user_data;
+    (*calls)++;
+    return ZST_PAD_PROBE_DROP;
+}
+
+static zst_pad_probe_return_t
+probe_count_buffer_cb(zst_pad_t* pad, zst_buffer_t* buf,
+                      zst_pad_probe_type_t type, void* user_data)
+{
+    (void)pad;
+    (void)buf;
+    (void)type;
+    int* calls = user_data;
+    (*calls)++;
+    return ZST_PAD_PROBE_OK;
+}
+
+static zst_pad_probe_return_t
+probe_block_notify_cb(zst_pad_t* pad, zst_buffer_t* buf,
+                      zst_pad_probe_type_t type, void* user_data)
+{
+    (void)pad;
+    (void)buf;
+    (void)type;
+    int* calls = user_data;
+    (*calls)++;
+    return ZST_PAD_PROBE_REBLOCK;
+}
+
+static void*
+probe_push_thread(void* arg)
+{
+    probe_push_thread_t* ctx = arg;
+    ctx->result = zst_pad_push(ctx->src, ctx->buf);
+    return NULL;
+}
+
+static void
+test_pad_probes_drop_and_post(void)
+{
+    TEST("pad probes drop and post-buffer callbacks");
+
+    mock_sink_t* sink_data = calloc(1, sizeof(*sink_data));
+    assert(sink_data != NULL);
+    static zst_element_ops_t sink_ops = {
+        .name = "mock_sink",
+        .process = mock_sink_process
+    };
+    zst_element_t* sink = zst_element_create(&sink_ops, sink_data);
+    assert(sink != NULL);
+    zst_pad_t* sink_pad = zst_pad_create("sink", ZST_PAD_SINK);
+    assert(zst_element_add_pad(sink, sink_pad) == ZST_OK);
+
+    zst_pad_t* src = zst_pad_create("src", ZST_PAD_SRC);
+    assert(zst_pad_link(src, sink_pad) == ZST_OK);
+
+    int drop_calls = 0;
+    uint64_t drop_id = zst_pad_add_probe(sink_pad, ZST_PAD_PROBE_PRE_BUFFER,
+                                          probe_drop_buffer_cb, &drop_calls);
+    assert(drop_id != 0);
+
+    zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_USER);
+    assert(buf != NULL);
+    int* data = malloc(sizeof(*data));
+    assert(data != NULL);
+    *data = 7;
+    buf->payload = data;
+    buf->destroy = mock_buf_destroy;
+
+    assert(zst_pad_push(src, buf) == ZST_OK);
+    assert(drop_calls == 1);
+    assert(sink_data->count == 0);
+
+    assert(zst_pad_remove_probe(sink_pad, drop_id) == ZST_OK);
+    int post_calls = 0;
+    assert(zst_pad_add_probe(sink_pad, ZST_PAD_PROBE_POST_BUFFER,
+                             probe_count_buffer_cb, &post_calls) != 0);
+
+    assert(zst_pad_push(src, buf) == ZST_OK);
+    assert(sink_data->count == 1);
+    assert(sink_data->sum == 7);
+    assert(post_calls == 1);
+
+    zst_buffer_unref(buf);
+    zst_pad_destroy(src);
+    zst_element_destroy(sink);
+    PASS();
+}
+
+static void
+test_pad_blocking(void)
+{
+    TEST("pad blocking and unblock resumes flow");
+
+    mock_sink_t* sink_data = calloc(1, sizeof(*sink_data));
+    assert(sink_data != NULL);
+    static zst_element_ops_t sink_ops = {
+        .name = "mock_sink",
+        .process = mock_sink_process
+    };
+    zst_element_t* sink = zst_element_create(&sink_ops, sink_data);
+    assert(sink != NULL);
+    zst_pad_t* sink_pad = zst_pad_create("sink", ZST_PAD_SINK);
+    assert(zst_element_add_pad(sink, sink_pad) == ZST_OK);
+
+    zst_pad_t* src = zst_pad_create("src", ZST_PAD_SRC);
+    assert(zst_pad_link(src, sink_pad) == ZST_OK);
+
+    int block_calls = 0;
+    assert(zst_pad_set_block_callback(sink_pad, probe_block_notify_cb,
+                                      &block_calls) == ZST_OK);
+    assert(zst_pad_block(sink_pad) == ZST_OK);
+    assert(zst_pad_is_blocked(sink_pad));
+
+    zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_USER);
+    assert(buf != NULL);
+    int* data = malloc(sizeof(*data));
+    assert(data != NULL);
+    *data = 11;
+    buf->payload = data;
+    buf->destroy = mock_buf_destroy;
+
+    probe_push_thread_t ctx = { .src = src, .buf = buf, .result = ZST_ERROR };
+    pthread_t thread;
+    assert(pthread_create(&thread, NULL, probe_push_thread, &ctx) == 0);
+
+    struct timespec ts = { .tv_sec = 0, .tv_nsec = 50000000 };
+    nanosleep(&ts, NULL);
+    assert(block_calls == 1);
+    assert(sink_data->count == 0);
+    assert(zst_pad_is_blocked(sink_pad));
+
+    assert(zst_pad_unblock(sink_pad) == ZST_OK);
+    pthread_join(thread, NULL);
+    assert(ctx.result == ZST_OK);
+    assert(sink_data->count == 1);
+    assert(sink_data->sum == 11);
+    assert(!zst_pad_is_blocked(sink_pad));
+
+    zst_buffer_unref(buf);
+    zst_pad_destroy(src);
+    zst_element_destroy(sink);
+    PASS();
+}
+
+static zst_buffer_t*
+segment_test_buffer(int value, zst_time_t pts)
+{
+    zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_USER);
+    assert(buf != NULL);
+    int* data = malloc(sizeof(*data));
+    assert(data != NULL);
+    *data = value;
+    buf->payload = data;
+    buf->destroy = mock_buf_destroy;
+    buf->pts = pts;
+    return buf;
+}
+
+static void
+test_segment_seek_event_and_clipping(void)
+{
+    TEST("segment seek event propagation and clipping");
+
+    zst_pipeline_t* pipe = zst_pipeline_create();
+    assert(pipe != NULL);
+
+    zst_element_t* source = zst_element_create(&g_dummy_ops, NULL);
+    assert(source != NULL);
+    zst_pad_t* src = zst_pad_create("src", ZST_PAD_SRC);
+    assert(zst_element_add_pad(source, src) == ZST_OK);
+
+    mock_sink_t* sink_data = calloc(1, sizeof(*sink_data));
+    assert(sink_data != NULL);
+    static zst_element_ops_t sink_ops = {
+        .name = "mock_sink",
+        .process = mock_sink_process
+    };
+    zst_element_t* sink = zst_element_create(&sink_ops, sink_data);
+    assert(sink != NULL);
+    zst_pad_t* sink_pad = zst_pad_create("sink", ZST_PAD_SINK);
+    assert(zst_element_add_pad(sink, sink_pad) == ZST_OK);
+
+    assert(zst_pipeline_add(pipe, source) == ZST_OK);
+    assert(zst_pipeline_add(pipe, sink) == ZST_OK);
+    assert(zst_pad_link(src, sink_pad) == ZST_OK);
+
+    int event_probe_calls = 0;
+    assert(zst_pad_add_probe(sink_pad,
+                             ZST_PAD_PROBE_PRE_EVENT | ZST_PAD_PROBE_POST_EVENT,
+                             probe_count_buffer_cb,
+                             &event_probe_calls) != 0);
+
+    zst_segment_t segment = zst_segment_default();
+    segment.start = 10;
+    segment.stop = 20;
+    assert(zst_element_seek(source, 1.0, &segment) == ZST_OK);
+    assert(event_probe_calls == 2);
+
+    zst_event_t* ev = NULL;
+    assert(zst_bus_pop(pipe->bus, &ev, 100) == ZST_OK);
+    assert(ev != NULL);
+    assert(ev->type == ZST_EVENT_SEGMENT);
+    assert(ev->src == source);
+    assert(ev->as.segment.start == 10);
+    assert(ev->as.segment.stop == 20);
+    zst_event_destroy(ev);
+
+    zst_segment_t sink_segment = zst_segment_default();
+    assert(zst_pad_get_segment(sink_pad, &sink_segment) == ZST_OK);
+    assert(sink_segment.start == 10);
+    assert(sink_segment.stop == 20);
+
+    zst_buffer_t* early = segment_test_buffer(1, 5);
+    zst_buffer_t* inside = segment_test_buffer(2, 15);
+    zst_buffer_t* late = segment_test_buffer(4, 25);
+
+    assert(zst_pad_push(src, early) == ZST_OK);
+    assert(zst_pad_push(src, inside) == ZST_OK);
+    assert(zst_pad_push(src, late) == ZST_OK);
+    assert(sink_data->count == 1);
+    assert(sink_data->sum == 2);
+
+    zst_buffer_unref(early);
+    zst_buffer_unref(inside);
+    zst_buffer_unref(late);
+    zst_pipeline_destroy(pipe);
+    PASS();
+}
+
+static void
+test_file_source_segment_seek(void)
+{
+    TEST("file source segment seek maps to byte range");
+
+    const char* filepath = "/tmp/zst_segment_seek_test.bin";
+    FILE* f = fopen(filepath, "wb");
+    assert(f != NULL);
+    const char* data = "abcdefghijklmnopqrstuvwxyz";
+    assert(fwrite(data, 1, strlen(data), f) == strlen(data));
+    fclose(f);
+
+    zst_element_t* src = zst_file_source_create(filepath);
+    assert(src != NULL);
+    assert(zst_element_set_property_uint(src, "chunk-size", 3) == ZST_OK);
+    assert(zst_element_set_state(src, ZST_STATE_PLAYING) == ZST_OK);
+
+    zst_segment_t segment = zst_segment_default();
+    segment.start = 10;
+    segment.stop = 16;
+    assert(zst_element_seek(src, 1.0, &segment) == ZST_OK);
+
+    zst_pad_t* src_pad = zst_element_get_pad(src, "src");
+    assert(src_pad != NULL);
+
+    zst_buffer_t* buf = NULL;
+    assert(src_pad->pull(src_pad, &buf) == ZST_OK);
+    assert(buf != NULL);
+    assert(buf->memory.size == 3);
+    assert(strncmp((char*)buf->memory.data, "klm", 3) == 0);
+    zst_buffer_unref(buf);
+
+    buf = NULL;
+    assert(src_pad->pull(src_pad, &buf) == ZST_OK);
+    assert(buf != NULL);
+    assert(buf->memory.size == 3);
+    assert(strncmp((char*)buf->memory.data, "nop", 3) == 0);
+    zst_buffer_unref(buf);
+
+    buf = NULL;
+    assert(src_pad->pull(src_pad, &buf) == ZST_EOF);
+
+    zst_element_set_state(src, ZST_STATE_NULL);
+    zst_element_destroy(src);
+    remove(filepath);
+    PASS();
 }
 
 static void
@@ -1812,6 +2256,18 @@ test_h265_decoder_roundtrip(void)
     assert(enc != NULL && dec != NULL && sink != NULL);
     assert(strcmp(enc->ops->name, "h265enc") == 0);
     assert(strcmp(dec->ops->name, "h265dec") == 0);
+    assert(zst_element_set_property(enc, "preset", "ultrafast") == ZST_OK);
+    assert(zst_element_set_property(enc, "tune", "zerolatency") == ZST_OK);
+    assert(zst_element_set_property_double(enc, "crf", 28.0) == ZST_OK);
+    assert(zst_element_set_property_int(enc, "bitrate", 0) == ZST_OK);
+    assert(zst_element_set_property_int(enc, "gop-size", 12) == ZST_OK);
+    assert(zst_element_set_property(enc, "profile", "main") == ZST_OK);
+    char h265_prop[64];
+    assert(zst_element_get_property(enc, "preset", h265_prop, sizeof(h265_prop)) == ZST_OK);
+    assert(strcmp(h265_prop, "ultrafast") == 0);
+    int64_t h265_gop = 0;
+    assert(zst_element_get_property_int(enc, "gop-size", &h265_gop) == ZST_OK);
+    assert(h265_gop == 12);
     assert(zst_element_set_state(enc, ZST_STATE_READY) == ZST_OK);
     assert(zst_element_set_state(dec, ZST_STATE_READY) == ZST_OK);
     assert(zst_pad_link(dec->src_pads[0], sink->sink_pads[0]) == ZST_OK);
@@ -1849,6 +2305,7 @@ test_h265_decoder_roundtrip(void)
     }
 
     assert(pkt != NULL && pkt->memory.size > 0);
+    assert(zst_element_set_property(enc, "preset", "medium") == ZST_ERROR);
     assert(dec->sink_pads[0]->push(dec->sink_pads[0], pkt) == ZST_OK);
 
     assert(capture->buffers >= 1);
@@ -3184,6 +3641,19 @@ int main(void)
     printf("[scheduler]\n");
     test_scheduler_single_threaded();
     test_scheduler_multi_threaded();
+
+    /* ── Advanced Features (Phase 8c) ── */
+    printf("[element bin]\n");
+    test_bin_state_propagation();
+    test_bin_ghost_pad_push();
+
+    printf("[pad probes]\n");
+    test_pad_probes_drop_and_post();
+    test_pad_blocking();
+
+    printf("[segment seeking]\n");
+    test_segment_seek_event_and_clipping();
+    test_file_source_segment_seek();
 
     /* ── Caps Negotiation (Phase 5) ── */
     printf("[caps negotiation]\n");

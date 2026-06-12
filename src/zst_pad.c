@@ -14,6 +14,173 @@
 #include <string.h>
 #include <stdio.h>
 
+struct zst_pad_probe {
+    uint64_t id;
+    uint32_t types;
+    zst_pad_probe_fn callback;
+    void* user_data;
+    struct zst_pad_probe* next;
+};
+
+static zst_pad_probe_return_t pad_run_probes(zst_pad_t* pad,
+                                             zst_buffer_t* buf,
+                                             zst_pad_probe_type_t type);
+
+static int
+pad_buffer_in_segment(zst_pad_t* pad, zst_buffer_t* buf)
+{
+    if (!pad || !buf) return 1;
+    if (buf->flags & ZST_BUFFER_FLAG_EOS) return 1;
+
+    pthread_mutex_lock(&pad->probe_lock);
+    int has_segment = pad->has_segment;
+    zst_segment_t segment = pad->segment;
+    pthread_mutex_unlock(&pad->probe_lock);
+    if (!has_segment) return 1;
+
+    zst_time_t pts = buf->pts;
+    zst_time_t end = buf->duration > 0 ? pts + buf->duration : pts;
+
+    if (buf->duration > 0) {
+        if (end <= segment.start) return 0;
+    } else if (pts < segment.start) {
+        return 0;
+    }
+
+    if (segment.stop != ZST_SEGMENT_STOP_NONE && pts >= segment.stop) {
+        return 0;
+    }
+
+    return 1;
+}
+
+static zst_result_t
+pad_propagate_segment(zst_pad_t* pad, const zst_segment_t* segment, uint32_t depth)
+{
+    if (!pad || !segment) return ZST_ERROR;
+    if (depth > 256) return ZST_ERROR;
+
+    if (pad_run_probes(pad, NULL, ZST_PAD_PROBE_PRE_EVENT) == ZST_PAD_PROBE_DROP) {
+        return ZST_OK;
+    }
+
+    zst_pad_set_segment(pad, segment);
+
+    if (pad->direction == ZST_PAD_SRC) {
+        if (pad->peer) {
+            if (pad_run_probes(pad->peer, NULL, ZST_PAD_PROBE_PRE_EVENT) != ZST_PAD_PROBE_DROP) {
+                zst_pad_set_segment(pad->peer, segment);
+                pad_run_probes(pad->peer, NULL, ZST_PAD_PROBE_POST_EVENT);
+            }
+            zst_element_t* downstream = pad->peer->parent;
+            if (downstream) {
+                for (uint32_t i = 0; i < downstream->nb_src_pads; i++) {
+                    pad_propagate_segment(downstream->src_pads[i], segment, depth + 1);
+                }
+            }
+        }
+    }
+
+    pad_run_probes(pad, NULL, ZST_PAD_PROBE_POST_EVENT);
+    return ZST_OK;
+}
+
+static zst_pad_probe_return_t
+pad_handle_block(zst_pad_t* pad, zst_buffer_t* buf, zst_pad_probe_type_t type)
+{
+    if (!pad) return ZST_PAD_PROBE_OK;
+
+    for (;;) {
+        pthread_mutex_lock(&pad->probe_lock);
+        if (!pad->blocked) {
+            pad->block_callback_fired = 0;
+            pthread_mutex_unlock(&pad->probe_lock);
+            return ZST_PAD_PROBE_OK;
+        }
+
+        zst_pad_probe_fn callback = NULL;
+        void* user_data = NULL;
+        if (pad->block_callback && !pad->block_callback_fired) {
+            pad->block_callback_fired = 1;
+            callback = pad->block_callback;
+            user_data = pad->block_user_data;
+        }
+        pthread_mutex_unlock(&pad->probe_lock);
+
+        if (callback) {
+            zst_pad_probe_return_t cb_ret = callback(pad, buf, type, user_data);
+            if (cb_ret == ZST_PAD_PROBE_OK) {
+                zst_pad_unblock(pad);
+                return ZST_PAD_PROBE_OK;
+            }
+            if (cb_ret == ZST_PAD_PROBE_DROP) {
+                return ZST_PAD_PROBE_DROP;
+            }
+        }
+
+        pthread_mutex_lock(&pad->probe_lock);
+        while (pad->blocked) {
+            pthread_cond_wait(&pad->probe_cond, &pad->probe_lock);
+        }
+        pad->block_callback_fired = 0;
+        pthread_mutex_unlock(&pad->probe_lock);
+    }
+}
+
+static zst_pad_probe_return_t
+pad_run_probes(zst_pad_t* pad, zst_buffer_t* buf, zst_pad_probe_type_t type)
+{
+    if (!pad) return ZST_PAD_PROBE_OK;
+
+    zst_pad_probe_return_t block_ret = pad_handle_block(pad, buf, type);
+    if (block_ret != ZST_PAD_PROBE_OK) return block_ret;
+
+    for (;;) {
+        pthread_mutex_lock(&pad->probe_lock);
+        uint32_t n = 0;
+        for (zst_pad_probe_t* p = pad->probes; p; p = p->next) {
+            if (p->callback && (p->types & (uint32_t)type)) n++;
+        }
+
+        zst_pad_probe_fn* callbacks = n ? calloc(n, sizeof(*callbacks)) : NULL;
+        void** user_data = n ? calloc(n, sizeof(*user_data)) : NULL;
+        if (n && (!callbacks || !user_data)) {
+            free(callbacks);
+            free(user_data);
+            pthread_mutex_unlock(&pad->probe_lock);
+            return ZST_PAD_PROBE_OK;
+        }
+
+        uint32_t idx = 0;
+        for (zst_pad_probe_t* p = pad->probes; p; p = p->next) {
+            if (p->callback && (p->types & (uint32_t)type)) {
+                callbacks[idx] = p->callback;
+                user_data[idx] = p->user_data;
+                idx++;
+            }
+        }
+        pthread_mutex_unlock(&pad->probe_lock);
+
+        zst_pad_probe_return_t ret = ZST_PAD_PROBE_OK;
+        for (uint32_t i = 0; i < n; i++) {
+            zst_pad_probe_return_t cb_ret = callbacks[i](pad, buf, type, user_data[i]);
+            if (cb_ret == ZST_PAD_PROBE_DROP) {
+                ret = ZST_PAD_PROBE_DROP;
+                break;
+            }
+            if (cb_ret == ZST_PAD_PROBE_BLOCK || cb_ret == ZST_PAD_PROBE_REBLOCK) {
+                zst_pad_block(pad);
+                ret = pad_handle_block(pad, buf, type);
+                if (ret != ZST_PAD_PROBE_OK) break;
+            }
+        }
+
+        free(callbacks);
+        free(user_data);
+        return ret;
+    }
+}
+
 static zst_result_t
 default_sink_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
 {
@@ -168,8 +335,19 @@ zst_pad_create(const char* name, zst_pad_direction_t direction)
         pad->push = default_sink_pad_push;
         pad->pull = NULL;
     }
-    pad->peer      = NULL;
-    pad->priv      = NULL;
+    pad->peer         = NULL;
+    pad->priv         = NULL;
+    pad->destroy_priv = NULL;
+    pad->probes       = NULL;
+    pad->next_probe_id = 1;
+    pthread_mutex_init(&pad->probe_lock, NULL);
+    pthread_cond_init(&pad->probe_cond, NULL);
+    pad->blocked = 0;
+    pad->block_callback_fired = 0;
+    pad->block_callback = NULL;
+    pad->block_user_data = NULL;
+    pad->has_segment = 0;
+    pad->segment = zst_segment_default();
 
     return pad;
 }
@@ -182,6 +360,24 @@ zst_pad_destroy(zst_pad_t* pad)
     /* Unlink from peer if still connected */
     if (pad->peer)
         zst_pad_unlink(pad);
+
+    if (pad->destroy_priv) {
+        pad->destroy_priv(pad);
+    }
+
+    pthread_mutex_lock(&pad->probe_lock);
+    zst_pad_probe_t* probe = pad->probes;
+    pad->probes = NULL;
+    pad->blocked = 0;
+    pthread_cond_broadcast(&pad->probe_cond);
+    pthread_mutex_unlock(&pad->probe_lock);
+    while (probe) {
+        zst_pad_probe_t* next = probe->next;
+        free(probe);
+        probe = next;
+    }
+    pthread_cond_destroy(&pad->probe_cond);
+    pthread_mutex_destroy(&pad->probe_lock);
 
     free((void*)pad->name);
     zst_caps_destroy(pad->caps);
@@ -237,11 +433,28 @@ zst_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
     if (pad->direction != ZST_PAD_SRC) return ZST_ERROR;
     if (!pad->peer) return ZST_ERROR;
 
-    if (pad->peer->push) {
-        return pad->peer->push(pad->peer, buf);
+    if (!pad_buffer_in_segment(pad, buf) || !pad_buffer_in_segment(pad->peer, buf)) {
+        return ZST_OK;
     }
 
-    return ZST_ERROR;
+    if (pad_run_probes(pad, buf, ZST_PAD_PROBE_PRE_BUFFER) == ZST_PAD_PROBE_DROP) {
+        return ZST_OK;
+    }
+    if (pad_run_probes(pad->peer, buf, ZST_PAD_PROBE_PRE_BUFFER) == ZST_PAD_PROBE_DROP) {
+        return ZST_OK;
+    }
+
+    zst_result_t ret = ZST_ERROR;
+    if (pad->peer->push) {
+        ret = pad->peer->push(pad->peer, buf);
+    }
+
+    if (ret == ZST_OK) {
+        pad_run_probes(pad->peer, buf, ZST_PAD_PROBE_POST_BUFFER);
+        pad_run_probes(pad, buf, ZST_PAD_PROBE_POST_BUFFER);
+    }
+
+    return ret;
 }
 
 zst_result_t
@@ -251,11 +464,22 @@ zst_pad_pull(zst_pad_t* pad, zst_buffer_t** out)
     if (pad->direction != ZST_PAD_SINK) return ZST_ERROR;
     if (!pad->peer) return ZST_ERROR;
 
-    if (pad->peer->pull) {
-        return pad->peer->pull(pad->peer, out);
+    if (!pad->peer->pull) return ZST_ERROR;
+
+    zst_result_t ret = pad->peer->pull(pad->peer, out);
+    if (ret != ZST_OK || !out || !*out) return ret;
+
+    if (!pad_buffer_in_segment(pad->peer, *out) || !pad_buffer_in_segment(pad, *out) ||
+        pad_run_probes(pad->peer, *out, ZST_PAD_PROBE_PRE_BUFFER) == ZST_PAD_PROBE_DROP ||
+        pad_run_probes(pad, *out, ZST_PAD_PROBE_PRE_BUFFER) == ZST_PAD_PROBE_DROP ||
+        pad_run_probes(pad, *out, ZST_PAD_PROBE_POST_BUFFER) == ZST_PAD_PROBE_DROP ||
+        pad_run_probes(pad->peer, *out, ZST_PAD_PROBE_POST_BUFFER) == ZST_PAD_PROBE_DROP) {
+        zst_buffer_unref(*out);
+        *out = NULL;
+        return ZST_AGAIN;
     }
 
-    return ZST_ERROR;
+    return ret;
 }
 
 void
@@ -369,4 +593,143 @@ zst_pad_negotiate(zst_pad_t* src, zst_pad_t* sink)
     
     zst_caps_destroy(intersect);
     return ret;
+}
+
+uint64_t
+zst_pad_add_probe(zst_pad_t* pad, uint32_t types,
+                  zst_pad_probe_fn callback, void* user_data)
+{
+    if (!pad || !callback || types == 0) return 0;
+
+    zst_pad_probe_t* probe = calloc(1, sizeof(*probe));
+    if (!probe) return 0;
+    probe->types = types;
+    probe->callback = callback;
+    probe->user_data = user_data;
+
+    pthread_mutex_lock(&pad->probe_lock);
+    probe->id = pad->next_probe_id++;
+    if (probe->id == 0) probe->id = pad->next_probe_id++;
+    probe->next = pad->probes;
+    pad->probes = probe;
+    uint64_t id = probe->id;
+    pthread_mutex_unlock(&pad->probe_lock);
+
+    return id;
+}
+
+zst_result_t
+zst_pad_remove_probe(zst_pad_t* pad, uint64_t probe_id)
+{
+    if (!pad || probe_id == 0) return ZST_ERROR;
+
+    pthread_mutex_lock(&pad->probe_lock);
+    zst_pad_probe_t** cur = &pad->probes;
+    while (*cur) {
+        if ((*cur)->id == probe_id) {
+            zst_pad_probe_t* removed = *cur;
+            *cur = removed->next;
+            pthread_mutex_unlock(&pad->probe_lock);
+            free(removed);
+            return ZST_OK;
+        }
+        cur = &(*cur)->next;
+    }
+    pthread_mutex_unlock(&pad->probe_lock);
+    return ZST_ERROR;
+}
+
+zst_result_t
+zst_pad_block(zst_pad_t* pad)
+{
+    if (!pad) return ZST_ERROR;
+    pthread_mutex_lock(&pad->probe_lock);
+    pad->blocked = 1;
+    pad->block_callback_fired = 0;
+    pthread_mutex_unlock(&pad->probe_lock);
+    return ZST_OK;
+}
+
+zst_result_t
+zst_pad_unblock(zst_pad_t* pad)
+{
+    if (!pad) return ZST_ERROR;
+    pthread_mutex_lock(&pad->probe_lock);
+    pad->blocked = 0;
+    pad->block_callback_fired = 0;
+    pthread_cond_broadcast(&pad->probe_cond);
+    pthread_mutex_unlock(&pad->probe_lock);
+    return ZST_OK;
+}
+
+int
+zst_pad_is_blocked(zst_pad_t* pad)
+{
+    if (!pad) return 0;
+    pthread_mutex_lock(&pad->probe_lock);
+    int blocked = pad->blocked;
+    pthread_mutex_unlock(&pad->probe_lock);
+    return blocked;
+}
+
+zst_result_t
+zst_pad_set_block_callback(zst_pad_t* pad,
+                           zst_pad_probe_fn callback,
+                           void* user_data)
+{
+    if (!pad) return ZST_ERROR;
+    pthread_mutex_lock(&pad->probe_lock);
+    pad->block_callback = callback;
+    pad->block_user_data = user_data;
+    pad->block_callback_fired = 0;
+    pthread_mutex_unlock(&pad->probe_lock);
+    return ZST_OK;
+}
+
+zst_result_t
+zst_pad_set_segment(zst_pad_t* pad, const zst_segment_t* segment)
+{
+    if (!pad || !segment) return ZST_ERROR;
+    pthread_mutex_lock(&pad->probe_lock);
+    pad->segment = *segment;
+    if (pad->segment.rate == 0.0) pad->segment.rate = 1.0;
+    if (pad->segment.stop != ZST_SEGMENT_STOP_NONE &&
+        pad->segment.stop < pad->segment.start) {
+        pthread_mutex_unlock(&pad->probe_lock);
+        return ZST_ERROR;
+    }
+    pad->has_segment = 1;
+    pthread_mutex_unlock(&pad->probe_lock);
+    return ZST_OK;
+}
+
+zst_result_t
+zst_pad_get_segment(zst_pad_t* pad, zst_segment_t* segment_out)
+{
+    if (!pad || !segment_out) return ZST_ERROR;
+    pthread_mutex_lock(&pad->probe_lock);
+    if (!pad->has_segment) {
+        pthread_mutex_unlock(&pad->probe_lock);
+        return ZST_ERROR;
+    }
+    *segment_out = pad->segment;
+    pthread_mutex_unlock(&pad->probe_lock);
+    return ZST_OK;
+}
+
+void
+zst_pad_clear_segment(zst_pad_t* pad)
+{
+    if (!pad) return;
+    pthread_mutex_lock(&pad->probe_lock);
+    pad->has_segment = 0;
+    pad->segment = zst_segment_default();
+    pthread_mutex_unlock(&pad->probe_lock);
+}
+
+zst_result_t
+zst_pad_push_segment(zst_pad_t* src, const zst_segment_t* segment)
+{
+    if (!src || !segment || src->direction != ZST_PAD_SRC) return ZST_ERROR;
+    return pad_propagate_segment(src, segment, 0);
 }

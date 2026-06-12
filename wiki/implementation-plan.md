@@ -22,7 +22,7 @@ All phases are now documented in separate files for easier maintenance.
 | Scheduler (2) | ✅ Done | Topological sort, push/pull, EOS |
 | Queue Element (3) | ✅ Done | First-class queue with worker thread |
 | Logging (3.5) | ✅ Done | Compile-time log levels, thread-safe |
-| Elements (4) | ✅ Done | 26 elements implemented |
+| Elements (4) | ✅ Done + planned additions | 26 elements implemented; SRT transport source/sink planned |
 | Caps Negotiation (5) | ✅ Done | Intersection, auto-negotiation |
 | Event Bus (6) | ✅ Done | Error/state/EOS notifications |
 | Dynamic Plugins (7) | ✅ Done | dlopen-based loading |
@@ -30,7 +30,7 @@ All phases are now documented in separate files for easier maintenance.
 | Clock (8b) | ✅ Done | System clock, pipeline integration |
 | Testing & CI (9) | ⬜ Planned | CI pipeline, stress tests, static analysis |
 | Documentation (10) | ⬜ Planned | Doxygen API ref, tutorials |
-| Advanced Features (8c) | 📝 Planned | Element bin, pad probes, segment seeking |
+| Advanced Features (8c) | ✅ Done | Element bin, pad probes, segment seeking |
 | Element Public API (8d) | ✅ Done | Descriptor ABI, plugin introspection, typed properties, official element metadata, convenience headers, library & installation layout |
 
 ---

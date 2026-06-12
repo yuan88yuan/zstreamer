@@ -13,6 +13,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+extern int zst_bin_element_is_bin(zst_element_t* el);
+extern zst_result_t zst_bin_element_change_state(zst_element_t* el,
+                                                 zst_state_t old_state,
+                                                 zst_state_t new_state);
+extern int zst_bin_element_destroy(zst_element_t* el);
+
 zst_element_t*
 zst_element_create(const zst_element_ops_t* ops, void* priv)
 {
@@ -54,7 +60,11 @@ zst_element_destroy(zst_element_t* el)
         zst_clock_unref(el->clock);
     }
 
-    free(el->priv);
+    if (!zst_bin_element_destroy(el)) {
+        free(el->priv);
+        el->priv = NULL;
+    }
+
     zst_plugin_t* plugin = el->plugin;
     free(el);
 
@@ -109,6 +119,11 @@ zst_element_set_state(zst_element_t* el, zst_state_t state)
     if (current_state >= ZST_STATE_READY && state < ZST_STATE_READY) {
         if (el->ops->close)
             ret = el->ops->close(el);
+        if (ret != ZST_OK) return ret;
+    }
+
+    if (zst_bin_element_is_bin(el)) {
+        ret = zst_bin_element_change_state(el, current_state, state);
         if (ret != ZST_OK) return ret;
     }
 
@@ -369,4 +384,52 @@ zst_element_get_pool(zst_element_t* el)
 {
     if (!el || !el->ops || !el->ops->get_pool) return NULL;
     return el->ops->get_pool(el);
+}
+
+zst_result_t
+zst_element_seek(zst_element_t* el, double rate, const zst_segment_t* segment)
+{
+    if (!el || !segment || rate == 0.0) return ZST_ERROR;
+    if (segment->stop != ZST_SEGMENT_STOP_NONE && segment->stop < segment->start) {
+        return ZST_ERROR;
+    }
+
+    zst_segment_t applied = *segment;
+    applied.rate = rate;
+
+    /* Generic source support for byte-addressable elements such as filesrc:
+     * if the element exposes offset/length properties, map the segment range
+     * onto those properties.  Timestamp-based sources can ignore this and
+     * still benefit from downstream segment propagation/clipping. */
+    int byte_seek = 0;
+    if (el->ops && el->ops->set_property && applied.start <= INT64_MAX) {
+        char value[64];
+        snprintf(value, sizeof(value), "%" PRIu64, (uint64_t)applied.start);
+        byte_seek = (zst_element_set_property(el, "offset", value) == ZST_OK);
+
+        if (byte_seek && applied.stop == ZST_SEGMENT_STOP_NONE) {
+            zst_element_set_property(el, "length", "-1");
+        } else if (byte_seek && applied.stop >= applied.start &&
+                   applied.stop - applied.start <= INT64_MAX) {
+            snprintf(value, sizeof(value), "%" PRIu64,
+                     (uint64_t)(applied.stop - applied.start));
+            zst_element_set_property(el, "length", value);
+        }
+    }
+
+    if (!byte_seek) {
+        for (uint32_t i = 0; i < el->nb_sink_pads; i++) {
+            zst_pad_set_segment(el->sink_pads[i], &applied);
+        }
+        for (uint32_t i = 0; i < el->nb_src_pads; i++) {
+            zst_pad_push_segment(el->src_pads[i], &applied);
+        }
+    }
+
+    if (el->bus) {
+        zst_event_t* ev = zst_event_new_segment(el, &applied);
+        if (ev) zst_bus_post(el->bus, ev);
+    }
+
+    return ZST_OK;
 }

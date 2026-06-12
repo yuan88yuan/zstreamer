@@ -5,6 +5,7 @@
 
 #include "zst_types.h"
 #include "zst_pad.h"
+#include "zst_segment.h"
 #include <stdbool.h>
 
 #ifdef __cplusplus
@@ -175,6 +176,11 @@ zst_result_t zst_element_get_property_bool(
 
 zst_buffer_pool_t* zst_element_get_pool(
     zst_element_t* el);
+
+zst_result_t zst_element_seek(
+    zst_element_t* el,
+    double rate,
+    const zst_segment_t* segment);
 
 #ifdef __cplusplus
 }

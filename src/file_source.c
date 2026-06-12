@@ -267,10 +267,17 @@ file_source_set_property(zst_element_t* el, const char* name, const char* value)
         s->loop = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0);
         return ZST_OK;
     } else if (strcmp(name, "offset") == 0) {
-        s->offset = atoll(value);
+        int64_t new_offset = atoll(value);
+        if (new_offset < 0) return ZST_ERROR;
+        s->offset = new_offset;
+        s->bytes_read = 0;
+        if (s->fp && fseek(s->fp, s->offset, SEEK_SET) != 0) {
+            return ZST_ERROR;
+        }
         return ZST_OK;
     } else if (strcmp(name, "length") == 0) {
         s->length = atoll(value);
+        s->bytes_read = 0;
         return ZST_OK;
     }
     return ZST_ERROR;

@@ -123,6 +123,17 @@ static const zst_property_spec_t g_builtin_rtmpsink_props[] = {
     { "url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "RTMP Destination URL" }
 };
 
+static const zst_property_spec_t g_builtin_h265enc_props[] = {
+    { "preset", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "ultrafast", "FFmpeg/libx265 preset" },
+    { "tune", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "zerolatency", "FFmpeg/libx265 tune" },
+    { "crf", ZST_PROPERTY_DOUBLE, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "23.0", "Constant Rate Factor (0-51); used when bitrate is 0" },
+    { "bitrate", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "0", "Target bitrate in bits/sec; 0 enables CRF mode" },
+    { "gop-size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "30", "GOP/keyframe interval" },
+    { "keyint-min", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1", "Minimum keyframe interval" },
+    { "profile", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "main", "HEVC profile" },
+    { "level", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "HEVC level (empty = encoder default)" }
+};
+
 /*──────────────────────────────────────────────────────────────────────────
   create_element callback — constructs an element by name using direct
   constructor calls (no weak symbols).
@@ -176,7 +187,7 @@ static const zst_element_desc_t g_builtin_descs[] = {
     DESC("alsasrc", "ALSA Source",      "Source/Audio", "Captures audio from ALSA",                                                                                             NULL,                           0, g_pad_src),
     DESC("h264enc", "H.264 Encoder",    "Codec/Encoder","Encodes raw video to H.264",                                                                                           NULL,                           0, g_pad_filter),
     DESC("h264dec", "H.264 Decoder",    "Codec/Decoder","Decodes H.264 video frames",                                                                                           NULL,                           0, g_pad_filter),
-    DESC("h265enc", "H.265 Encoder",    "Codec/Encoder","Encodes raw video to H.265",                                                                                           NULL,                           0, g_pad_filter),
+    DESC("h265enc", "H.265 Encoder",    "Codec/Encoder","Encodes raw video to H.265",                                                                                           g_builtin_h265enc_props,        sizeof(g_builtin_h265enc_props) / sizeof(g_builtin_h265enc_props[0]), g_pad_filter),
     DESC("h265dec", "H.265 Decoder",    "Codec/Decoder","Decodes H.265 video frames",                                                                                           NULL,                           0, g_pad_filter),
     DESC("aacenc",  "AAC Encoder",      "Codec/Encoder","Encodes raw audio to AAC",                                                                                             NULL,                           0, g_pad_filter),
     DESC("aacdec",  "AAC Decoder",      "Codec/Decoder","Decodes AAC audio frames",                                                                                             NULL,                           0, g_pad_filter),

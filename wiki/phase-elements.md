@@ -248,11 +248,11 @@ Encodes raw video frames to H.265/HEVC for lower bitrate streaming and storage p
 - [x] `h265enc` element with 1 sink pad (`video/x-raw`) and 1 src pad (`video/x-h265`)
 - [x] Backend: x265 (`libx265`) or FFmpeg HEVC encoder (`AV_CODEC_ID_HEVC`)
 - [x] Accept I420/YUV420P frames from `zst_video_frame_t` payload
-- [ ] Configurable preset/tune, CRF/bitrate, GOP/keyframe interval, profile/level
-- [ ] Output VPS/SPS/PPS headers and frame NAL units in Annex B format
+- [x] Configurable preset/tune, CRF/bitrate, GOP/keyframe interval, profile/level
+- [x] Output VPS/SPS/PPS headers and frame NAL units in Annex B format
 - [x] PTS passthrough and monotonic DTS generation where needed
-- [ ] EOS flush: drain delayed encoder frames before propagating EOS
-- [ ] Caps negotiation: advertise `video/x-h265` with stream format/profile metadata
+- [x] EOS flush: drain delayed encoder frames before propagating EOS
+- [x] Caps negotiation: advertise `video/x-h265` with stream format/profile metadata
 
 **Dependencies:** `libavcodec-dev`, `libavutil-dev`
 
@@ -262,12 +262,12 @@ Decodes H.265/HEVC packets into raw video frames for HEVC ingest, transcoding, o
 
 - [x] `h265dec` element with 1 sink pad (`video/x-h265`) and 1 src pad (`video/x-raw`)
 - [x] FFmpeg `libavcodec` decoder integration (`AV_CODEC_ID_HEVC`)
-- [ ] Accept Annex B bytestream and hvcC/extradata forms where possible
+- [x] Accept Annex B bytestream and hvcC/extradata forms where possible
 - [x] Convert `AVFrame` output into `zst_video_frame_t` payloads
 - [x] Preserve PTS/DTS/duration and handle B-frame reordering
-- [ ] Caps negotiation: advertise raw pixel format, width, height, framerate
+- [x] Caps negotiation: advertise raw pixel format, width, height, framerate
 - [x] EOS drain/flush: send NULL packet, emit delayed frames, then propagate EOS
-- [ ] Decoder reset on parameter-set changes or corruption recovery
+- [x] Decoder reset on parameter-set changes or corruption recovery
 
 **Dependencies:** `libavcodec-dev`, `libavutil-dev` (in Docker)
 
@@ -364,3 +364,21 @@ Publishes pipeline output to an RTMP ingest endpoint — the standard way to pus
 - [ ] Authentication: `rtmp://user:pass@host/app/streamkey`
 - [ ] Reconnection: auto-reconnect on publish failure, exponential back-off
 - [x] EOS passthrough: send `FCUnpublish` on stream end, clean disconnect
+
+### 4aa — SRT Transport Protocols (Secure Reliable Transport Source & Sink)  (📝 Planned)
+
+Adds Secure Reliable Transport (SRT) ingest and egress elements for low-latency, loss-resilient contribution workflows. This is a transport protocol and is distinct from **4u SRT Subtitle Parser** (SubRip text subtitles).
+
+- [ ] `srtsrc` element with 1+ src pads for received MPEG-TS or raw byte-stream payloads
+- [ ] `srtsink` element with 1 sink pad for MPEG-TS or raw byte-stream payloads
+- [ ] Backend: `libsrt` socket API (`srt_create_socket`, `srt_connect`, `srt_bind`, `srt_listen`, `srt_accept`, `srt_sendmsg2`, `srt_recvmsg2`)
+- [ ] Modes: caller, listener, and rendezvous
+- [ ] Configurable URI/properties: `uri`, `host`, `port`, `mode`, `latency`, `passphrase`, `pbkeylen`, `streamid`, `payload-size`
+- [ ] AES encryption support via SRT passphrase/key length
+- [ ] Reconnection and exponential back-off on link loss
+- [ ] Timestamp mapping from SRT packet time / pipeline clock to buffer PTS
+- [ ] EOS on socket close or graceful shutdown
+- [ ] Caps negotiation: advertise `video/mp2t` for MPEG-TS mode and `application/octet-stream` for raw mode
+- [ ] Optional integrated MPEG-TS demux/mux handoff for H.264/H.265/AAC pipelines
+
+**Dependencies:** `libsrt-dev`

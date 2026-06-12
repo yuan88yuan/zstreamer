@@ -5,6 +5,7 @@
 
 #include "zst_types.h"
 #include "zst_element.h"
+#include "zst_segment.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -14,7 +15,8 @@ typedef enum {
     ZST_EVENT_EOS,
     ZST_EVENT_ERROR,
     ZST_EVENT_STATE_CHANGED,
-    ZST_EVENT_WARNING
+    ZST_EVENT_WARNING,
+    ZST_EVENT_SEGMENT
 } zst_event_type_t;
 
 struct zst_event {
@@ -36,6 +38,8 @@ struct zst_event {
             zst_result_t result;
             char* message;
         } warning;
+
+        zst_segment_t segment;
     } as;
 };
 
@@ -80,6 +84,10 @@ zst_event_t* zst_event_new_warning(
     zst_element_t* src,
     zst_result_t result,
     const char* message);
+
+zst_event_t* zst_event_new_segment(
+    zst_element_t* src,
+    const zst_segment_t* segment);
 
 void zst_event_destroy(
     zst_event_t* event);

@@ -124,12 +124,12 @@
 
 A container element that groups multiple elements into a single logical element with a clean external interface — analogous to GStreamer's `bin`. Enables reusable pipeline components, complex element composition, and hierarchical pipeline structures.
 
-- [ ] `zst_bin_t` as a `zst_element` subclass — state machine delegates to children
-- [ ] Ghost pads: `zst_ghost_pad_t` proxies an internal element's pad to the bin's external interface
-- [ ] Child management: `zst_bin_add()` / `zst_bin_remove()` with automatic state synchronisation
-- [ ] State propagation: `NULL→READY→PAUSED→PLAYING` cascade to all children
-- [ ] Error aggregation: child errors bubble up through the bin's bus
-- [ ] EOS passthrough: bin converges EOS from all sink-pad branches before signalling src
+- [x] `zst_bin_t` as a `zst_element` subclass — state machine delegates to children
+- [x] Ghost pads: `zst_ghost_pad_t` proxies an internal element's pad to the bin's external interface
+- [x] Child management: `zst_bin_add()` / `zst_bin_remove()` with automatic state synchronisation
+- [x] State propagation: `NULL→READY→PAUSED→PLAYING` cascade to all children
+- [x] Error aggregation: child errors bubble up through the bin's bus
+- [x] EOS passthrough: bin converges EOS from all sink-pad branches before signalling src
 - [ ] Use case: package `v4l2src → queue → h264enc` as a reusable "capture" bin
 - [ ] Use case: create custom muxer bins with internal format conversion
 - [ ] Use case: isolate a sub-pipeline for separate threading / scheduling
@@ -138,11 +138,11 @@ A container element that groups multiple elements into a single logical element 
 
 Intercept data flowing through a pad without modifying the element's logic. Analogous to GStreamer's pad probes — enables frame-by-frame inspection, dynamic filtering, and pipeline debugging without element modification.
 
-- [ ] `zst_pad_add_probe(pad, callback, user_data)` — attach a probe callback to a pad
-- [ ] Probe types: `PRE_BUFFER` (before element process), `POST_BUFFER` (after process), `PRE_EVENT`, `POST_EVENT`
-- [ ] Return values: `PROBE_OK` (passthrough), `PROBE_DROP` (discard buffer), `PROBE_BLOCK` (pause data flow)
-- [ ] Pad blocking: `zst_pad_block(pad)` — block data flow at a pad, resume with `zst_pad_unblock()`
-- [ ] Block callback: fire on first blocked buffer, return `PROBE_OK` to unblock or `PROBE_REBLOCK` to keep blocking
+- [x] `zst_pad_add_probe(pad, callback, user_data)` — attach a probe callback to a pad
+- [x] Probe types: `PRE_BUFFER` (before element process), `POST_BUFFER` (after process), `PRE_EVENT`, `POST_EVENT`
+- [x] Return values: `PROBE_OK` (passthrough), `PROBE_DROP` (discard buffer), `PROBE_BLOCK` (pause data flow)
+- [x] Pad blocking: `zst_pad_block(pad)` — block data flow at a pad, resume with `zst_pad_unblock()`
+- [x] Block callback: fire on first blocked buffer, return `PROBE_OK` to unblock or `PROBE_REBLOCK` to keep blocking
 - [ ] Use case: frame-by-frame stepping through a pipeline (debugger pattern)
 - [ ] Use case: dynamic buffer dropping for bandwidth / QoS management
 - [ ] Use case: tap into pipeline data for parallel analysis (e.g. recording + preview)
@@ -152,11 +152,11 @@ Intercept data flowing through a pad without modifying the element's logic. Anal
 
 Enable playback of a specific time range within a stream — clip in, clip out, seeking, and looping. Unlike frame-accurate VCR-style seeking, this focuses on segment-based clipping for live recording and on-demand playback.
 
-- [ ] `zst_segment_t` data structure: `start`, `stop`, `rate`, `base`, `position` (floating-point seconds)
-- [ ] Segment event: `ZST_EVENT_SEGMENT` propagated downstream from source elements
-- [ ] Source element seeking: `zst_element_seek(element, rate, segment)` → element jumps to new position
-- [ ] Sink element clipping: apply `start`/`stop` segment bounds — discard buffers outside the window
-- [ ] `SEEK` flag in caps for format-specific seek support (seekable files, RTSP PLAY with Range header)
+- [x] `zst_segment_t` data structure: `start`, `stop`, `rate`, `base`, `position`
+- [x] Segment event: `ZST_EVENT_SEGMENT` propagated downstream from source elements
+- [x] Source element seeking: `zst_element_seek(element, rate, segment)` → element jumps to new position
+- [x] Sink element clipping: apply `start`/`stop` segment bounds — discard buffers outside the window
+- [x] `SEEK` support for format-specific sources where available (filesrc maps segment range to byte offset/length)
 - [ ] Use case: clip a recording to a specific time range (start=30.0, stop=120.0)
 - [ ] Use case: loop playback of a segment for stress testing
 - [ ] Use case: seek to a specific position in a recorded file source
