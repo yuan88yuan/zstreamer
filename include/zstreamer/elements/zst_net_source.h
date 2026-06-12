@@ -11,6 +11,13 @@ extern "C" {
 
 #define ZST_NET_SOURCE_FACTORY "netsrc"
 
+#define ZST_NET_SRC_PROP_HOST                    "host"
+#define ZST_NET_SRC_PROP_PORT                    "port"
+#define ZST_NET_SRC_PROP_PROTOCOL                "protocol"
+#define ZST_NET_SRC_PROP_PATH                    "path"
+#define ZST_NET_SRC_PROP_CHUNK_SIZE              "chunk-size"
+#define ZST_NET_SRC_PROP_READ_TIMEOUT            "read-timeout"
+
 #define ZST_NET_SOURCE_PROP_HOST "host"
 #define ZST_NET_SOURCE_PROP_PORT "port"
 #define ZST_NET_SOURCE_PROP_PROTOCOL "protocol"
