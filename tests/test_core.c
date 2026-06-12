@@ -3828,6 +3828,35 @@ test_dmabuf_allocator(void)
 }
 
 static void
+test_vulkan_allocator(void)
+{
+    TEST("vulkan allocator");
+
+    zst_allocator_t* alloc = zst_allocator_vulkan_create();
+    if (!alloc) {
+        printf("  [SKIP] Vulkan allocator creation failed (no vulkan support or device)\n");
+        PASS();
+        return;
+    }
+    assert(NULL != alloc);
+
+    size_t size = 4096;
+    void* ptr = zst_allocator_alloc(alloc, size);
+    assert(NULL != ptr);
+
+    // Write something to ptr
+    strcpy((char*)ptr, "Hello VULKAN");
+    assert(strcmp((char*)ptr, "Hello VULKAN") == 0);
+
+    zst_allocator_free(alloc, ptr);
+
+    // Test destroying
+    zst_allocator_unref(alloc);
+
+    PASS();
+}
+
+static void
 test_allocator_pool_config(void)
 {
     TEST("pool config get/set");
@@ -5624,6 +5653,7 @@ int main(void)
     test_allocator_pool_config();
     test_pipeline_zero_malloc_integration();
     test_dmabuf_allocator();
+    test_vulkan_allocator();
 
     /* ── Clock (Phase 8b) ── */
     printf("[clock]\n");
