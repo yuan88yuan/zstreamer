@@ -1576,7 +1576,6 @@ test_segment_seek_event_and_clipping(void)
 }
 
 static void
-
 test_segment_seek_usecase_clip_range(void)
 {
     TEST("segment seek use case: clip a recording to a specific time range (start=30.0, stop=120.0)");
