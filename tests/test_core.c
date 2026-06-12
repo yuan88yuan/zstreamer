@@ -48,6 +48,7 @@
 
 zst_element_t* zst_video_scaler_create(int target_width, int target_height, const char* target_pixel_format);
 zst_element_t* zst_audio_resampler_create(int target_sample_rate, int target_channels, const char* target_format);
+static const char* test_plugin_path(void);
 
 #include <features.h>
 #if defined(__linux__) && defined(__GLIBC__)
@@ -2488,14 +2489,7 @@ test_plugin_registry_basic(void)
     zst_result_t r = zst_plugin_registry_init();
     assert(r == ZST_OK);
     
-    const char* ppath = getenv("ZSTREAMER_TEST_PLUGIN_PATH");
-    if (!ppath) {
-        ppath = "/workspace/build/plugins";
-        /* fallback to /app/build/plugins if we are there */
-        if (access("/app/build/plugins", R_OK) == 0) {
-            ppath = "/app/build/plugins";
-        }
-    }
+    const char* ppath = test_plugin_path();
     r = zst_plugin_registry_scan(ppath);
     assert(r == ZST_OK);
     
@@ -4170,14 +4164,7 @@ test_fakesink(void)
     TEST("fake_sink basics and stats");
     zst_plugin_registry_init();
 
-    const char* ppath = getenv("ZSTREAMER_TEST_PLUGIN_PATH");
-    if (!ppath) {
-        ppath = "/workspace/build/plugins";
-        if (access("/app/build/plugins", R_OK) == 0) {
-            ppath = "/app/build/plugins";
-        }
-    }
-    zst_plugin_registry_scan(ppath);
+    zst_plugin_registry_scan(test_plugin_path());
 
     zst_element_t* fakesink = zst_element_factory_make("fakesink");
     assert(fakesink != NULL);
@@ -4545,7 +4532,7 @@ test_text_source_factory(void)
     TEST("text_source dynamic loading from registry");
 
     zst_plugin_registry_init();
-    zst_plugin_registry_scan("/workspace/build/plugins");
+    zst_plugin_registry_scan(test_plugin_path());
 
     zst_element_t* src = zst_element_factory_make("textsource");
     assert(src != NULL);
@@ -4572,7 +4559,7 @@ test_file_source(void)
     fclose(fp);
 
     zst_plugin_registry_init();
-    zst_plugin_registry_scan("/workspace/build/plugins");
+    zst_plugin_registry_scan(test_plugin_path());
 
     // 1. Basic reading test
     zst_element_t* src = zst_element_factory_make("filesrc");
