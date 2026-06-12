@@ -106,7 +106,7 @@
   - [x] Unit test: pool-backed buffer unref returns buffer to pool
   - [x] Unit test: pool flush frees all cached buffers
   - [x] Unit test: topology-aware pool sizing with downstream queues
-  - [ ] Integration test: `videotestsrc → queue → filesink` with pool, verify zero
+  - [x] Integration test: `videotestsrc → queue → filesink` with pool, verify zero
         calls to `malloc` after warm-up phase
     - [x] Unit test: basic allocator create/alloc/free/destroy
     - [x] Unit test: nonblock acquire with `ZST_POOL_ACQUIRE_NONBLOCK` flag

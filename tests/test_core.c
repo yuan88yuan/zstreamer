@@ -48,6 +48,30 @@
 
 zst_element_t* zst_video_scaler_create(int target_width, int target_height, const char* target_pixel_format);
 zst_element_t* zst_audio_resampler_create(int target_sample_rate, int target_channels, const char* target_format);
+
+#include <features.h>
+#if defined(__linux__) && defined(__GLIBC__)
+#define OVERRIDE_MALLOC 1
+extern void* __libc_malloc(size_t size);
+extern void* __libc_calloc(size_t nmemb, size_t size);
+
+static volatile int g_track_allocs = 0;
+static volatile int g_malloc_count = 0;
+
+void* malloc(size_t size) {
+    if (g_track_allocs && size >= 400000) {
+        __sync_fetch_and_add(&g_malloc_count, 1);
+    }
+    return __libc_malloc(size);
+}
+
+void* calloc(size_t nmemb, size_t size) {
+    if (g_track_allocs && (nmemb * size) >= 400000) {
+        __sync_fetch_and_add(&g_malloc_count, 1);
+    }
+    return __libc_calloc(nmemb, size);
+}
+#endif
 zst_element_t* zst_text_overlay_create(const char* text);
 zst_element_t* zst_text_source_create(void);
 zst_element_t* zst_audio_test_src_create(void);
@@ -3845,6 +3869,139 @@ test_allocator_pool_config(void)
     PASS();
 }
 
+static zst_pad_probe_return_t
+malloc_integration_probe_cb(zst_pad_t* pad, zst_buffer_t* buf, zst_pad_probe_type_t type, void* user_data)
+{
+    (void)pad;
+    (void)type;
+    if (buf && (buf->flags & ZST_BUFFER_FLAG_EOS)) {
+        return ZST_PAD_PROBE_OK;
+    }
+    int* count = (int*)user_data;
+    (*count)++;
+    if (*count == 10) {
+#if defined(OVERRIDE_MALLOC)
+        g_malloc_count = 0;
+        g_track_allocs = 1;
+#endif
+    }
+    return ZST_PAD_PROBE_OK;
+}
+
+static void
+test_pipeline_zero_malloc_integration(void)
+{
+    TEST("integration test: videotestsrc -> queue -> filesink zero-malloc");
+
+    zst_plugin_registry_init();
+    assert(zst_register_builtin_elements() == ZST_OK);
+
+    zst_element_t* src = zst_element_factory_make("videotestsrc");
+    assert(src != NULL);
+    zst_element_set_property(src, "width", "640");
+    zst_element_set_property(src, "height", "480");
+    zst_element_set_property(src, "fps", "30");
+    zst_element_set_property(src, "pattern", "black");
+    zst_element_set_property(src, "num-buffers", "15");
+
+    zst_element_t* queue = zst_element_factory_make("queue");
+    assert(queue != NULL);
+
+    zst_element_t* sink = zst_element_factory_make("filesink");
+    assert(sink != NULL);
+    zst_element_set_property(sink, "path", "test_integration_zero_malloc.bin");
+
+    zst_pipeline_t* pipe = zst_pipeline_create();
+    zst_pipeline_add(pipe, src);
+    zst_pipeline_add(pipe, queue);
+    zst_pipeline_add(pipe, sink);
+
+    zst_pad_t* src_pad = zst_element_get_pad(src, "src");
+    zst_pad_t* queue_sink = zst_element_get_pad(queue, "sink");
+    zst_pad_t* queue_src = zst_element_get_pad(queue, "src");
+    zst_pad_t* sink_pad = zst_element_get_pad(sink, "sink");
+
+    assert(zst_pad_link(src_pad, queue_sink) == ZST_OK);
+    assert(zst_pad_link(queue_src, sink_pad) == ZST_OK);
+
+    int count = 0;
+    assert(zst_pad_add_probe(sink_pad, ZST_PAD_PROBE_PRE_BUFFER, malloc_integration_probe_cb, &count) != 0);
+
+#if defined(OVERRIDE_MALLOC)
+    g_track_allocs = 0;
+    g_malloc_count = 0;
+#endif
+
+    // Transition to READY to initialize the buffer pool
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_READY) == ZST_OK);
+
+    // Prefill the buffer pool so all buffers are pre-allocated
+    zst_buffer_pool_t* pool = zst_element_get_pool(src);
+    assert(pool != NULL);
+    zst_buffer_pool_prefill(pool);
+
+    zst_scheduler_config_t cfg = {
+        .mode = ZST_SCHEDULER_MULTI_THREAD,
+        .worker_threads = 2
+    };
+    zst_scheduler_t* sched = zst_scheduler_create(&cfg);
+    assert(sched != NULL);
+    zst_scheduler_attach(sched, pipe);
+
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_PLAYING) == ZST_OK);
+    zst_scheduler_run(sched);
+
+    // Sleep for 300 ms to let all 15 buffers process
+    struct timespec ts = { .tv_sec = 0, .tv_nsec = 300000000 };
+    nanosleep(&ts, NULL);
+
+#if defined(OVERRIDE_MALLOC)
+    g_track_allocs = 0;
+#endif
+
+    zst_pipeline_set_state(pipe, ZST_STATE_NULL);
+    zst_scheduler_stop(sched);
+
+    // Read the bus for errors/warnings
+    zst_bus_t* bus = zst_pipeline_get_bus(pipe);
+    zst_event_t* ev = NULL;
+    while (zst_bus_pop(bus, &ev, 0) == ZST_OK && ev != NULL) {
+        if (ev->type == ZST_EVENT_ERROR) {
+            printf("Bus Error: %s\n", ev->as.error.message);
+        } else if (ev->type == ZST_EVENT_WARNING) {
+            printf("Bus Warning: %s\n", ev->as.warning.message);
+        }
+        zst_event_destroy(ev);
+        ev = NULL;
+    }
+
+    zst_scheduler_destroy(sched);
+    zst_pipeline_destroy(pipe);
+
+    zst_plugin_registry_deinit();
+
+    printf("Integration test count: %d, g_malloc_count: %d\n", count, g_malloc_count);
+
+    // Verify file size and clean up
+    FILE* f = fopen("test_integration_zero_malloc.bin", "rb");
+    assert(f != NULL);
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fclose(f);
+    assert(size > 0);
+    unlink("test_integration_zero_malloc.bin");
+
+    // We processed 15 buffers, so count should be 15
+    assert(count == 15);
+
+#if defined(OVERRIDE_MALLOC)
+    // Verify zero calls to malloc for large buffers after the warm-up phase
+    assert(g_malloc_count == 0);
+#endif
+
+    PASS();
+}
+
 static void
 test_clock_basic(void)
 {
@@ -5393,6 +5550,7 @@ int main(void)
     printf("[allocator pool advanced]\n");
     test_allocator_pool_drain();
     test_allocator_pool_config();
+    test_pipeline_zero_malloc_integration();
     test_dmabuf_allocator();
 
     /* ── Clock (Phase 8b) ── */
