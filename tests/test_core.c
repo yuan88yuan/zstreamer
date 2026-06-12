@@ -3452,6 +3452,41 @@ test_allocator_pool_drain(void)
     PASS();
 }
 
+
+static void
+test_dmabuf_allocator(void)
+{
+    zst_allocator_t* alloc = zst_allocator_dmabuf_create();
+    assert(NULL != alloc);
+
+    size_t size = 4096;
+    void* ptr1 = zst_allocator_alloc(alloc, size);
+    assert(NULL != ptr1);
+
+    int fd = zst_allocator_dmabuf_get_fd(alloc, ptr1);
+    assert(fd >= 0);
+
+    // Write something to ptr1
+    strcpy((char*)ptr1, "Hello DMABUF");
+
+    // Import the fd into a new allocation
+    void* ptr2 = zst_allocator_dmabuf_import(alloc, fd, size);
+    assert(NULL != ptr2);
+
+    // Verify memory is shared
+    assert(strcmp((char*)ptr2, "Hello DMABUF") == 0);
+
+    // Change via ptr2 and verify on ptr1
+    strcpy((char*)ptr2, "Shared Memory");
+    assert(strcmp((char*)ptr1, "Shared Memory") == 0);
+
+    zst_allocator_free(alloc, ptr1);
+    zst_allocator_free(alloc, ptr2);
+
+    // Test destroying
+    zst_allocator_unref(alloc);
+}
+
 static void
 test_allocator_pool_config(void)
 {
@@ -5031,6 +5066,7 @@ int main(void)
     printf("[allocator pool advanced]\n");
     test_allocator_pool_drain();
     test_allocator_pool_config();
+    test_dmabuf_allocator();
 
     /* ── Clock (Phase 8b) ── */
     printf("[clock]\n");
