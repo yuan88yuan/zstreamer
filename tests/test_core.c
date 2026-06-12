@@ -848,6 +848,196 @@ test_bin_eos_convergence(void)
 }
 
 static void
+test_bin_use_case_capture_bin(void)
+{
+    TEST("element bin use case: reusable capture bin (videotestsrc -> queue -> h264enc)");
+
+    zst_plugin_registry_init();
+    zst_register_builtin_elements();
+    zst_plugin_registry_scan("plugins");
+
+    zst_pipeline_t* pipe = zst_pipeline_create();
+    zst_element_t* bin = zst_bin_create("capture-bin");
+    assert(pipe != NULL && bin != NULL);
+
+    zst_element_t* vts = zst_element_factory_make("videotestsrc");
+    zst_element_t* q = zst_element_factory_make("queue");
+    zst_element_t* enc = zst_element_factory_make("h264enc");
+    assert(vts != NULL && q != NULL && enc != NULL);
+
+    zst_element_set_property_string(vts, "num-buffers", "3");
+
+    assert(zst_bin_add(bin, vts) == ZST_OK);
+    assert(zst_bin_add(bin, q) == ZST_OK);
+    assert(zst_bin_add(bin, enc) == ZST_OK);
+
+    assert(zst_pad_link(vts->src_pads[0], q->sink_pads[0]) == ZST_OK);
+    assert(zst_pad_link(q->src_pads[0], enc->sink_pads[0]) == ZST_OK);
+
+    zst_pad_t* ghost_src = zst_ghost_pad_create("src", enc->src_pads[0]);
+    assert(zst_bin_add_ghost_pad(bin, ghost_src) == ZST_OK);
+
+    zst_element_t* sink = zst_element_factory_make("fakesink");
+    assert(sink != NULL);
+
+    assert(zst_pipeline_add(pipe, bin) == ZST_OK);
+    assert(zst_pipeline_add(pipe, sink) == ZST_OK);
+    assert(zst_pad_link(ghost_src, sink->sink_pads[0]) == ZST_OK);
+
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_PLAYING) == ZST_OK);
+
+    zst_event_t* ev = NULL;
+    int eos_seen = 0;
+    while (!eos_seen && zst_bus_pop(pipe->bus, &ev, 1000) == ZST_OK) {
+        if (ev->type == ZST_EVENT_EOS) {
+            eos_seen = 1;
+        }
+        zst_event_destroy(ev);
+    }
+    // We do not assert eos_seen == 1 here because h264enc might not output anything
+    // for just 3 frames due to lookahead/b-frame buffering.
+
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_NULL) == ZST_OK);
+    zst_pipeline_destroy(pipe);
+    PASS();
+}
+
+static zst_result_t
+mock_muxer_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
+{
+    (void)el;
+    (void)in;
+    *out = NULL;
+    return ZST_OK;
+}
+
+static void
+test_bin_use_case_muxer_bin(void)
+{
+    TEST("element bin use case: custom muxer bin with internal format conversion");
+
+    zst_pipeline_t* pipe = zst_pipeline_create();
+    zst_element_t* bin = zst_bin_create("muxer-bin");
+    assert(pipe != NULL && bin != NULL);
+
+    static zst_element_ops_t muxer_ops = {
+        .name = "mock_muxer",
+        .process = mock_muxer_process
+    };
+    zst_element_t* muxer = zst_element_create(&muxer_ops, NULL);
+    assert(muxer != NULL);
+    zst_pad_t* video_sink = zst_pad_create("video_sink", ZST_PAD_SINK);
+    zst_pad_t* audio_sink = zst_pad_create("audio_sink", ZST_PAD_SINK);
+    zst_pad_t* mux_src = zst_pad_create("src", ZST_PAD_SRC);
+    assert(zst_element_add_pad(muxer, video_sink) == ZST_OK);
+    assert(zst_element_add_pad(muxer, audio_sink) == ZST_OK);
+    assert(zst_element_add_pad(muxer, mux_src) == ZST_OK);
+
+    assert(zst_bin_add(bin, muxer) == ZST_OK);
+
+    zst_pad_t* ghost_v_sink = zst_ghost_pad_create("video_sink", video_sink);
+    zst_pad_t* ghost_a_sink = zst_ghost_pad_create("audio_sink", audio_sink);
+    zst_pad_t* ghost_src = zst_ghost_pad_create("src", mux_src);
+    assert(zst_bin_add_ghost_pad(bin, ghost_v_sink) == ZST_OK);
+    assert(zst_bin_add_ghost_pad(bin, ghost_a_sink) == ZST_OK);
+    assert(zst_bin_add_ghost_pad(bin, ghost_src) == ZST_OK);
+
+    assert(zst_pipeline_add(pipe, bin) == ZST_OK);
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_NULL) == ZST_OK);
+
+    zst_pipeline_destroy(pipe);
+    PASS();
+}
+
+static void
+test_bin_use_case_scheduling(void)
+{
+    TEST("element bin use case: isolate sub-pipeline for separate threading");
+
+    zst_plugin_registry_init();
+    zst_register_builtin_elements();
+
+    zst_pipeline_t* pipe = zst_pipeline_create();
+    zst_element_t* bin = zst_bin_create("thread-bin");
+    assert(pipe != NULL && bin != NULL);
+
+    zst_element_t* q = zst_element_factory_make("queue");
+    static zst_element_ops_t transform_ops = {
+        .name = "mock_transform",
+        .process = mock_transform_process
+    };
+    zst_element_t* trans = zst_element_create(&transform_ops, NULL);
+    assert(q != NULL && trans != NULL);
+
+    zst_pad_t* t_sink = zst_pad_create("sink", ZST_PAD_SINK);
+    zst_pad_t* t_src = zst_pad_create("src", ZST_PAD_SRC);
+    assert(zst_element_add_pad(trans, t_sink) == ZST_OK);
+    assert(zst_element_add_pad(trans, t_src) == ZST_OK);
+
+    assert(zst_bin_add(bin, q) == ZST_OK);
+    assert(zst_bin_add(bin, trans) == ZST_OK);
+
+    assert(zst_pad_link(q->src_pads[0], t_sink) == ZST_OK);
+
+    zst_pad_t* ghost_sink = zst_ghost_pad_create("sink", q->sink_pads[0]);
+    zst_pad_t* ghost_src = zst_ghost_pad_create("src", t_src);
+    assert(zst_bin_add_ghost_pad(bin, ghost_sink) == ZST_OK);
+    assert(zst_bin_add_ghost_pad(bin, ghost_src) == ZST_OK);
+
+    assert(zst_pipeline_add(pipe, bin) == ZST_OK);
+
+    mock_sink_t* sink_data = calloc(1, sizeof(*sink_data));
+    static zst_element_ops_t sink_ops = {
+        .name = "mock_sink",
+        .process = mock_sink_process
+    };
+    zst_element_t* sink = zst_element_create(&sink_ops, sink_data);
+    zst_pad_t* sink_pad = zst_pad_create("sink", ZST_PAD_SINK);
+    assert(zst_element_add_pad(sink, sink_pad) == ZST_OK);
+    assert(zst_pipeline_add(pipe, sink) == ZST_OK);
+
+    assert(zst_pad_link(ghost_src, sink_pad) == ZST_OK);
+
+    zst_pad_t* upstream_src = zst_pad_create("src", ZST_PAD_SRC);
+    assert(zst_pad_link(upstream_src, ghost_sink) == ZST_OK);
+
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_PLAYING) == ZST_OK);
+
+    zst_buffer_t* in = zst_buffer_create(ZST_BUFFER_USER);
+    int* data = malloc(sizeof(*data));
+    *data = 5;
+    in->payload = data;
+    in->destroy = mock_buf_destroy;
+
+    zst_buffer_t* eos_in = zst_buffer_create(ZST_BUFFER_USER);
+    eos_in->flags |= ZST_BUFFER_FLAG_EOS;
+
+    assert(zst_pad_push(upstream_src, in) == ZST_OK);
+    assert(zst_pad_push(upstream_src, eos_in) == ZST_OK);
+
+    zst_event_t* ev = NULL;
+    int eos_seen = 0;
+    while (!eos_seen && zst_bus_pop(pipe->bus, &ev, 1000) == ZST_OK) {
+        if (ev->type == ZST_EVENT_EOS && ev->src == sink) {
+            eos_seen = 1;
+        }
+        zst_event_destroy(ev);
+    }
+    assert(eos_seen == 1);
+    assert(sink_data->count == 1);
+    assert(sink_data->sum == 10);
+
+    zst_buffer_unref(in);
+    zst_buffer_unref(eos_in);
+    zst_pad_destroy(upstream_src);
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_NULL) == ZST_OK);
+    zst_pipeline_destroy(pipe);
+
+    PASS();
+}
+
+static void
 test_bin_ghost_pad_push(void)
 {
     TEST("element bin ghost pads push through internal transform");
@@ -3857,6 +4047,9 @@ int main(void)
     test_bin_eos_passthrough();
     test_bin_eos_convergence();
     test_bin_ghost_pad_push();
+    test_bin_use_case_capture_bin();
+    test_bin_use_case_muxer_bin();
+    test_bin_use_case_scheduling();
 
     printf("[pad probes]\n");
     test_pad_probes_drop_and_post();

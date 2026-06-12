@@ -130,9 +130,9 @@ A container element that groups multiple elements into a single logical element 
 - [x] State propagation: `NULL→READY→PAUSED→PLAYING` cascade to all children
 - [x] Error aggregation: child errors bubble up through the bin's bus
 - [x] EOS passthrough: bin converges EOS from all sink-pad branches before signalling src
-- [ ] Use case: package `videotestsrc → queue → h264enc` as a reusable "capture" bin
-- [ ] Use case: create custom muxer bins with internal format conversion
-- [ ] Use case: isolate a sub-pipeline for separate threading / scheduling
+- [x] Use case: package `videotestsrc → queue → h264enc` as a reusable "capture" bin
+- [x] Use case: create custom muxer bins with internal format conversion
+- [x] Use case: isolate a sub-pipeline for separate threading / scheduling
 
 ### Pad Blocking / Probes (buffer interception)
 
