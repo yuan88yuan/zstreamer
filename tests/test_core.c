@@ -4126,6 +4126,46 @@ test_clock_slaving_qos_sync(void)
     PASS();
 }
 
+static void
+test_clock_precision(void)
+{
+    TEST("clock precision");
+
+    zst_clock_t* clk = zst_clock_system_create();
+    assert(clk != NULL);
+
+    /* Measure consecutive get_time calls to check resolution */
+    zst_time_t times[100];
+    for (int i = 0; i < 100; i++) {
+        times[i] = zst_clock_get_time(clk);
+    }
+
+    zst_time_t total_diff = 0;
+    for (int i = 1; i < 100; i++) {
+        assert(times[i] >= times[i - 1]);
+        total_diff += (times[i] - times[i - 1]);
+    }
+    double avg_diff = (double)total_diff / 99.0;
+    /* High resolution clocks usually have avg diff < 100 microseconds (100,000 ns) */
+    assert(avg_diff < 100000.0);
+
+    /* Measure small sleep wait */
+    zst_time_t wait_duration = 2000000ULL; /* 2ms */
+    zst_time_t t1 = zst_clock_get_time(clk);
+    zst_clock_wait(clk, wait_duration);
+    zst_time_t t2 = zst_clock_get_time(clk);
+
+    zst_time_t elapsed = t2 - t1;
+    assert(elapsed >= wait_duration);
+
+    /* OS schedulers can be imprecise. We allow up to 15ms overhead in CI. */
+    assert(elapsed < wait_duration + 15000000ULL);
+
+    zst_clock_unref(clk);
+
+    PASS();
+}
+
 /* ── Text Overlay (Phase 11a) ────────────────────────────────────────────── */
 
 
@@ -5660,6 +5700,7 @@ int main(void)
     test_clock_basic();
     test_clock_slaving();
     test_clock_slaving_qos_sync();
+    test_clock_precision();
 
     /* ── Text Overlay (Phase 11a) ── */
     printf("[text overlay]\n");
