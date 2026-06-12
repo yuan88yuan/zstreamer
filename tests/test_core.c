@@ -1071,6 +1071,234 @@ test_pad_blocking(void)
     PASS();
 }
 
+
+/* -- Pad Probes Use Cases Tests -- */
+
+static zst_pad_probe_return_t
+debugger_step_probe_cb(zst_pad_t* pad, zst_buffer_t* buf, zst_pad_probe_type_t type, void* user_data)
+{
+    (void)pad;
+    (void)buf;
+    (void)type;
+    int* steps = user_data;
+    (*steps)++;
+    /* In a real debugger, we would block here or wait for a user signal to continue */
+    return ZST_PAD_PROBE_BLOCK;
+}
+
+static zst_pad_probe_return_t
+debugger_block_notify_cb(zst_pad_t* pad, zst_buffer_t* buf, zst_pad_probe_type_t type, void* user_data)
+{
+    (void)buf;
+    (void)type;
+    (void)user_data;
+    /* When blocked, we can unblock to simulate "step" */
+    zst_pad_unblock(pad);
+    return ZST_PAD_PROBE_OK;
+}
+
+static void
+test_pad_probes_usecase_debugger_stepping(void)
+{
+    TEST("pad probes usecase: debugger frame-by-frame stepping");
+
+    mock_sink_t* sink_data = calloc(1, sizeof(*sink_data));
+    assert(sink_data != NULL);
+    static zst_element_ops_t sink_ops = {
+        .name = "mock_sink",
+        .process = mock_sink_process
+    };
+    zst_element_t* sink = zst_element_create(&sink_ops, sink_data);
+    zst_pad_t* sink_pad = zst_pad_create("sink", ZST_PAD_SINK);
+    assert(zst_element_add_pad(sink, sink_pad) == ZST_OK);
+
+    zst_pad_t* src = zst_pad_create("src", ZST_PAD_SRC);
+    assert(zst_pad_link(src, sink_pad) == ZST_OK);
+
+    int steps = 0;
+    assert(zst_pad_add_probe(sink_pad, ZST_PAD_PROBE_PRE_BUFFER, debugger_step_probe_cb, &steps) != 0);
+    assert(zst_pad_set_block_callback(sink_pad, debugger_block_notify_cb, NULL) == ZST_OK);
+
+    zst_buffer_t* buf1 = zst_buffer_create(ZST_BUFFER_USER);
+    int* data1 = malloc(sizeof(*data1)); *data1 = 1; buf1->payload = data1; buf1->destroy = mock_buf_destroy;
+
+    zst_buffer_t* buf2 = zst_buffer_create(ZST_BUFFER_USER);
+    int* data2 = malloc(sizeof(*data2)); *data2 = 2; buf2->payload = data2; buf2->destroy = mock_buf_destroy;
+
+    /* Push first frame */
+    probe_push_thread_t ctx1 = { .src = src, .buf = buf1, .result = ZST_ERROR };
+    pthread_t thread1;
+    assert(pthread_create(&thread1, NULL, probe_push_thread, &ctx1) == 0);
+
+    struct timespec ts = { .tv_sec = 0, .tv_nsec = 50000000 };
+    nanosleep(&ts, NULL);
+
+    pthread_join(thread1, NULL);
+    assert(ctx1.result == ZST_OK);
+    assert(sink_data->count == 1);
+    assert(steps == 1);
+
+    /* Push second frame */
+    probe_push_thread_t ctx2 = { .src = src, .buf = buf2, .result = ZST_ERROR };
+    pthread_t thread2;
+    assert(pthread_create(&thread2, NULL, probe_push_thread, &ctx2) == 0);
+    nanosleep(&ts, NULL);
+
+    pthread_join(thread2, NULL);
+    assert(ctx2.result == ZST_OK);
+    assert(sink_data->count == 2);
+    assert(steps == 2);
+
+    zst_buffer_unref(buf1);
+    zst_buffer_unref(buf2);
+    zst_pad_destroy(src);
+    zst_element_destroy(sink);
+    PASS();
+}
+
+static zst_pad_probe_return_t
+qos_drop_probe_cb(zst_pad_t* pad, zst_buffer_t* buf, zst_pad_probe_type_t type, void* user_data)
+{
+    (void)pad;
+    (void)type;
+    int* drop_count = user_data;
+    /* Simulate QoS: Drop every second buffer */
+    static int counter = 0;
+    counter++;
+    if (counter % 2 == 0) {
+        (*drop_count)++;
+        return ZST_PAD_PROBE_DROP;
+    }
+    return ZST_PAD_PROBE_OK;
+}
+
+static void
+test_pad_probes_usecase_qos_dropping(void)
+{
+    TEST("pad probes usecase: dynamic QoS dropping");
+
+    mock_sink_t* sink_data = calloc(1, sizeof(*sink_data));
+    static zst_element_ops_t sink_ops = {
+        .name = "mock_sink",
+        .process = mock_sink_process
+    };
+    zst_element_t* sink = zst_element_create(&sink_ops, sink_data);
+    zst_pad_t* sink_pad = zst_pad_create("sink", ZST_PAD_SINK);
+    assert(zst_element_add_pad(sink, sink_pad) == ZST_OK);
+
+    zst_pad_t* src = zst_pad_create("src", ZST_PAD_SRC);
+    assert(zst_pad_link(src, sink_pad) == ZST_OK);
+
+    int drop_count = 0;
+    assert(zst_pad_add_probe(sink_pad, ZST_PAD_PROBE_PRE_BUFFER, qos_drop_probe_cb, &drop_count) != 0);
+
+    for (int i = 0; i < 4; i++) {
+        zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_USER);
+        int* data = malloc(sizeof(*data)); *data = i + 1; buf->payload = data; buf->destroy = mock_buf_destroy;
+        zst_pad_push(src, buf);
+        zst_buffer_unref(buf);
+    }
+
+    assert(drop_count == 2);
+    assert(sink_data->count == 2); /* 1st and 3rd went through */
+
+    zst_pad_destroy(src);
+    zst_element_destroy(sink);
+    PASS();
+}
+
+static zst_pad_probe_return_t
+parallel_tap_probe_cb(zst_pad_t* pad, zst_buffer_t* buf, zst_pad_probe_type_t type, void* user_data)
+{
+    (void)pad;
+    (void)type;
+    int* tap_sum = user_data;
+    if (buf->payload) {
+        int val = *(int*)buf->payload;
+        *tap_sum += val;
+    }
+    return ZST_PAD_PROBE_OK; /* Let it continue to the original sink */
+}
+
+static void
+test_pad_probes_usecase_parallel_tap(void)
+{
+    TEST("pad probes usecase: parallel data tap");
+
+    mock_sink_t* sink_data = calloc(1, sizeof(*sink_data));
+    static zst_element_ops_t sink_ops = {
+        .name = "mock_sink",
+        .process = mock_sink_process
+    };
+    zst_element_t* sink = zst_element_create(&sink_ops, sink_data);
+    zst_pad_t* sink_pad = zst_pad_create("sink", ZST_PAD_SINK);
+    assert(zst_element_add_pad(sink, sink_pad) == ZST_OK);
+
+    zst_pad_t* src = zst_pad_create("src", ZST_PAD_SRC);
+    assert(zst_pad_link(src, sink_pad) == ZST_OK);
+
+    int tap_sum = 0;
+    assert(zst_pad_add_probe(src, ZST_PAD_PROBE_POST_BUFFER, parallel_tap_probe_cb, &tap_sum) != 0);
+
+    zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_USER);
+    int* data = malloc(sizeof(*data)); *data = 42; buf->payload = data; buf->destroy = mock_buf_destroy;
+
+    zst_pad_push(src, buf);
+
+    assert(tap_sum == 42); /* The tap intercepted it */
+    assert(sink_data->sum == 42); /* The original sink still got it */
+
+    zst_buffer_unref(buf);
+    zst_pad_destroy(src);
+    zst_element_destroy(sink);
+    PASS();
+}
+
+static zst_pad_probe_return_t
+custom_processing_probe_cb(zst_pad_t* pad, zst_buffer_t* buf, zst_pad_probe_type_t type, void* user_data)
+{
+    (void)pad;
+    (void)type;
+    (void)user_data;
+    if (buf->payload) {
+        int* val = (int*)buf->payload;
+        *val = *val * 2; /* In-place modification */
+    }
+    return ZST_PAD_PROBE_OK;
+}
+
+static void
+test_pad_probes_usecase_custom_processing(void)
+{
+    TEST("pad probes usecase: insert custom processing");
+
+    mock_sink_t* sink_data = calloc(1, sizeof(*sink_data));
+    static zst_element_ops_t sink_ops = {
+        .name = "mock_sink",
+        .process = mock_sink_process
+    };
+    zst_element_t* sink = zst_element_create(&sink_ops, sink_data);
+    zst_pad_t* sink_pad = zst_pad_create("sink", ZST_PAD_SINK);
+    assert(zst_element_add_pad(sink, sink_pad) == ZST_OK);
+
+    zst_pad_t* src = zst_pad_create("src", ZST_PAD_SRC);
+    assert(zst_pad_link(src, sink_pad) == ZST_OK);
+
+    assert(zst_pad_add_probe(sink_pad, ZST_PAD_PROBE_PRE_BUFFER, custom_processing_probe_cb, NULL) != 0);
+
+    zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_USER);
+    int* data = malloc(sizeof(*data)); *data = 5; buf->payload = data; buf->destroy = mock_buf_destroy;
+
+    zst_pad_push(src, buf);
+
+    assert(sink_data->sum == 10); /* The value was modified by the probe before reaching the sink */
+
+    zst_buffer_unref(buf);
+    zst_pad_destroy(src);
+    zst_element_destroy(sink);
+    PASS();
+}
+
 static zst_buffer_t*
 segment_test_buffer(int value, zst_time_t pts)
 {
@@ -3938,6 +4166,10 @@ int main(void)
     printf("[pad probes]\n");
     test_pad_probes_drop_and_post();
     test_pad_blocking();
+    test_pad_probes_usecase_debugger_stepping();
+    test_pad_probes_usecase_qos_dropping();
+    test_pad_probes_usecase_parallel_tap();
+    test_pad_probes_usecase_custom_processing();
 
     printf("[segment seeking]\n");
     test_segment_seek_event_and_clipping();
