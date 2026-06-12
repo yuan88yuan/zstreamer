@@ -1576,6 +1576,217 @@ test_segment_seek_event_and_clipping(void)
 }
 
 static void
+
+test_segment_seek_usecase_clip_range(void)
+{
+    TEST("segment seek use case: clip a recording to a specific time range (start=30.0, stop=120.0)");
+
+    zst_pipeline_t* pipe = zst_pipeline_create();
+    assert(pipe != NULL);
+
+    zst_element_t* source = zst_element_create(&g_dummy_ops, NULL);
+    assert(source != NULL);
+    zst_pad_t* src = zst_pad_create("src", ZST_PAD_SRC);
+    assert(zst_element_add_pad(source, src) == ZST_OK);
+
+    mock_sink_t* sink_data = calloc(1, sizeof(*sink_data));
+    assert(sink_data != NULL);
+    static zst_element_ops_t sink_ops = {
+        .name = "mock_sink",
+        .process = mock_sink_process
+    };
+    zst_element_t* sink = zst_element_create(&sink_ops, sink_data);
+    assert(sink != NULL);
+    zst_pad_t* sink_pad = zst_pad_create("sink", ZST_PAD_SINK);
+    assert(zst_element_add_pad(sink, sink_pad) == ZST_OK);
+
+    assert(zst_pipeline_add(pipe, source) == ZST_OK);
+    assert(zst_pipeline_add(pipe, sink) == ZST_OK);
+    assert(zst_pad_link(src, sink_pad) == ZST_OK);
+
+    zst_segment_t segment = zst_segment_default();
+    segment.start = 30;
+    segment.stop = 120;
+    assert(zst_element_seek(source, 1.0, &segment) == ZST_OK);
+
+    for (int i = 0; i <= 150; i += 10) {
+        zst_buffer_t* buf = segment_test_buffer(1, i);
+        zst_pad_push(src, buf);
+        zst_buffer_unref(buf);
+    }
+
+    assert(sink_data->count == 9);
+    assert(sink_data->sum == 9);
+
+    zst_pipeline_destroy(pipe);
+    PASS();
+}
+
+static void
+test_segment_seek_usecase_looping(void)
+{
+    TEST("segment seek use case: loop playback of a segment for stress testing");
+
+    zst_pipeline_t* pipe = zst_pipeline_create();
+    assert(pipe != NULL);
+
+    zst_element_t* source = zst_element_create(&g_dummy_ops, NULL);
+    assert(source != NULL);
+    zst_pad_t* src = zst_pad_create("src", ZST_PAD_SRC);
+    assert(zst_element_add_pad(source, src) == ZST_OK);
+
+    mock_sink_t* sink_data = calloc(1, sizeof(*sink_data));
+    assert(sink_data != NULL);
+    static zst_element_ops_t sink_ops = {
+        .name = "mock_sink",
+        .process = mock_sink_process
+    };
+    zst_element_t* sink = zst_element_create(&sink_ops, sink_data);
+    assert(sink != NULL);
+    zst_pad_t* sink_pad = zst_pad_create("sink", ZST_PAD_SINK);
+    assert(zst_element_add_pad(sink, sink_pad) == ZST_OK);
+
+    assert(zst_pipeline_add(pipe, source) == ZST_OK);
+    assert(zst_pipeline_add(pipe, sink) == ZST_OK);
+    assert(zst_pad_link(src, sink_pad) == ZST_OK);
+
+    zst_segment_t segment = zst_segment_default();
+    segment.start = 50;
+    segment.stop = 100;
+
+    int loop_count = 5;
+    for (int loop = 0; loop < loop_count; loop++) {
+        assert(zst_element_seek(source, 1.0, &segment) == ZST_OK);
+
+        for (int i = 0; i <= 150; i += 10) {
+            zst_buffer_t* buf = segment_test_buffer(1, i);
+            zst_pad_push(src, buf);
+            zst_buffer_unref(buf);
+        }
+    }
+
+    assert(sink_data->count == 25);
+    assert(sink_data->sum == 25);
+
+    zst_pipeline_destroy(pipe);
+    PASS();
+}
+
+static void
+test_segment_seek_usecase_file_position(void)
+{
+    TEST("segment seek use case: seek to a specific position in a recorded file source");
+
+    const char* filepath = "/tmp/zst_segment_seek_position_test.bin";
+    FILE* f = fopen(filepath, "wb");
+    assert(f != NULL);
+    const char* data = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    assert(fwrite(data, 1, strlen(data), f) == strlen(data));
+    fclose(f);
+
+    zst_element_t* src = zst_file_source_create(filepath);
+    assert(src != NULL);
+    assert(zst_element_set_property_uint(src, "chunk-size", 5) == ZST_OK);
+    assert(zst_element_set_state(src, ZST_STATE_PLAYING) == ZST_OK);
+
+    // Seek exactly to byte offset 15 ('F')
+    zst_segment_t segment = zst_segment_default();
+    segment.start = 15;
+    assert(zst_element_seek(src, 1.0, &segment) == ZST_OK);
+
+    zst_pad_t* src_pad = zst_element_get_pad(src, "src");
+    assert(src_pad != NULL);
+
+    zst_buffer_t* buf = NULL;
+    assert(src_pad->pull(src_pad, &buf) == ZST_OK);
+    assert(buf != NULL);
+    assert(buf->memory.size == 5);
+    // 15 is 'F' ... 'F', 'G', 'H', 'I', 'J'
+    assert(strncmp((char*)buf->memory.data, "FGHIJ", 5) == 0);
+    zst_buffer_unref(buf);
+
+    // Now seek again to offset 2 ('2')
+    segment.start = 2;
+    assert(zst_element_seek(src, 1.0, &segment) == ZST_OK);
+
+    buf = NULL;
+    assert(src_pad->pull(src_pad, &buf) == ZST_OK);
+    assert(buf != NULL);
+    assert(buf->memory.size == 5);
+    assert(strncmp((char*)buf->memory.data, "23456", 5) == 0);
+    zst_buffer_unref(buf);
+
+    zst_element_set_state(src, ZST_STATE_NULL);
+    zst_element_destroy(src);
+    remove(filepath);
+    PASS();
+}
+
+static void
+test_segment_seek_usecase_pause_resume(void)
+{
+    TEST("segment seek use case: pause/resume from last position (stop position as resumption point)");
+
+    zst_pipeline_t* pipe = zst_pipeline_create();
+    assert(pipe != NULL);
+
+    zst_element_t* source = zst_element_create(&g_dummy_ops, NULL);
+    assert(source != NULL);
+    zst_pad_t* src = zst_pad_create("src", ZST_PAD_SRC);
+    assert(zst_element_add_pad(source, src) == ZST_OK);
+
+    mock_sink_t* sink_data = calloc(1, sizeof(*sink_data));
+    assert(sink_data != NULL);
+    static zst_element_ops_t sink_ops = {
+        .name = "mock_sink",
+        .process = mock_sink_process
+    };
+    zst_element_t* sink = zst_element_create(&sink_ops, sink_data);
+    assert(sink != NULL);
+    zst_pad_t* sink_pad = zst_pad_create("sink", ZST_PAD_SINK);
+    assert(zst_element_add_pad(sink, sink_pad) == ZST_OK);
+
+    assert(zst_pipeline_add(pipe, source) == ZST_OK);
+    assert(zst_pipeline_add(pipe, sink) == ZST_OK);
+    assert(zst_pad_link(src, sink_pad) == ZST_OK);
+
+    // Initial playback from 0
+    zst_segment_t segment = zst_segment_default();
+    segment.start = 0;
+    assert(zst_element_seek(source, 1.0, &segment) == ZST_OK);
+
+    // Process a few buffers
+    for (int i = 0; i < 50; i += 10) {
+        zst_buffer_t* buf = segment_test_buffer(1, i);
+        zst_pad_push(src, buf);
+        zst_buffer_unref(buf);
+    }
+
+    assert(sink_data->count == 5); // 0, 10, 20, 30, 40
+    assert(sink_data->sum == 5);
+
+    // Simulate "pause" and "resume" from last known PTS (40 + duration 10 = 50)
+    zst_segment_t resume_segment = zst_segment_default();
+    resume_segment.start = 50; // Resume point
+    assert(zst_element_seek(source, 1.0, &resume_segment) == ZST_OK);
+
+    // Attempt to push overlapping/old buffers to simulate source rewinding or resuming carelessly
+    for (int i = 20; i <= 100; i += 10) {
+        zst_buffer_t* buf = segment_test_buffer(1, i);
+        zst_pad_push(src, buf);
+        zst_buffer_unref(buf);
+    }
+
+    // From the second batch (20 to 100), only buffers >= 50 will be accepted
+    // They are: 50, 60, 70, 80, 90, 100 (6 buffers)
+
+    assert(sink_data->count == 11); // 5 (old) + 6 (new) = 11
+    assert(sink_data->sum == 11);
+
+    zst_pipeline_destroy(pipe);
+    PASS();
+}
+static void
 test_file_source_segment_seek(void)
 {
     TEST("file source segment seek maps to byte range");
@@ -5017,6 +5228,10 @@ int main(void)
 
     printf("[segment seeking]\n");
     test_segment_seek_event_and_clipping();
+    test_segment_seek_usecase_clip_range();
+    test_segment_seek_usecase_looping();
+    test_segment_seek_usecase_file_position();
+    test_segment_seek_usecase_pause_resume();
     test_file_source_segment_seek();
 
     /* ── Caps Negotiation (Phase 5) ── */

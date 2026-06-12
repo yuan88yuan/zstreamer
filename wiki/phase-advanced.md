@@ -157,10 +157,10 @@ Enable playback of a specific time range within a stream — clip in, clip out, 
 - [x] Source element seeking: `zst_element_seek(element, rate, segment)` → element jumps to new position
 - [x] Sink element clipping: apply `start`/`stop` segment bounds — discard buffers outside the window
 - [x] `SEEK` support for format-specific sources where available (filesrc maps segment range to byte offset/length)
-- [ ] Use case: clip a recording to a specific time range (start=30.0, stop=120.0)
-- [ ] Use case: loop playback of a segment for stress testing
-- [ ] Use case: seek to a specific position in a recorded file source
-- [ ] Use case: pause/resume from last position (stop position as resumption point)
+- [x] Use case: clip a recording to a specific time range (start=30.0, stop=120.0)
+- [x] Use case: loop playback of a segment for stress testing
+- [x] Use case: seek to a specific position in a recorded file source
+- [x] Use case: pause/resume from last position (stop position as resumption point)
 
 ## 8d — Element Public API and Plugin-First Feature Exposure
 
