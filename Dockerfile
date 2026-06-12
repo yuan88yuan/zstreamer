@@ -34,6 +34,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libswresample-dev \
     libasound2-dev \
     libfreetype-dev \
+    libsrt-gnutls-dev \
+    libgnutls28-dev \
+    nettle-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Debugging / profiling tools ─────────────────────────────────────────

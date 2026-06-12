@@ -42,6 +42,8 @@
 #include "zstreamer/elements/zst_rtsp_source.h"
 #include "zstreamer/elements/zst_rtsp_sink.h"
 #include "zstreamer/elements/zst_fake_sink.h"
+#include "zstreamer/elements/zst_srt_source.h"
+#include "zstreamer/elements/zst_srt_sink.h"
 
 zst_element_t* zst_video_scaler_create(int target_width, int target_height, const char* target_pixel_format);
 zst_element_t* zst_audio_resampler_create(int target_sample_rate, int target_channels, const char* target_format);
@@ -3559,6 +3561,81 @@ test_text_overlay_multiline(void)
     PASS();
 }
 
+static void test_buffer_free_destructor(zst_buffer_t* buf) {
+    if (buf->memory.data) {
+        free(buf->memory.data);
+        buf->memory.data = NULL;
+    }
+}
+
+static void test_srt_elements(void)
+{
+    TEST("SRT source and sink properties and loopback transmission");
+
+    zst_element_t* src = zst_srt_source_create();
+    zst_element_t* sink = zst_srt_sink_create();
+    assert(src != NULL && sink != NULL);
+
+    char val[128];
+    assert(zst_element_set_property(src, "uri", "srt://127.0.0.1:12345?mode=listener&latency=200&passphrase=secretpassphrase&pbkeylen=32") == ZST_OK);
+    assert(zst_element_get_property(src, "mode", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "listener") == 0);
+    assert(zst_element_get_property(src, "port", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "12345") == 0);
+    assert(zst_element_get_property(src, "latency", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "200") == 0);
+    assert(zst_element_get_property(src, "passphrase", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "secretpassphrase") == 0);
+    assert(zst_element_get_property(src, "pbkeylen", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "32") == 0);
+
+    assert(zst_element_set_property(sink, "uri", "srt://127.0.0.1:12345?mode=caller&latency=200&passphrase=secretpassphrase&pbkeylen=32") == ZST_OK);
+
+    assert(zst_element_set_state(src, ZST_STATE_READY) == ZST_OK);
+    assert(zst_element_set_state(sink, ZST_STATE_READY) == ZST_OK);
+    assert(zst_element_set_state(src, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_element_set_state(sink, ZST_STATE_PLAYING) == ZST_OK);
+
+    // Prepare a real message buffer
+    zst_buffer_t* send_buf = zst_buffer_create(ZST_BUFFER_USER);
+    assert(send_buf != NULL);
+    send_buf->memory.data = malloc(100);
+    assert(send_buf->memory.data != NULL);
+    strcpy((char*)send_buf->memory.data, "Hello SRT!");
+    send_buf->memory.size = strlen("Hello SRT!") + 1;
+    send_buf->destroy = test_buffer_free_destructor;
+
+    int success = 0;
+    // Drive process loops until connected and data is transmitted
+    for (int i = 0; i < 100; i++) {
+        // Try sending
+        sink->ops->process(sink, send_buf, NULL);
+
+        // Try receiving
+        zst_buffer_t* recv_buf = NULL;
+        src->ops->process(src, NULL, &recv_buf);
+
+        if (recv_buf) {
+            assert(strcmp((char*)recv_buf->memory.data, "Hello SRT!") == 0);
+            zst_buffer_unref(recv_buf);
+            success = 1;
+            break;
+        }
+        struct timespec ts = {0, 10000000}; // 10ms
+        nanosleep(&ts, NULL);
+    }
+    assert(success == 1);
+    zst_buffer_unref(send_buf);
+
+    assert(zst_element_set_state(sink, ZST_STATE_NULL) == ZST_OK);
+    assert(zst_element_set_state(src, ZST_STATE_NULL) == ZST_OK);
+
+    zst_element_destroy(src);
+    zst_element_destroy(sink);
+
+    PASS();
+}
+
 static void test_rtmp_elements(void)
 {
     TEST("rtmp/rtsp source/sink properties and caps");
@@ -3782,6 +3859,9 @@ int main(void)
 
     printf("[rtmp source/sink]\n");
     test_rtmp_elements();
+
+    printf("[srt source/sink]\n");
+    test_srt_elements();
 
     /* ── Summary ── */
     printf("\n──────────────────────────────────────────────────\n");

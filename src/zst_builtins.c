@@ -58,6 +58,8 @@ zst_element_t* zst_rtsp_sink_create(void);
 zst_element_t* zst_rtsp_server_create(void);
 zst_element_t* zst_rtmp_source_create(const char* url);
 zst_element_t* zst_rtmp_sink_create(void);
+zst_element_t* zst_srt_source_create(void);
+zst_element_t* zst_srt_sink_create(void);
 
 /*──────────────────────────────────────────────────────────────────────────
   Pad template tables (used by descriptor tables below).
@@ -130,6 +132,30 @@ static const zst_property_spec_t g_builtin_rtmpsink_props[] = {
     { "url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "RTMP Destination URL" }
 };
 
+static const zst_property_spec_t g_builtin_srtsrc_props[] = {
+    { "uri", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "SRT Connection URI" },
+    { "host", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "127.0.0.1", "SRT peer host (caller/rendezvous modes)" },
+    { "port", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "9000", "SRT port" },
+    { "mode", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "caller", "SRT connection mode (caller, listener, rendezvous)" },
+    { "latency", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "120", "SRT latency in milliseconds" },
+    { "passphrase", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "SRT AES encryption passphrase" },
+    { "pbkeylen", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "16", "SRT AES key length (16, 24, 32)" },
+    { "streamid", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "SRT stream ID" },
+    { "payload-size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1316", "SRT packet payload size" }
+};
+
+static const zst_property_spec_t g_builtin_srtsink_props[] = {
+    { "uri", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "SRT Destination URI" },
+    { "host", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "127.0.0.1", "SRT peer host (caller/rendezvous modes)" },
+    { "port", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "9000", "SRT port" },
+    { "mode", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "caller", "SRT connection mode (caller, listener, rendezvous)" },
+    { "latency", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "120", "SRT latency in milliseconds" },
+    { "passphrase", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "SRT AES encryption passphrase" },
+    { "pbkeylen", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "16", "SRT AES key length (16, 24, 32)" },
+    { "streamid", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "SRT stream ID" },
+    { "payload-size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1316", "SRT packet payload size" }
+};
+
 static const zst_property_spec_t g_builtin_rtspsrc_props[] = {
     { "url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "RTSP URL" },
     { "rtsp_url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Alias for url" },
@@ -198,6 +224,8 @@ create_builtin_element(const char* name)
     if (strcmp(name, "rtsp_server") == 0)  return zst_rtsp_server_create();
     if (strcmp(name, "rtmpsrc") == 0)      return zst_rtmp_source_create(NULL);
     if (strcmp(name, "rtmpsink") == 0)     return zst_rtmp_sink_create();
+    if (strcmp(name, "srtsrc") == 0)       return zst_srt_source_create();
+    if (strcmp(name, "srtsink") == 0)      return zst_srt_sink_create();
     return NULL;
 }
 
@@ -234,7 +262,9 @@ static const zst_element_desc_t g_builtin_descs[] = {
     DESC("rtspsink", "RTSP Sink",       "Sink/Network", "Publishes audio/video to an RTSP endpoint",                                                                             g_builtin_rtspsink_props,       sizeof(g_builtin_rtspsink_props) / sizeof(g_builtin_rtspsink_props[0]), g_pad_rtsp_sink),
     DESC("rtsp_server", "RTSP Server",  "Sink/Network", "Serves RTP streams over RTSP",                                                                                         NULL,                           0, g_pad_rtsp_server),
     DESC("rtmpsrc",  "RTMP Source",      "Source/Network","Receives audio/video from an RTMP endpoint",                                                                          g_builtin_rtmpsrc_props,        sizeof(g_builtin_rtmpsrc_props) / sizeof(g_builtin_rtmpsrc_props[0]), g_pad_rtmp_src),
-    DESC("rtmpsink", "RTMP Sink",        "Sink/Network", "Publishes audio/video to an RTMP endpoint",                                                                             g_builtin_rtmpsink_props,       sizeof(g_builtin_rtmpsink_props) / sizeof(g_builtin_rtmpsink_props[0]), g_pad_rtmp_sink)
+    DESC("rtmpsink", "RTMP Sink",        "Sink/Network", "Publishes audio/video to an RTMP endpoint",                                                                             g_builtin_rtmpsink_props,       sizeof(g_builtin_rtmpsink_props) / sizeof(g_builtin_rtmpsink_props[0]), g_pad_rtmp_sink),
+    DESC("srtsrc",   "SRT Source",       "Source/Network","Receives buffers over Secure Reliable Transport (SRT)",                                                                 g_builtin_srtsrc_props,         sizeof(g_builtin_srtsrc_props) / sizeof(g_builtin_srtsrc_props[0]), g_pad_src),
+    DESC("srtsink",  "SRT Sink",         "Sink/Network", "Sends buffers over Secure Reliable Transport (SRT)",                                                                   g_builtin_srtsink_props,        sizeof(g_builtin_srtsink_props) / sizeof(g_builtin_srtsink_props[0]), g_pad_sink)
 };
 
 /*──────────────────────────────────────────────────────────────────────────

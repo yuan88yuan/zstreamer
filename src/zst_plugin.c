@@ -1,7 +1,9 @@
 /*=============================================================================
     zst_plugin.c — dlopen-based dynamic plugin loader and registry
 =============================================================================*/
-
+#ifndef _GNU_SOURCE
+#  define _GNU_SOURCE
+#endif
 #define _POSIX_C_SOURCE 200809L  /* strdup */
 
 #include "zst_plugin.h"
@@ -19,7 +21,10 @@
 #  define DLCLOSE(h)   FreeLibrary((HMODULE)h)
 #else
 #  include <dlfcn.h>
-#  define DLOPEN(f)   dlopen(f, RTLD_LAZY | RTLD_LOCAL)
+#  ifndef RTLD_NODELETE
+#    define RTLD_NODELETE 0x01000
+#  endif
+#  define DLOPEN(f)   dlopen(f, RTLD_LAZY | RTLD_LOCAL | RTLD_NODELETE)
 #  define DLSYM(h, n) dlsym(h, n)
 #  define DLCLOSE(h)   dlclose(h)
 #endif
