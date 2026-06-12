@@ -208,7 +208,7 @@ target_link_libraries(zst_v4l2source PRIVATE zstreamer ${V4L2_LIBRARIES})
 
 add_library(zst_rtspsource SHARED src/rtsp_source.c)
 target_compile_definitions(zst_rtspsource PRIVATE BUILDING_PLUGIN)
-target_link_libraries(zst_rtspsource PRIVATE zstreamer)
+target_link_libraries(zst_rtspsource PRIVATE zstreamer ${AVUTIL_LIBRARIES})
 
 add_library(zst_rtspsink SHARED src/rtsp_sink.c)
 target_compile_definitions(zst_rtspsink PRIVATE BUILDING_PLUGIN)

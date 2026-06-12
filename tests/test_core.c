@@ -39,6 +39,8 @@
 #include "zstreamer/elements/zst_file_sink.h"
 #include "zstreamer/elements/zst_rtmp_source.h"
 #include "zstreamer/elements/zst_rtmp_sink.h"
+#include "zstreamer/elements/zst_rtsp_source.h"
+#include "zstreamer/elements/zst_rtsp_sink.h"
 #include "zstreamer/elements/zst_fake_sink.h"
 
 zst_element_t* zst_video_scaler_create(int target_width, int target_height, const char* target_pixel_format);
@@ -3559,17 +3561,51 @@ test_text_overlay_multiline(void)
 
 static void test_rtmp_elements(void)
 {
-    TEST("rtmp source/sink properties and caps");
+    TEST("rtmp/rtsp source/sink properties and caps");
+
+    zst_element_t* rtspsrc = zst_rtsp_source_create("rtsp://user:pass@localhost:8554/cam");
+    assert(rtspsrc != NULL);
+    char val[256];
+    assert(zst_element_get_property(rtspsrc, "url", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "rtsp://user:pass@localhost:8554/cam") == 0);
+    assert(zst_element_set_property(rtspsrc, "username", "alice") == ZST_OK);
+    assert(zst_element_get_property(rtspsrc, "username", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "alice") == 0);
+    assert(zst_element_set_property(rtspsrc, "password", "secret") == ZST_OK);
+    assert(zst_element_set_property(rtspsrc, "transport", "udp") == ZST_OK);
+    assert(zst_element_set_property_int(rtspsrc, "buffer-size", 32768) == ZST_OK);
+    int64_t rtsp_buffer_size = 0;
+    assert(zst_element_get_property_int(rtspsrc, "buffer-size", &rtsp_buffer_size) == ZST_OK);
+    assert(rtsp_buffer_size == 32768);
+    assert(zst_element_set_property_bool(rtspsrc, "reconnect", true) == ZST_OK);
+    bool rtsp_reconnect = false;
+    assert(zst_element_get_property_bool(rtspsrc, "reconnect", &rtsp_reconnect) == ZST_OK);
+    assert(rtsp_reconnect == true);
+    assert(zst_element_set_property_int(rtspsrc, "reconnect-delay-ms", 250) == ZST_OK);
+    assert(zst_element_set_property_int(rtspsrc, "max-reconnect-attempts", 2) == ZST_OK);
+    assert(zst_element_set_property_int(rtspsrc, "keepalive-interval-sec", 10) == ZST_OK);
+    zst_element_destroy(rtspsrc);
 
     zst_element_t* rtmpsrc = zst_rtmp_source_create("rtmp://localhost/live/stream");
     assert(rtmpsrc != NULL);
-    char val[256];
     assert(zst_element_get_property(rtmpsrc, "url", val, sizeof(val)) == ZST_OK);
     assert(strcmp(val, "rtmp://localhost/live/stream") == 0);
     
-    assert(zst_element_set_property(rtmpsrc, "url", "rtmp://127.0.0.1/live/test") == ZST_OK);
-    assert(zst_element_get_property(rtmpsrc, "url", val, sizeof(val)) == ZST_OK);
-    assert(strcmp(val, "rtmp://127.0.0.1/live/test") == 0);
+    assert(zst_element_set_property(rtmpsrc, "url", "rtmp://user:pass@127.0.0.1/live/test") == ZST_OK);
+    assert(zst_element_get_property(rtmpsrc, "rtmp_url", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "rtmp://user:pass@127.0.0.1/live/test") == 0);
+    assert(zst_element_set_property_bool(rtmpsrc, "live", false) == ZST_OK);
+    bool live = true;
+    assert(zst_element_get_property_bool(rtmpsrc, "live", &live) == ZST_OK);
+    assert(live == false);
+    assert(zst_element_set_property_int(rtmpsrc, "buffer-time", 1000) == ZST_OK);
+    int64_t buffer_time = 0;
+    assert(zst_element_get_property_int(rtmpsrc, "buffer-time", &buffer_time) == ZST_OK);
+    assert(buffer_time == 1000);
+    assert(zst_element_set_property(rtmpsrc, "swf-url", "http://example/swf") == ZST_OK);
+    assert(zst_element_set_property_bool(rtmpsrc, "reconnect", true) == ZST_OK);
+    assert(zst_element_set_property_int(rtmpsrc, "reconnect-delay-ms", 250) == ZST_OK);
+    assert(zst_element_set_property_int(rtmpsrc, "max-reconnect-attempts", 3) == ZST_OK);
 
     zst_pad_t* vpad = zst_element_get_pad(rtmpsrc, "video");
     assert(vpad != NULL);
@@ -3592,6 +3628,24 @@ static void test_rtmp_elements(void)
     zst_caps_destroy(sink_vcaps);
 
     zst_element_destroy(rtmpsink);
+
+    zst_element_t* rtspsink = zst_rtsp_sink_create();
+    assert(rtspsink != NULL);
+    assert(zst_element_set_property_int(rtspsink, "listen-port", 9554) == ZST_OK);
+    assert(zst_element_get_property(rtspsink, "listen-port", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "9554") == 0);
+    assert(zst_element_set_property(rtspsink, "mount-point", "cam0") == ZST_OK);
+    assert(zst_element_get_property(rtspsink, "mount-point", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "cam0") == 0);
+    assert(zst_element_set_property_int(rtspsink, "max-clients", 2) == ZST_OK);
+    int64_t max_clients = 0;
+    assert(zst_element_get_property_int(rtspsink, "max-clients", &max_clients) == ZST_OK);
+    assert(max_clients == 2);
+    assert(zst_element_set_property_int(rtspsink, "rtcp-interval-ms", 1000) == ZST_OK);
+    int64_t rtcp_interval = 0;
+    assert(zst_element_get_property_int(rtspsink, "rtcp-interval-ms", &rtcp_interval) == ZST_OK);
+    assert(rtcp_interval == 1000);
+    zst_element_destroy(rtspsink);
     PASS();
 }
 
