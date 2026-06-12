@@ -1,8 +1,8 @@
-# Element Implementations — Phase 4  (✅ 4a-4z)
+# Element Implementations — Phase 4  (✅ 26 implemented; 📝 planned additions)
 
-Fourteen elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.
-Additional elements are planned: network I/O for stream ingestion, RTSP/RTMP for live streaming, subtitle parsing utilities, and expanded codec coverage.
-Two handle format conversion (scaling, resampling) — essential once caps negotiation (Phase 5) requires automatic conversion between mismatched formats.
+Twenty-six production elements are implemented with real hardware/codec/protocol integrations and synthetic fallbacks where appropriate.
+Additional planned elements cover SRT transport, MPEG-TS mux/demux, MP4 demuxing, and future protocol/container expansion.
+Two implemented elements handle format conversion (scaling, resampling) — essential once caps negotiation (Phase 5) requires automatic conversion between mismatched formats.
 
 ### 4a — V4L2 Source  (✅ done)
 - [x] Open `/dev/video0` with O_RDWR | O_NONBLOCK
@@ -382,3 +382,38 @@ Adds Secure Reliable Transport (SRT) ingest and egress elements for low-latency,
 - [ ] Optional integrated MPEG-TS demux/mux handoff for H.264/H.265/AAC pipelines
 
 **Dependencies:** `libsrt-dev`
+
+### 4ab — MPEG Transport Stream Muxer / Demuxer (`.ts`)  (📝 Planned)
+
+Adds MPEG-TS container support for broadcast, SRT contribution, HLS segmenting, and interoperability with common streaming tools. The muxer/demuxer should support encoded H.264, H.265/HEVC, and AAC payloads.
+
+- [ ] `tsmux` element with sink pads for `video/x-h264`, `video/x-h265`, and `audio/aac`, plus one `video/mp2t` src pad
+- [ ] `tsdemux` element with one `video/mp2t` sink pad and dynamic/static src pads for H.264, H.265, and AAC elementary streams
+- [ ] Backend: FFmpeg `libavformat` MPEG-TS muxer/demuxer or native TS packet writer/parser
+- [ ] PAT/PMT generation and parsing with stream type mapping for H.264 (`0x1b`), H.265 (`0x24`), and AAC (`0x0f`)
+- [ ] PES packetization/depacketization with correct PTS/DTS propagation
+- [ ] PCR generation, continuity counters, adaptation fields, and packet alignment to 188-byte TS packets
+- [ ] Annex B handling for H.264/H.265 payloads, including parameter-set propagation where needed
+- [ ] AAC ADTS / LATM handling strategy documented and implemented for mux/demux compatibility
+- [ ] EOS handling: flush partial PES/TS packets and propagate downstream EOS
+- [ ] Caps negotiation: `video/mp2t` container caps and elementary stream caps on demuxed pads
+- [ ] Tests: H.264/AAC and H.265/AAC mux → demux roundtrip preserves payload boundaries and timestamps
+
+**Dependencies:** `libavformat-dev`, `libavcodec-dev`, `libavutil-dev` (if FFmpeg-backed)
+
+### 4ac — MP4 File Demuxer  (📝 Planned)
+
+Demuxes MP4/fragmented-MP4 files or byte streams into encoded elementary audio/video buffers for decode, remux, or streaming pipelines.
+
+- [ ] `mp4demux` element with one sink pad (`video/mp4` or `application/octet-stream`) and video/audio src pads
+- [ ] Backend: FFmpeg `libavformat` demuxer (`avformat_open_input`, `av_read_frame`) with custom AVIO support for pipeline buffers
+- [ ] Track discovery: expose H.264, H.265/HEVC, AAC, and metadata tracks where present
+- [ ] Convert codec extradata (`avcC`, `hvcC`, AudioSpecificConfig) into downstream-compatible packet/caps metadata or Annex B / ADTS as required
+- [ ] Preserve PTS/DTS/duration and map MP4 track timescales to zstreamer timestamps
+- [ ] Support fragmented MP4 (`moof`/`mdat`) in addition to regular `moov`/`mdat` layout
+- [ ] Segment seeking integration: support timestamp seek where the source is seekable
+- [ ] EOS handling after final packet and robust error reporting on malformed files
+- [ ] Caps negotiation: `video/x-h264`, `video/x-h265`, `audio/aac` output pads with stream-format/profile metadata where known
+- [ ] Tests: demux sample MP4 with H.264/AAC and H.265/AAC; verify packet counts, timestamps, and decoder compatibility
+
+**Dependencies:** `libavformat-dev`, `libavcodec-dev`, `libavutil-dev`

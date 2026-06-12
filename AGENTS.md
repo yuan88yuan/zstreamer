@@ -21,8 +21,10 @@ It provides a **GStreamer-like** pipeline architecture: elements connected via p
 ├── include/           ← Public API headers
 │   ├── zst_types.h        ← Base types, result codes, struct forward decls
 │   ├── zst_buffer.h       ← Reference-counted buffer + typed memory
-│   ├── zst_pad.h          ← SRC/SINK connection pads
+│   ├── zst_pad.h          ← SRC/SINK connection pads + probes/blocking/segments
 │   ├── zst_element.h      ← Element ops vtable + state machine
+│   ├── zst_bin.h          ← Composite element bins + ghost pads
+│   ├── zst_segment.h      ← Segment seeking/clipping API
 │   ├── zst_pipeline.h     ← Element container with state propagation
 │   ├── zst_queue.h        ← Thread-safe bounded buffer queue
 │   ├── zst_scheduler.h    ← Single / multi-thread pipeline driver
@@ -44,6 +46,7 @@ It provides a **GStreamer-like** pipeline architecture: elements connected via p
 │   ├── zst_pipeline.c
 │   ├── zst_queue.c
 │   ├── zst_queue_element.c ← First-class queue element
+│   ├── zst_bin.c          ← Element bins + ghost pads
 │   ├── zst_scheduler.c
 │   ├── zst_log.c          ← Logging implementation
 │   ├── zst_plugin.c
@@ -73,9 +76,11 @@ It provides a **GStreamer-like** pipeline architecture: elements connected via p
 │   ├── net_sink.c         ← TCP/UDP network sink (raw bytes)
 │   ├── rtsp_source.c      ← RTSP client source (TCP interleaved + UDP)
 │   ├── rtsp_sink.c        ← RTSP client sink
-│   └── rtsp_server.c      ← Multi-session RTSP server (TCP interleaved + UDP)
+│   ├── rtsp_server.c      ← Multi-session RTSP server (TCP interleaved + UDP)
+│   ├── rtmp_source.c      ← RTMP source (FLV demux)
+│   └── rtmp_sink.c        ← RTMP sink (FLV mux/publish)
 ├── tests/
-│   ├── test_core.c    ← 35 unit tests: core + scheduler + queue + caps + bus + plugins + log + scaler + resampler
+│   ├── test_core.c    ← 62 unit tests: core + scheduler + queue + caps + bus + plugins + log + conversion + codecs + advanced features
 │   └── example_record.c ← Full pipeline demo with queue elements
 └── wiki/
     ├── architecture.md        ← Detailed design doc
@@ -141,14 +146,15 @@ The Dockerfile has two build targets:
 | Component      | Role                                                  |
 |----------------|-------------------------------------------------------|
 | **zst_pipeline**| Container of elements; propagates state to all        |
+| **zst_bin**     | Composite element container with ghost pads           |
 | **zst_element** | Processing node with src/sink pads + ops vtable       |
-| **zst_pad**     | Connection point; linked peer-to-peer between elements|
+| **zst_pad**     | Connection point; linked peer-to-peer between elements; probes/blocking and segment clipping |
 | **zst_buffer**  | Ref-counted data carrier with typed memory + timestamps|
 | **zst_queue**      | Thread-safe bounded queue (mutex + condvar)           |
 | **zst_queue_element** | Queue as a first-class element with worker thread   |
 | **zst_scheduler**    | Drives pipeline: single-thread inline or multi-thread pool |
 | **zst_caps**     | Caps negotiation — media type, resolution, format intersection |
-| **zst_bus**      | Async event bus for error/EOS/state/warning notifications |
+| **zst_bus**      | Async event bus for error/EOS/state/warning/segment notifications |
 | **zst_plugin**   | `dlopen()`-based dynamic element loading              |
 | **zst_log**      | Lightweight logging system with compile-time levels   |
 | **video_scaler** | Pixel format + resolution conversion via `libswscale`  |
@@ -175,12 +181,13 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | Scheduler Integration       | ✅ Topological sort, push/pull, EOS, state hardening |
 | Queue Element               | ✅ First-class queue with worker thread |
 | Real Element Implementations| ✅ 26 elements: v4l2_source, alsa_source, h264_encoder, h264_decoder, h265_encoder, h265_decoder, aac_encoder, aac_decoder, mp4_muxer, file_sink, file_source, fake_sink, video_scaler, audio_resampler, video_test_src, audio_test_src, text_overlay, text_source, srt_parser, net_source, net_sink, rtsp_source, rtsp_sink, rtsp_server, rtmp_source, rtmp_sink |
+| Planned Element Additions   | 📝 SRT transport source/sink, MPEG-TS muxer/demuxer, MP4 demuxer |
 | Caps Negotiation            | ✅ Done                          |
 | Event Bus                   | ✅ Done                          |
 | Dynamic Plugins             | ✅ Done                          |
 | Logging System              | ✅ Done                          |
-| Unit Tests                  | ✅ 53 core tests + test_net_source + test_net_sink, all passing |
-| Allocator API + Pool        | ✅ Mostly done (allocator interface, pool, elements migrated; topology sizing & tests pending) |
+| Unit Tests                  | ✅ 62 core tests + test_net_source + test_net_sink + install test, all passing |
+| Allocator API + Pool        | ✅ Mostly done (allocator interface, pool, elements migrated, topology-aware sizing; some pool stress tests pending) |
 | Clock                       | ✅ Done (system clock + pipeline integration) |
 | Element Public API (8d)     | ✅ Done (Descriptor ABI, plugin introspection, typed properties, official metadata, convenience headers, library & installation layout) |
 | Text Overlay (4s)           | ✅ Included in Element Implementations |
@@ -196,7 +203,12 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | RTSP Sink (4p)              | ✅ Done                          |
 | RTSP Server (UDP support)   | ✅ Done (TCP interleaved + UDP unicast transport) |
 | RTMP Source/Sink (4q/4r)    | ✅ Done                          |
-| Element Bins                | 📝 Planned                       |
+| Element Bins (8c)           | ✅ Done (composite bins + ghost pads) |
+| Pad Probes / Blocking (8c)  | ✅ Done                          |
+| Segment Seeking (8c)        | ✅ Done                          |
+| SRT Transport Protocols     | 📝 Planned                       |
+| MPEG-TS mux/demux           | 📝 Planned                       |
+| MP4 Demuxer                 | 📝 Planned                       |
 | CI Pipeline                 | 📝 Future                        |
 
 ---
