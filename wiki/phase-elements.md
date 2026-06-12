@@ -1,7 +1,7 @@
-# Element Implementations — Phase 4  (✅ 26 implemented; 📝 planned additions)
+# Element Implementations — Phase 4  (✅ 33 implemented; 📝 planned additions)
 
-Twenty-six production elements are implemented with real hardware/codec/protocol integrations and synthetic fallbacks where appropriate.
-Additional planned elements cover SRT transport, MPEG-TS mux/demux, MP4 demuxing, and future protocol/container expansion.
+Thirty-three production elements are implemented with real hardware/codec/protocol integrations and synthetic fallbacks where appropriate.
+Additional planned elements cover future protocol/container expansion.
 Two implemented elements handle format conversion (scaling, resampling) — essential once caps negotiation (Phase 5) requires automatic conversion between mismatched formats.
 
 ### 4a — V4L2 Source  (✅ done)
@@ -225,6 +225,7 @@ Parse SRT subtitle format into timed text events and feed them to `text_overlay`
 - [x] Parse SRT subtitle format into timed text events
 - [x] Feed parsed text segments to `text_overlay` via `text` sink pad (pts/duration)
 - [ ] Support ASS/SSA format parsing (advanced styling)
+- [ ] **Test deliverables**: Unit tests verifying parsing of subtitle files, segment timing, and correct PTS/duration propagation (planned)
 
 ### 4v — H.264 Decoder  (✅ done)
 
@@ -417,20 +418,20 @@ Demuxes MP4/fragmented-MP4 files or byte streams into encoded elementary audio/v
 
 **Dependencies:** `libavformat-dev`, `libavcodec-dev`, `libavutil-dev`
 
-### 4ad — HTTP Source  (📝 Planned)
+### 4ad — HTTP Source  (✅ done)
 
 Fetches static files or progressive streams over HTTP or HTTPS and pushes the response body downstream as a sequence of buffers. Analogous to GStreamer's `souphttpsrc`.
 
-- [ ] `httpsrc` element with 1 src pad
-- [ ] Backend: FFmpeg libavformat network protocol handler or `libcurl`
-- [ ] Configurable `url` / `uri` property
-- [ ] Handle standard HTTP GET requests, redirection (301, 302, 307), and chunked transfer encoding
-- [ ] Support custom request headers (e.g. `User-Agent`, `Authorization`)
-- [ ] Connection timeout, receive timeout, and error recovery/retry logic
-- [ ] Emit `EOS` when Content-Length is reached or connection is closed by peer
-- [ ] Buffer pool integration for low-overhead memory recycling
-- [ ] Caps negotiation: advertise `application/octet-stream` or media-type based on `Content-Type` header (if known)
-- [ ] Tests: verify streaming from a mock HTTP server, check redirect handling, and verify EOS propagation
+- [x] `httpsrc` element with 1 src pad
+- [x] Backend: FFmpeg libavformat network protocol handler or `libcurl`
+- [x] Configurable `url` / `uri` property
+- [x] Handle standard HTTP GET requests, redirection (301, 302, 307), and chunked transfer encoding
+- [x] Support custom request headers (e.g. `User-Agent`, `Authorization`)
+- [x] Connection timeout, receive timeout, and error recovery/retry logic
+- [x] Emit `EOS` when Content-Length is reached or connection is closed by peer
+- [x] Buffer pool integration for low-overhead memory recycling
+- [x] Caps negotiation: advertise `application/octet-stream` or media-type based on `Content-Type` header (if known)
+- [x] Tests: verify streaming from a mock HTTP server, check redirect handling, and verify EOS propagation
 
 **Dependencies:** `libcurl4-openssl-dev` or `libavformat-dev`
 

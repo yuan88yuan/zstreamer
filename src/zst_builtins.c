@@ -33,6 +33,7 @@
 zst_element_t* zst_queue_element_create(const char* name);
 
 zst_element_t* zst_file_source_create(const char* path);
+zst_element_t* zst_http_source_create(const char* url);
 zst_element_t* zst_file_sink_create(const char* path);
 zst_element_t* zst_fake_sink_create(void);
 zst_element_t* zst_v4l2_source_create(void);
@@ -154,6 +155,18 @@ static const zst_property_spec_t g_builtin_filesrc_props[] = {
     { "loop", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Loop back to the start at EOF" },
     { "offset", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "0", "Initial byte offset" },
     { "length", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Maximum number of bytes to read; -1 means unlimited" }
+};
+
+static const zst_property_spec_t g_builtin_httpsrc_props[] = {
+    { "url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "URL of the HTTP/HTTPS resource" },
+    { "uri", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Alias for url" },
+    { "user-agent", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "zstreamer/0.1.0", "User-Agent header value" },
+    { "headers", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Custom HTTP request headers" },
+    { "timeout", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5000", "Connection & read timeout in milliseconds" },
+    { "chunk-size", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "4096", "Maximum bytes to read per buffer" },
+    { "reconnect", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Reconnect on stream loss" },
+    { "reconnect-delay-ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "500", "Delay between reconnect attempts in milliseconds" },
+    { "max-reconnect-attempts", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Maximum reconnect attempts; -1 means unlimited" }
 };
 
 static const zst_property_spec_t g_builtin_filesink_props[] = {
@@ -367,6 +380,7 @@ create_builtin_element(const char* name)
     if (!name) return NULL;
     if (strcmp(name, "queue") == 0)        return zst_queue_element_create(NULL);
     if (strcmp(name, "filesrc") == 0)      return zst_file_source_create("");
+    if (strcmp(name, "httpsrc") == 0)      return zst_http_source_create("");
     if (strcmp(name, "filesink") == 0)     return zst_file_sink_create("");
     if (strcmp(name, "fakesink") == 0)     return zst_fake_sink_create();
     if (strcmp(name, "v4l2src") == 0)      return zst_v4l2_source_create();
@@ -409,6 +423,7 @@ create_builtin_element(const char* name)
 static const zst_element_desc_t g_builtin_descs[] = {
     DESC("queue",   "Queue",            "Generic",      "Thread-safe buffering element",                                                                                        NULL,                           0, g_pad_filter),
     DESC("filesrc", "File Source",      "Source/File",  "Reads buffers from a local file",                                                                                      g_builtin_filesrc_props,        sizeof(g_builtin_filesrc_props) / sizeof(g_builtin_filesrc_props[0]), g_pad_src),
+    DESC("httpsrc", "HTTP Source",      "Source/Network", "Reads buffers from HTTP/HTTPS server",                                                                                 g_builtin_httpsrc_props,        sizeof(g_builtin_httpsrc_props) / sizeof(g_builtin_httpsrc_props[0]), g_pad_src),
     DESC("filesink", "File Sink",       "Sink/File",    "Writes incoming buffers to a local file",                                                                              g_builtin_filesink_props,       sizeof(g_builtin_filesink_props) / sizeof(g_builtin_filesink_props[0]), g_pad_sink),
     DESC("fakesink", "Fake Sink",       "Sink/Test",    "Consumes buffers and records simple statistics",                                                                       g_builtin_fakesink_props,       sizeof(g_builtin_fakesink_props) / sizeof(g_builtin_fakesink_props[0]), g_pad_sink),
     DESC("v4l2src", "V4L2 Source",      "Source/Video", "Captures video from a V4L2 device",                                                                                    NULL,                           0, g_pad_video_src),

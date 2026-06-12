@@ -148,6 +148,7 @@ set(ELEMENT_LIBRARY_SOURCES
     src/mpegts_muxer.c
     src/mpegts_demuxer.c
     src/mp4_demuxer.c
+    src/http_source.c
 )
 
 if(BUILD_SHARED)
@@ -199,6 +200,7 @@ set(ELEMENT_SOURCES
     src/net_sink.c
     src/rtmp_source.c
     src/rtmp_sink.c
+    src/http_source.c
 )
 
 # ── Dynamic Plugins ──────────────────────────────────────────────────────
@@ -326,7 +328,11 @@ add_library(zst_mp4demux SHARED src/mp4_demuxer.c)
 target_compile_definitions(zst_mp4demux PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_mp4demux PRIVATE zstreamer ${AVFORMAT_LIBRARIES} ${AVCODEC_LIBRARIES} ${AVUTIL_LIBRARIES})
 
-set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_rtspsource zst_rtspsink zst_rtsp_server zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_textsource zst_netsrc zst_netsink zst_h264decoder zst_h265encoder zst_h265decoder zst_aacdecoder zst_rtmpsource zst_rtmpsink zst_srtsource zst_srtsink zst_mpegtsmux zst_mpegtsdemux zst_mp4demux)
+add_library(zst_httpsource SHARED src/http_source.c)
+target_compile_definitions(zst_httpsource PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_httpsource PRIVATE zstreamer ${AVFORMAT_LIBRARIES} ${AVUTIL_LIBRARIES})
+
+set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_rtspsource zst_rtspsink zst_rtsp_server zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_textsource zst_netsrc zst_netsink zst_h264decoder zst_h265encoder zst_h265decoder zst_aacdecoder zst_rtmpsource zst_rtmpsink zst_srtsource zst_srtsink zst_mpegtsmux zst_mpegtsdemux zst_mp4demux zst_httpsource)
 foreach(plugin ${PLUGIN_TARGETS})
     target_include_directories(${plugin} PRIVATE ${ZSTREAMER_INCLUDE_DIR} PRIVATE ${ELEMENT_INCLUDE_DIRS})
     set_target_properties(${plugin} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
@@ -367,6 +373,18 @@ if(BUILD_TESTS)
         PRIVATE zstreamer-elements
     )
     add_test(NAME test_net_sink COMMAND test_net_sink)
+
+    add_executable(test_http_source
+        tests/test_http_source.c
+    )
+    target_include_directories(test_http_source
+        PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+    )
+    target_link_libraries(test_http_source
+        PRIVATE zstreamer-elements
+    )
+    add_test(NAME test_http_source COMMAND test_http_source)
+
 
     # -- full pipeline example --
     add_executable(example_record
