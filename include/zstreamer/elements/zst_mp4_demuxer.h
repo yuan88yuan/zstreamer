@@ -10,6 +10,8 @@ extern "C" {
 #endif
 
 #define ZST_MP4_DEMUXER_FACTORY "mp4demux"
+
+#define ZST_MP4_DEMUX_PROP_LOCATION              "location"
 #define ZST_MP4_DEMUXER_PROP_LOCATION     "location"
 
 typedef struct {
