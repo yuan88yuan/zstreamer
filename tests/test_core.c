@@ -693,6 +693,161 @@ test_bin_state_propagation(void)
 }
 
 static void
+test_bin_eos_passthrough(void)
+{
+    TEST("element bin ghost pads forward EOS and post to bus");
+
+    zst_pipeline_t* pipe = zst_pipeline_create();
+    assert(pipe != NULL);
+
+    zst_element_t* bin = zst_bin_create("double-bin");
+    assert(bin != NULL);
+    assert(zst_pipeline_add(pipe, bin) == ZST_OK);
+
+    static zst_element_ops_t transform_ops = {
+        .name = "mock_transform",
+        .process = mock_transform_process
+    };
+    zst_element_t* transform = zst_element_create(&transform_ops, NULL);
+    assert(transform != NULL);
+    zst_pad_t* trans_sink = zst_pad_create("sink", ZST_PAD_SINK);
+    zst_pad_t* trans_src = zst_pad_create("src", ZST_PAD_SRC);
+    assert(zst_element_add_pad(transform, trans_sink) == ZST_OK);
+    assert(zst_element_add_pad(transform, trans_src) == ZST_OK);
+    assert(zst_bin_add(bin, transform) == ZST_OK);
+
+    zst_pad_t* ghost_sink = zst_ghost_pad_create("sink", trans_sink);
+    zst_pad_t* ghost_src = zst_ghost_pad_create("src", trans_src);
+    assert(zst_bin_add_ghost_pad(bin, ghost_sink) == ZST_OK);
+    assert(zst_bin_add_ghost_pad(bin, ghost_src) == ZST_OK);
+
+    mock_sink_t* sink_data = calloc(1, sizeof(*sink_data));
+    static zst_element_ops_t sink_ops = {
+        .name = "mock_sink",
+        .process = mock_sink_process
+    };
+    zst_element_t* sink = zst_element_create(&sink_ops, sink_data);
+    zst_pad_t* sink_pad = zst_pad_create("sink", ZST_PAD_SINK);
+    assert(zst_element_add_pad(sink, sink_pad) == ZST_OK);
+    assert(zst_pipeline_add(pipe, sink) == ZST_OK);
+
+    zst_pad_t* upstream_src = zst_pad_create("src", ZST_PAD_SRC);
+    assert(zst_pad_link(upstream_src, ghost_sink) == ZST_OK);
+    assert(zst_pad_link(ghost_src, sink_pad) == ZST_OK);
+
+    zst_buffer_t* in = zst_buffer_create(ZST_BUFFER_USER);
+    int* data = malloc(sizeof(*data));
+    *data = 10;
+    in->payload = data;
+    in->destroy = mock_buf_destroy;
+
+    zst_buffer_t* eos_in = zst_buffer_create(ZST_BUFFER_USER);
+    eos_in->flags |= ZST_BUFFER_FLAG_EOS;
+
+    assert(zst_pad_push(upstream_src, in) == ZST_OK);
+    assert(zst_pad_push(upstream_src, eos_in) == ZST_OK);
+
+    assert(sink_data->count == 1);
+    assert(sink_data->sum == 20);
+
+    /* Verify EOS is on bus */
+    int bin_eos = 0;
+    int sink_eos = 0;
+    zst_event_t* ev = NULL;
+    while (zst_bus_pop(pipe->bus, &ev, 0) == ZST_OK) {
+        if (ev->type == ZST_EVENT_EOS) {
+            if (ev->src == bin) bin_eos = 1;
+            if (ev->src == sink) sink_eos = 1;
+        }
+        zst_event_destroy(ev);
+    }
+    assert(bin_eos == 1);
+    assert(sink_eos == 1);
+
+    zst_buffer_unref(in);
+    zst_buffer_unref(eos_in);
+    zst_pad_destroy(upstream_src);
+    zst_pipeline_destroy(pipe);
+    PASS();
+}
+
+static void
+test_bin_eos_convergence(void)
+{
+    TEST("element bin EOS convergence on multiple sink pads");
+
+    zst_pipeline_t* pipe = zst_pipeline_create();
+    assert(pipe != NULL);
+
+    zst_element_t* bin = zst_bin_create("multi-bin");
+    assert(bin != NULL);
+    assert(zst_pipeline_add(pipe, bin) == ZST_OK);
+
+    mock_sink_t* sink_data1 = calloc(1, sizeof(*sink_data1));
+    static zst_element_ops_t sink_ops = {
+        .name = "mock_sink",
+        .process = mock_sink_process
+    };
+    zst_element_t* sink1 = zst_element_create(&sink_ops, sink_data1);
+    zst_pad_t* inner_sink1 = zst_pad_create("sink", ZST_PAD_SINK);
+    assert(zst_element_add_pad(sink1, inner_sink1) == ZST_OK);
+    assert(zst_bin_add(bin, sink1) == ZST_OK);
+
+    mock_sink_t* sink_data2 = calloc(1, sizeof(*sink_data2));
+    zst_element_t* sink2 = zst_element_create(&sink_ops, sink_data2);
+    zst_pad_t* inner_sink2 = zst_pad_create("sink", ZST_PAD_SINK);
+    assert(zst_element_add_pad(sink2, inner_sink2) == ZST_OK);
+    assert(zst_bin_add(bin, sink2) == ZST_OK);
+
+    zst_pad_t* ghost_sink1 = zst_ghost_pad_create("sink1", inner_sink1);
+    zst_pad_t* ghost_sink2 = zst_ghost_pad_create("sink2", inner_sink2);
+    assert(zst_bin_add_ghost_pad(bin, ghost_sink1) == ZST_OK);
+    assert(zst_bin_add_ghost_pad(bin, ghost_sink2) == ZST_OK);
+
+    zst_pad_t* ext_src1 = zst_pad_create("src1", ZST_PAD_SRC);
+    zst_pad_t* ext_src2 = zst_pad_create("src2", ZST_PAD_SRC);
+    assert(zst_pad_link(ext_src1, ghost_sink1) == ZST_OK);
+    assert(zst_pad_link(ext_src2, ghost_sink2) == ZST_OK);
+
+    zst_buffer_t* eos_in1 = zst_buffer_create(ZST_BUFFER_USER);
+    eos_in1->flags |= ZST_BUFFER_FLAG_EOS;
+    zst_buffer_t* eos_in2 = zst_buffer_create(ZST_BUFFER_USER);
+    eos_in2->flags |= ZST_BUFFER_FLAG_EOS;
+
+    /* Push EOS to first branch - should not post bin EOS yet */
+    assert(zst_pad_push(ext_src1, eos_in1) == ZST_OK);
+
+    /* Verify no EOS from bin */
+    zst_event_t* ev = NULL;
+    while (zst_bus_pop(pipe->bus, &ev, 0) == ZST_OK) {
+        if (ev->type == ZST_EVENT_EOS) {
+            assert(ev->src != bin); /* Might be from sink1 */
+        }
+        zst_event_destroy(ev);
+    }
+
+    /* Push EOS to second branch - should now trigger bin EOS */
+    assert(zst_pad_push(ext_src2, eos_in2) == ZST_OK);
+
+    int bin_eos = 0;
+    while (zst_bus_pop(pipe->bus, &ev, 0) == ZST_OK) {
+        if (ev->type == ZST_EVENT_EOS) {
+            if (ev->src == bin) bin_eos = 1;
+        }
+        zst_event_destroy(ev);
+    }
+    assert(bin_eos == 1);
+
+    zst_buffer_unref(eos_in1);
+    zst_buffer_unref(eos_in2);
+    zst_pad_destroy(ext_src1);
+    zst_pad_destroy(ext_src2);
+    zst_pipeline_destroy(pipe);
+
+    PASS();
+}
+
+static void
 test_bin_ghost_pad_push(void)
 {
     TEST("element bin ghost pads push through internal transform");
@@ -3699,6 +3854,8 @@ int main(void)
     /* ── Advanced Features (Phase 8c) ── */
     printf("[element bin]\n");
     test_bin_state_propagation();
+    test_bin_eos_passthrough();
+    test_bin_eos_convergence();
     test_bin_ghost_pad_push();
 
     printf("[pad probes]\n");

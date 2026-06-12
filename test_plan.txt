@@ -1,0 +1,12 @@
+1. We need to add tests for EOS passthrough in element bin.
+2. We can add a function `test_bin_eos_passthrough()` in `tests/test_core.c`.
+3. In this test, create a bin, add a mock element with sink and src pads, expose them via ghost pads.
+4. Link external src and sink pads to the ghost pads.
+5. Push a buffer with ZST_BUFFER_FLAG_EOS to the ghost sink.
+6. Verify that it reaches the ghost src's peer (the external sink), and the external sink receives it.
+7. Also verify that the bin posts an EOS event to the bus.
+8. We can check `zst_bus_pull` for an EOS event.
+
+What about multiple sink branches converging?
+Let's see: `bin_all_sink_ghosts_eos` returns 1 when all sink ghost pads have received EOS.
+So maybe a test `test_bin_eos_convergence()` with two sink pads, push EOS to first (should not forward), push EOS to second (should forward to all src ghost pads, and post bus event).
