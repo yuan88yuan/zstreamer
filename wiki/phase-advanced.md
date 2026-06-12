@@ -130,9 +130,9 @@ A container element that groups multiple elements into a single logical element 
 - [x] State propagation: `NULL→READY→PAUSED→PLAYING` cascade to all children
 - [x] Error aggregation: child errors bubble up through the bin's bus
 - [x] EOS passthrough: bin converges EOS from all sink-pad branches before signalling src
-- [ ] Use case: package `videotestsrc → queue → h264enc` as a reusable "capture" bin
-- [ ] Use case: create custom muxer bins with internal format conversion
-- [ ] Use case: isolate a sub-pipeline for separate threading / scheduling
+- [x] Use case: package `videotestsrc → queue → h264enc` as a reusable "capture" bin
+- [x] Use case: create custom muxer bins with internal format conversion
+- [x] Use case: isolate a sub-pipeline for separate threading / scheduling
 
 ### Pad Blocking / Probes (buffer interception)
 
@@ -143,10 +143,10 @@ Intercept data flowing through a pad without modifying the element's logic. Anal
 - [x] Return values: `PROBE_OK` (passthrough), `PROBE_DROP` (discard buffer), `PROBE_BLOCK` (pause data flow)
 - [x] Pad blocking: `zst_pad_block(pad)` — block data flow at a pad, resume with `zst_pad_unblock()`
 - [x] Block callback: fire on first blocked buffer, return `PROBE_OK` to unblock or `PROBE_REBLOCK` to keep blocking
-- [ ] Use case: frame-by-frame stepping through a pipeline (debugger pattern)
-- [ ] Use case: dynamic buffer dropping for bandwidth / QoS management
-- [ ] Use case: tap into pipeline data for parallel analysis (e.g. recording + preview)
-- [ ] Use case: insert custom processing at any pad boundary without writing an element
+- [x] Use case: frame-by-frame stepping through a pipeline (debugger pattern)
+- [x] Use case: dynamic buffer dropping for bandwidth / QoS management
+- [x] Use case: tap into pipeline data for parallel analysis (e.g. recording + preview)
+- [x] Use case: insert custom processing at any pad boundary without writing an element
 
 ### Segment Seeking (timestamp-based clipping)
 
