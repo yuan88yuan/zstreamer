@@ -41,7 +41,13 @@
 #include "zstreamer/elements/zst_rtmp_sink.h"
 #include "zstreamer/elements/zst_rtsp_source.h"
 #include "zstreamer/elements/zst_rtsp_sink.h"
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include "zst_rtsp_server.h"
 #include "zstreamer/elements/zst_fake_sink.h"
+
 #include "zstreamer/elements/zst_srt_source.h"
 #include "zstreamer/elements/zst_srt_sink.h"
 #include "zstreamer/elements/zst_srt_parser.h"
@@ -3023,38 +3029,58 @@ test_h264_decoder_roundtrip(void)
     zst_element_t* sink = decoder_capture_create(capture);
     assert(enc != NULL && dec != NULL && sink != NULL);
     assert(strcmp(dec->ops->name, "h264dec") == 0);
+    assert(zst_element_set_property(enc, "preset", "ultrafast") == ZST_OK);
+    assert(zst_element_set_property(enc, "tune", "zerolatency") == ZST_OK);
+    assert(zst_element_set_property(dec, "threads", "1") == ZST_OK);
     assert(zst_element_set_state(enc, ZST_STATE_READY) == ZST_OK);
     assert(zst_element_set_state(dec, ZST_STATE_READY) == ZST_OK);
     assert(zst_pad_link(dec->src_pads[0], sink->sink_pads[0]) == ZST_OK);
 
     const int width = 64;
     const int height = 64;
-    zst_buffer_t* raw = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
-    assert(raw != NULL);
-    raw->memory.size = (size_t)width * (size_t)height * 3u / 2u;
-    raw->memory.data = calloc(1, raw->memory.size);
-    raw->payload = calloc(1, sizeof(zst_video_frame_t));
-    raw->destroy = decoder_test_buf_free;
-    assert(raw->memory.data != NULL && raw->payload != NULL);
 
-    zst_video_frame_t* frame = raw->payload;
-    frame->width = width;
-    frame->height = height;
-    frame->format = 0; /* AV_PIX_FMT_YUV420P */
-    frame->plane[0] = raw->memory.data;
-    frame->plane[1] = (uint8_t*)raw->memory.data + width * height;
-    frame->plane[2] = (uint8_t*)raw->memory.data + width * height + width * height / 4;
-    frame->stride[0] = width;
-    frame->stride[1] = width / 2;
-    frame->stride[2] = width / 2;
-    memset(frame->plane[0], 80, (size_t)width * height);
-    memset(frame->plane[1], 90, (size_t)width * height / 4);
-    memset(frame->plane[2], 100, (size_t)width * height / 4);
+    int packets_pushed = 0;
+    for (int n = 0; n < 8; n++) {
+        zst_buffer_t* raw = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
+        assert(raw != NULL);
+        raw->memory.size = (size_t)width * (size_t)height * 3u / 2u;
+        raw->memory.data = calloc(1, raw->memory.size);
+        raw->payload = calloc(1, sizeof(zst_video_frame_t));
+        raw->destroy = decoder_test_buf_free;
+        assert(raw->memory.data != NULL && raw->payload != NULL);
 
-    zst_buffer_t* pkt = NULL;
-    assert(enc->ops->process(enc, raw, &pkt) == ZST_OK);
-    assert(pkt != NULL && pkt->memory.size > 0);
-    assert(dec->sink_pads[0]->push(dec->sink_pads[0], pkt) == ZST_OK);
+        zst_video_frame_t* frame = raw->payload;
+        frame->width = width;
+        frame->height = height;
+        frame->format = 0; /* AV_PIX_FMT_YUV420P */
+        frame->plane[0] = raw->memory.data;
+        frame->plane[1] = (uint8_t*)raw->memory.data + width * height;
+        frame->plane[2] = (uint8_t*)raw->memory.data + width * height + width * height / 4;
+        frame->stride[0] = width;
+        frame->stride[1] = width / 2;
+        frame->stride[2] = width / 2;
+        memset(frame->plane[0], 80 + n, (size_t)width * height);
+        memset(frame->plane[1], 90, (size_t)width * height / 4);
+        memset(frame->plane[2], 100, (size_t)width * height / 4);
+
+        zst_buffer_t* pkt = NULL;
+        assert(enc->ops->process(enc, raw, &pkt) == ZST_OK);
+        if (pkt) {
+            assert(pkt->memory.size > 0);
+            assert(dec->sink_pads[0]->push(dec->sink_pads[0], pkt) == ZST_OK);
+            zst_buffer_unref(pkt);
+            packets_pushed++;
+        }
+        zst_buffer_unref(raw);
+    }
+
+    assert(packets_pushed > 0);
+
+    /* Push EOS buffer to flush/drain the decoder */
+    zst_buffer_t* eos = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
+    eos->flags |= ZST_BUFFER_FLAG_EOS;
+    assert(dec->sink_pads[0]->push(dec->sink_pads[0], eos) == ZST_OK);
+    zst_buffer_unref(eos);
 
     assert(capture->buffers >= 1);
     assert(capture->last_type == ZST_BUFFER_VIDEO_FRAME);
@@ -3068,8 +3094,6 @@ test_h264_decoder_roundtrip(void)
     assert(caps->structs->video.height == height);
     zst_caps_destroy(caps);
 
-    zst_buffer_unref(pkt);
-    zst_buffer_unref(raw);
     zst_element_destroy(sink);
     zst_element_destroy(dec);
     zst_element_destroy(enc);
@@ -3095,6 +3119,7 @@ test_h265_decoder_roundtrip(void)
     assert(zst_element_set_property_int(enc, "bitrate", 0) == ZST_OK);
     assert(zst_element_set_property_int(enc, "gop-size", 12) == ZST_OK);
     assert(zst_element_set_property(enc, "profile", "main") == ZST_OK);
+    assert(zst_element_set_property(dec, "threads", "1") == ZST_OK);
     char h265_prop[64];
     assert(zst_element_get_property(enc, "preset", h265_prop, sizeof(h265_prop)) == ZST_OK);
     assert(strcmp(h265_prop, "ultrafast") == 0);
@@ -3107,9 +3132,8 @@ test_h265_decoder_roundtrip(void)
 
     const int width = 64;
     const int height = 64;
-    zst_buffer_t* pkt = NULL;
-
-    for (int n = 0; n < 8 && !pkt; n++) {
+    int packets_pushed = 0;
+    for (int n = 0; n < 8; n++) {
         zst_buffer_t* raw = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
         assert(raw != NULL);
         raw->memory.size = (size_t)width * (size_t)height * 3u / 2u;
@@ -3133,13 +3157,25 @@ test_h265_decoder_roundtrip(void)
         memset(frame->plane[1], 90, (size_t)width * height / 4);
         memset(frame->plane[2], 100, (size_t)width * height / 4);
 
+        zst_buffer_t* pkt = NULL;
         assert(enc->ops->process(enc, raw, &pkt) == ZST_OK);
+        if (pkt) {
+            assert(pkt->memory.size > 0);
+            assert(dec->sink_pads[0]->push(dec->sink_pads[0], pkt) == ZST_OK);
+            zst_buffer_unref(pkt);
+            packets_pushed++;
+        }
         zst_buffer_unref(raw);
     }
 
-    assert(pkt != NULL && pkt->memory.size > 0);
+    assert(packets_pushed > 0);
     assert(zst_element_set_property(enc, "preset", "medium") == ZST_ERROR);
-    assert(dec->sink_pads[0]->push(dec->sink_pads[0], pkt) == ZST_OK);
+
+    /* Push EOS buffer to flush/drain the decoder */
+    zst_buffer_t* eos = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
+    eos->flags |= ZST_BUFFER_FLAG_EOS;
+    assert(dec->sink_pads[0]->push(dec->sink_pads[0], eos) == ZST_OK);
+    zst_buffer_unref(eos);
 
     assert(capture->buffers >= 1);
     assert(capture->last_type == ZST_BUFFER_VIDEO_FRAME);
@@ -3153,7 +3189,6 @@ test_h265_decoder_roundtrip(void)
     assert(caps->structs->video.height == height);
     zst_caps_destroy(caps);
 
-    zst_buffer_unref(pkt);
     zst_element_destroy(sink);
     zst_element_destroy(dec);
     zst_element_destroy(enc);
@@ -3851,6 +3886,8 @@ test_dmabuf_allocator(void)
 
     // Test destroying
     zst_allocator_unref(alloc);
+
+    PASS();
 }
 
 static void
@@ -5594,6 +5631,207 @@ static void test_rtmp_elements(void)
     PASS();
 }
 
+static zst_result_t my_mount_callback(zst_element_t* server, const char* session_name, void* user_data) {
+    int* called = (int*)user_data;
+    *called = 1;
+    zst_result_t res = zst_rtsp_server_add_session(server, session_name);
+    return res;
+}
+
+static void test_rtsp_server_media_on_demand(void) {
+    TEST("RTSP Server Media-On-Demand (dynamic mounting)");
+
+    zst_element_t* server = zst_rtsp_server_create();
+    assert(server != NULL);
+
+    // Set port to 8555
+    assert(zst_element_set_property_int(server, "listen-port", 8555) == ZST_OK);
+
+    // Set mount callback
+    int callback_called = 0;
+    assert(zst_rtsp_server_set_mount_callback(server, my_mount_callback, &callback_called) == ZST_OK);
+
+    // Put server in a pipeline and start it
+    zst_pipeline_t* pipe = zst_pipeline_create();
+    assert(pipe != NULL);
+    assert(zst_pipeline_add(pipe, server) == ZST_OK);
+
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_READY) == ZST_OK);
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_PLAYING) == ZST_OK);
+
+    // Give it a tiny bit of time to start the socket listener thread
+    usleep(50000);
+
+    // Connect to 127.0.0.1:8555
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    assert(fd >= 0);
+
+    // Set receive timeout of 2 seconds so we never hang indefinitely if something fails
+    struct timeval tv;
+    tv.tv_sec = 2;
+    tv.tv_usec = 0;
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(8555);
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    int conn_res = connect(fd, (struct sockaddr*)&addr, sizeof(addr));
+    assert(conn_res >= 0);
+
+    // Send DESCRIBE for a dynamic mount point
+    const char* request = 
+        "DESCRIBE rtsp://127.0.0.1:8555/dynamic_mount RTSP/1.0\r\n"
+        "CSeq: 1\r\n"
+        "\r\n";
+    int sent = send(fd, request, strlen(request), 0);
+    assert(sent == (int)strlen(request));
+
+    // Read response
+    char response[1024];
+    memset(response, 0, sizeof(response));
+    int received = recv(fd, response, sizeof(response) - 1, 0);
+    assert(received > 0);
+
+    // Check that mount callback was called
+    assert(callback_called == 1);
+
+    // Check that response code is 200 OK
+    assert(strstr(response, "RTSP/1.0 200 OK") != NULL);
+    // Check that Content-Base header exists and matches our dynamic mount
+    assert(strstr(response, "Content-Base: rtsp://127.0.0.1:8555/dynamic_mount/") != NULL);
+
+    close(fd);
+
+    // Stop and clean up pipeline
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_READY) == ZST_OK);
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_NULL) == ZST_OK);
+    zst_pipeline_destroy(pipe);
+
+    PASS();
+}
+
+static zst_pad_probe_return_t bunny_probe(zst_pad_t* pad, zst_buffer_t* buf, zst_pad_probe_type_t type, void* user_data) {
+    (void)pad;
+    (void)type;
+    int* count = (int*)user_data;
+    (*count)++;
+    printf("  [Test Probe] Received buffer: type=%d, size=%zu, pts=%llu\n", 
+           buf->type, buf->memory.size, (unsigned long long)buf->pts);
+    return ZST_PAD_PROBE_OK;
+}
+
+static zst_result_t bunny_mount_cb(zst_element_t* server, const char* session_name, void* user_data) {
+    zst_pipeline_t* pipe = (zst_pipeline_t*)user_data;
+    
+    zst_rtsp_server_add_session(server, session_name);
+    
+    zst_element_t* demux = zst_element_factory_make("mp4demux");
+    const char* url = "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_1MB.mp4";
+    zst_element_set_property(demux, "location", url);
+    
+    zst_pipeline_add(pipe, demux);
+    
+    char pad_name[128];
+    snprintf(pad_name, sizeof(pad_name), "%s_video", session_name);
+    zst_pad_link(zst_element_get_pad(demux, "video"), zst_element_get_pad(server, pad_name));
+    
+    snprintf(pad_name, sizeof(pad_name), "%s_audio", session_name);
+    zst_pad_link(zst_element_get_pad(demux, "audio"), zst_element_get_pad(server, pad_name));
+    
+    zst_pipeline_topological_sort(pipe);
+    
+    zst_element_set_state(demux, ZST_STATE_READY);
+    zst_element_set_state(demux, ZST_STATE_PLAYING);
+    
+    return ZST_OK;
+}
+
+static void test_rtsp_source_bunny_verification(void) {
+    TEST("RTSP Source verifying Bunny stream");
+
+    assert(zst_register_builtin_elements() == ZST_OK);
+
+    // 1. Create pipeline & scheduler
+    zst_pipeline_t* pipe = zst_pipeline_create();
+    assert(pipe != NULL);
+    zst_pipeline_set_clock_sync(pipe, 1);
+    
+    zst_scheduler_config_t cfg = {
+        .mode = ZST_SCHEDULER_MULTI_THREAD,
+        .worker_threads = 4
+    };
+    zst_scheduler_t* sched = zst_scheduler_create(&cfg);
+    assert(sched != NULL);
+
+    // 2. Create RTSP Server
+    zst_element_t* server = zst_rtsp_server_create();
+    assert(server != NULL);
+    assert(zst_element_set_property_int(server, "listen-port", 8556) == ZST_OK);
+    assert(zst_rtsp_server_set_mount_callback(server, bunny_mount_cb, pipe) == ZST_OK);
+    assert(zst_pipeline_add(pipe, server) == ZST_OK);
+
+    // 3. Start Server Pipeline
+    assert(zst_scheduler_attach(sched, pipe) == ZST_OK);
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_READY) == ZST_OK);
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_scheduler_run(sched) == ZST_OK);
+
+    // Give it a moment to bind and listen
+    usleep(100000);
+
+    // 4. Create RTSP Client Source
+    zst_element_t* client_src = zst_rtsp_source_create("rtsp://127.0.0.1:8556/bunny");
+    assert(client_src != NULL);
+    assert(zst_element_set_property(client_src, "transport", "tcp") == ZST_OK); // Use TCP interleaved
+    
+    zst_element_t* fakesink = zst_fake_sink_create();
+    assert(fakesink != NULL);
+
+    
+    assert(zst_pipeline_add(pipe, client_src) == ZST_OK);
+    assert(zst_pipeline_add(pipe, fakesink) == ZST_OK);
+    
+    // Link client_src video to fakesink
+    zst_pad_t* src_vpad = zst_element_get_pad(client_src, "video");
+    zst_pad_t* sink_pad = zst_element_get_pad(fakesink, "sink");
+    assert(src_vpad != NULL && sink_pad != NULL);
+    assert(zst_pad_link(src_vpad, sink_pad) == ZST_OK);
+    
+    int buffers_count = 0;
+    zst_pad_add_probe(src_vpad, ZST_PAD_PROBE_PRE_BUFFER, bunny_probe, &buffers_count);
+
+
+
+    zst_pipeline_topological_sort(pipe);
+    
+    // Start client elements
+    assert(zst_element_set_state(client_src, ZST_STATE_READY) == ZST_OK);
+    assert(zst_element_set_state(fakesink, ZST_STATE_READY) == ZST_OK);
+    assert(zst_element_set_state(client_src, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_element_set_state(fakesink, ZST_STATE_PLAYING) == ZST_OK);
+
+    // 5. Let it stream for 3 seconds
+    printf("  [Verification] Streaming for 3 seconds...\n");
+    sleep(3);
+
+    // 6. Stop and assert
+    printf("  [Verification] Total buffers received: %d\n", buffers_count);
+    assert(buffers_count > 0);
+
+    zst_scheduler_stop(sched);
+    zst_pipeline_set_state(pipe, ZST_STATE_NULL);
+    zst_scheduler_destroy(sched);
+    zst_pipeline_destroy(pipe);
+
+    PASS();
+}
+
+
+
 
 int main(void)
 {
@@ -5754,8 +5992,14 @@ int main(void)
     printf("[rtmp source/sink]\n");
     test_rtmp_elements();
 
+    printf("[rtsp server media-on-demand]\n");
+    test_rtsp_server_media_on_demand();
+    test_rtsp_source_bunny_verification();
+
     printf("[srt source/sink]\n");
     test_srt_elements();
+
+
 
     printf("[mpegts muxer/demuxer]\n");
     test_mpegts_elements();

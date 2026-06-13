@@ -556,6 +556,10 @@ static int parse_sdp(rtsp_client_t* cl, const char* sdp, int len) {
         if (line_len >= 2 && p[0] == 'm' && p[1] == '=') {
             /* m=<media> <port> <proto> <fmt> ... */
             media_started = 1;
+            if (track) {
+                cl->track_count++;
+                track = NULL;
+            }
             if (cl->track_count >= MAX_TRACKS) { p = eol + 1; continue; }
             track = &cl->tracks[cl->track_count];
             memset(track, 0, sizeof(*track));
@@ -629,18 +633,13 @@ static int parse_sdp(rtsp_client_t* cl, const char* sdp, int len) {
             /* Still parsing attributes for current track */
         }
 
-        /* When we finish a media block, increment track count */
-        if (track && line_len >= 2 && p[0] == 'm' && p[1] == '=' && p > sdp) {
-            cl->track_count++;
-            track = NULL;
-        }
-
         p = eol + 1;
     }
 
     /* Count last track */
-    if (track) cl->track_count = (cl->tracks[cl->track_count].type != 0) ?
-                                  cl->track_count + 1 : cl->track_count;
+    if (track) {
+        cl->track_count++;
+    }
 
     return cl->track_count;
 }

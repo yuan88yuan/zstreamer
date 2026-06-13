@@ -89,14 +89,32 @@ worker_loop(void* arg)
         int activity = 0;
         zst_pipeline_t* pipe = sched->pipeline;
         if (pipe) {
-            for (uint32_t i = worker_id; i < pipe->nb_elements; i += nb_threads) {
+            pthread_rwlock_rdlock(&pipe->elements_lock);
+            uint32_t count = pipe->nb_elements;
+            for (uint32_t i = worker_id; i < count; i += nb_threads) {
                 zst_element_t* el = pipe->elements[i];
-                if (__atomic_load_n(&el->state, __ATOMIC_ACQUIRE) != ZST_STATE_PLAYING) continue;
+                pthread_rwlock_unlock(&pipe->elements_lock);
 
-                if (el->nb_sink_pads == 0) {
+                if (__atomic_load_n(&el->state, __ATOMIC_ACQUIRE) != ZST_STATE_PLAYING) {
+                    pthread_rwlock_rdlock(&pipe->elements_lock);
+                    count = pipe->nb_elements;
+                    continue;
+                }
+
+                int is_source = 1;
+                for (uint32_t p_idx = 0; p_idx < el->nb_sink_pads; p_idx++) {
+                    if (el->sink_pads[p_idx] && el->sink_pads[p_idx]->peer) {
+                        is_source = 0;
+                        break;
+                    }
+                }
+
+                if (is_source && el->ops && el->ops->process) {
                     // Source element: process (produce)
                     zst_buffer_t* out_buf = NULL;
                     zst_result_t ret = el->ops->process(el, NULL, &out_buf);
+
+
                     if (ret == ZST_OK && out_buf) {
                         activity = 1;
                         if (el->nb_src_pads > 0) {
@@ -129,14 +147,18 @@ worker_loop(void* arg)
                             zst_buffer_unref(eos_buf);
                         }
                         __atomic_store_n(&el->state, ZST_STATE_READY, __ATOMIC_RELEASE);
-                    } else if (ret != ZST_TIMEOUT && ret != ZST_AGAIN) {
+                    } else if (ret != ZST_TIMEOUT && ret != ZST_AGAIN && ret != ZST_OK) {
                         if (el->bus) {
                             zst_event_t* err_ev = zst_event_new_error(el, ret, "Source process failed");
                             zst_bus_post(el->bus, err_ev);
                         }
                     }
                 }
+
+                pthread_rwlock_rdlock(&pipe->elements_lock);
+                count = pipe->nb_elements;
             }
+            pthread_rwlock_unlock(&pipe->elements_lock);
         }
 
         if (!activity) {

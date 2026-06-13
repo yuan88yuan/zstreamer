@@ -22,6 +22,7 @@ zst_pipeline_create(void)
     pipe->priv        = NULL;
     pipe->bus         = zst_bus_create();
     pipe->clock       = NULL;
+    pthread_rwlock_init(&pipe->elements_lock, NULL);
 
     return pipe;
 }
@@ -42,6 +43,8 @@ zst_pipeline_destroy(zst_pipeline_t* pipe)
     if (pipe->clock) {
         zst_clock_unref(pipe->clock);
     }
+
+    pthread_rwlock_destroy(&pipe->elements_lock);
 
     free(pipe->elements);
     free(pipe);
@@ -64,9 +67,11 @@ zst_pipeline_set_clock(zst_pipeline_t* pipe, zst_clock_t* clock)
     pipe->clock = clock ? zst_clock_ref(clock) : NULL;
 
     /* Propagate to all elements */
+    pthread_rwlock_rdlock(&pipe->elements_lock);
     for (uint32_t i = 0; i < pipe->nb_elements; i++) {
         zst_element_set_clock(pipe->elements[i], pipe->clock);
     }
+    pthread_rwlock_unlock(&pipe->elements_lock);
 }
 
 zst_clock_t*
@@ -80,14 +85,20 @@ zst_pipeline_add(zst_pipeline_t* pipe, zst_element_t* el)
 {
     if (!pipe || !el) return ZST_ERROR;
 
+    pthread_rwlock_wrlock(&pipe->elements_lock);
     zst_element_t** els = realloc(pipe->elements,
                                  (pipe->nb_elements + 1) * sizeof(zst_element_t*));
-    if (!els) return ZST_ERROR;
+    if (!els) {
+        pthread_rwlock_unlock(&pipe->elements_lock);
+        return ZST_ERROR;
+    }
 
     els[pipe->nb_elements++] = el;
     pipe->elements = els;
     el->bus = pipe->bus;
     el->pipeline = pipe;
+    pthread_rwlock_unlock(&pipe->elements_lock);
+
     zst_element_set_clock(el, pipe->clock);
     return ZST_OK;
 }
@@ -97,6 +108,7 @@ zst_pipeline_remove(zst_pipeline_t* pipe, zst_element_t* el)
 {
     if (!pipe || !el) return ZST_ERROR;
 
+    pthread_rwlock_wrlock(&pipe->elements_lock);
     int found = 0;
     for (uint32_t i = 0; i < pipe->nb_elements; i++) {
         if (pipe->elements[i] == el) {
@@ -108,6 +120,7 @@ zst_pipeline_remove(zst_pipeline_t* pipe, zst_element_t* el)
             break;
         }
     }
+    pthread_rwlock_unlock(&pipe->elements_lock);
 
     if (found) {
         el->bus = NULL;
@@ -241,6 +254,7 @@ zst_pipeline_set_state(zst_pipeline_t* pipe, zst_state_t state)
     /* Transition to PLAYING: Auto-select clock if none exists */
     if (old_state < ZST_STATE_PLAYING && state == ZST_STATE_PLAYING && !pipe->clock) {
         zst_clock_t* master_clock = NULL;
+        pthread_rwlock_rdlock(&pipe->elements_lock);
         for (uint32_t i = 0; i < pipe->nb_elements; i++) {
             zst_element_t* el = pipe->elements[i];
             if (el->ops && el->ops->provide_clock) {
@@ -248,6 +262,7 @@ zst_pipeline_set_state(zst_pipeline_t* pipe, zst_state_t state)
                 if (master_clock) break;
             }
         }
+        pthread_rwlock_unlock(&pipe->elements_lock);
 
         zst_clock_t* sys_clock = zst_clock_system_create();
         if (master_clock && sys_clock) {
@@ -267,6 +282,7 @@ zst_pipeline_set_state(zst_pipeline_t* pipe, zst_state_t state)
     }
 
     /* Propagate state to all elements */
+    pthread_rwlock_rdlock(&pipe->elements_lock);
     for (uint32_t i = 0; i < pipe->nb_elements; i++) {
         zst_result_t r = zst_element_set_state(pipe->elements[i], state);
         if (r != ZST_OK) {
@@ -274,6 +290,7 @@ zst_pipeline_set_state(zst_pipeline_t* pipe, zst_state_t state)
             for (uint32_t j = 0; j < i; j++) {
                 zst_element_set_state(pipe->elements[j], old_state);
             }
+            pthread_rwlock_unlock(&pipe->elements_lock);
             /* Post ZST_EVENT_ERROR */
             if (pipe->bus) {
                 zst_event_t* ev = zst_event_new_error(pipe->elements[i], r, "Element failed to set state");
@@ -282,6 +299,7 @@ zst_pipeline_set_state(zst_pipeline_t* pipe, zst_state_t state)
             return r;
         }
     }
+    pthread_rwlock_unlock(&pipe->elements_lock);
 
     pipe->state = state;
     if (pipe->bus) {
@@ -346,12 +364,17 @@ zst_pipeline_topological_sort(zst_pipeline_t* pipe)
 {
     if (!pipe || pipe->nb_elements <= 1) return;
 
+    pthread_rwlock_wrlock(&pipe->elements_lock);
     zst_element_t** temp = malloc(pipe->nb_elements * sizeof(zst_element_t*));
-    if (!temp) return;
+    if (!temp) {
+        pthread_rwlock_unlock(&pipe->elements_lock);
+        return;
+    }
 
     int* visited = calloc(pipe->nb_elements, sizeof(int));
     if (!visited) {
         free(temp);
+        pthread_rwlock_unlock(&pipe->elements_lock);
         return;
     }
 
@@ -373,6 +396,7 @@ zst_pipeline_topological_sort(zst_pipeline_t* pipe)
 
     free(visited);
     free(temp);
+    pthread_rwlock_unlock(&pipe->elements_lock);
 }
 
 int
@@ -380,6 +404,7 @@ zst_pipeline_count_elements_of_type(zst_pipeline_t* pipe, const char* type_name)
 {
     if (!pipe || !type_name) return 0;
 
+    pthread_rwlock_rdlock(&pipe->elements_lock);
     int count = 0;
     for (uint32_t i = 0; i < pipe->nb_elements; i++) {
         zst_element_t* el = pipe->elements[i];
@@ -387,6 +412,7 @@ zst_pipeline_count_elements_of_type(zst_pipeline_t* pipe, const char* type_name)
             count++;
         }
     }
+    pthread_rwlock_unlock(&pipe->elements_lock);
     return count;
 }
 
@@ -395,7 +421,9 @@ zst_pipeline_foreach_element(zst_pipeline_t* pipe, void (*func)(zst_element_t*, 
 {
     if (!pipe || !func) return;
 
+    pthread_rwlock_rdlock(&pipe->elements_lock);
     for (uint32_t i = 0; i < pipe->nb_elements; i++) {
         func(pipe->elements[i], user_data);
     }
+    pthread_rwlock_unlock(&pipe->elements_lock);
 }

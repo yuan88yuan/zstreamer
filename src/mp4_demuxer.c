@@ -28,6 +28,8 @@
 #include "zst_caps.h"
 #include "zst_log.h"
 #include "zst_bus.h"
+#include "zst_pipeline.h"
+#include "zst_clock.h"
 #include "zstreamer/elements/zst_mp4_demuxer.h"
 
 /* ── Internal buffer queue node ──────────────────────────────────────── */
@@ -59,6 +61,7 @@ typedef struct {
     /* Direct-file mode */
     char             location[256];
     int              direct_file;
+    zst_time_t       base_time;
 } mp4_demuxer_t;
 
 /* ── Push-mode buffer queue helpers ──────────────────────────────────── */
@@ -462,6 +465,82 @@ mp4_demux_send_eos(zst_element_t* el)
     }
 }
 
+static uint8_t*
+h264_avcc_to_annexb(const uint8_t* avcc_data, int avcc_size, const uint8_t* extradata, int extra_size, int* out_size, int is_keyframe)
+{
+    /* Calculate size of Annex B buffer */
+    int alloc_size = avcc_size + 1024;
+    uint8_t* out = malloc(alloc_size);
+    if (!out) return NULL;
+
+    int pos = 0;
+
+    /* 1. Prepend SPS/PPS from extradata if it's a keyframe and extradata is present */
+    if (is_keyframe && extradata && extra_size >= 7 && extradata[0] == 1) {
+        int num_sps = extradata[5] & 0x1F;
+        int p = 6;
+        for (int i = 0; i < num_sps; i++) {
+            if (p + 2 > extra_size) break;
+            int sps_len = (extradata[p] << 8) | extradata[p+1];
+            p += 2;
+            if (p + sps_len > extra_size) break;
+            
+            /* Write Annex B start code + SPS */
+            out[pos++] = 0; out[pos++] = 0; out[pos++] = 0; out[pos++] = 1;
+            memcpy(out + pos, extradata + p, sps_len);
+            pos += sps_len;
+            p += sps_len;
+        }
+        if (p < extra_size) {
+            int num_pps = extradata[p];
+            p++;
+            for (int i = 0; i < num_pps; i++) {
+                if (p + 2 > extra_size) break;
+                int pps_len = (extradata[p] << 8) | extradata[p+1];
+                p += 2;
+                if (p + pps_len > extra_size) break;
+                
+                /* Write Annex B start code + PPS */
+                out[pos++] = 0; out[pos++] = 0; out[pos++] = 0; out[pos++] = 1;
+                memcpy(out + pos, extradata + p, pps_len);
+                pos += pps_len;
+                p += pps_len;
+            }
+        }
+    }
+
+    /* 2. Convert AVCC packets to Annex B */
+    int i = 0;
+    while (i + 4 <= avcc_size) {
+        uint32_t nal_len = (avcc_data[i] << 24) | (avcc_data[i+1] << 16) | (avcc_data[i+2] << 8) | avcc_data[i+3];
+        i += 4;
+        if (i + nal_len > (uint32_t)avcc_size) {
+            break;
+        }
+
+        /* Realloc if needed */
+        if (pos + 4 + nal_len > alloc_size) {
+            alloc_size = pos + 4 + nal_len + 1024;
+            uint8_t* new_out = realloc(out, alloc_size);
+            if (!new_out) {
+                free(out);
+                return NULL;
+            }
+            out = new_out;
+        }
+
+        /* Write start code */
+        out[pos++] = 0; out[pos++] = 0; out[pos++] = 0; out[pos++] = 1;
+        /* Copy NAL unit payload */
+        memcpy(out + pos, avcc_data + i, nal_len);
+        pos += nal_len;
+        i += nal_len;
+    }
+
+    *out_size = pos;
+    return out;
+}
+
 /* ── Process: read packets and push to output pads ───────────────────── */
 
 static zst_result_t
@@ -473,14 +552,24 @@ mp4_demux_process(zst_element_t* el)
     AVPacket* pkt = av_packet_alloc();
     if (!pkt) return ZST_ERROR;
 
+    zst_result_t process_result = ZST_OK;
+
     while (1) {
         int ret = av_read_frame(s->fc, pkt);
         if (ret == AVERROR(EAGAIN)) {
+            ZST_LOG_DEBUG("mp4demux", "av_read_frame returned EAGAIN");
+            process_result = ZST_AGAIN;
             break;
         }
         if (ret < 0) {
+            char errbuf[256];
+            av_strerror(ret, errbuf, sizeof(errbuf));
+            ZST_LOG_INFO("mp4demux", "av_read_frame returned EOF or error: %d (%s)", ret, errbuf);
             if (ret == AVERROR_EOF || s->eos_received) {
                 mp4_demux_send_eos(el);
+                process_result = ZST_EOF;
+            } else {
+                process_result = ZST_ERROR;
             }
             break;
         }
@@ -498,27 +587,81 @@ mp4_demux_process(zst_element_t* el)
         if (dest_pad && dest_pad->peer) {
             zst_buffer_t* out = zst_buffer_create(btype);
             if (out) {
-                out->memory.data = malloc(pkt->size);
-                out->memory.size = pkt->size;
-                out->memory.priv = out->memory.data;
-                out->memory.release = free;
-                memcpy(out->memory.data, pkt->data, pkt->size);
+                if (btype == ZST_BUFFER_VIDEO_PACKET && s->video_stream_idx != -1) {
+                    /* Convert H.264 AVCC to Annex B */
+                    int annexb_size = 0;
+                    AVCodecParameters* codecpar = s->fc->streams[s->video_stream_idx]->codecpar;
+                    int is_keyframe = (pkt->flags & AV_PKT_FLAG_KEY);
+                    uint8_t* annexb_data = h264_avcc_to_annexb(pkt->data, pkt->size,
+                                                              codecpar->extradata, codecpar->extradata_size,
+                                                              &annexb_size, is_keyframe);
+                    if (annexb_data) {
+                        ZST_LOG_DEBUG("mp4demux", "AVCC->AnnexB: %d bytes -> %d bytes (keyframe=%d)",
+                                     pkt->size, annexb_size, is_keyframe);
+                        out->memory.data = annexb_data;
+                        out->memory.size = annexb_size;
+                        out->memory.priv = annexb_data;
+                        out->memory.release = free;
+                    } else {
+                        ZST_LOG_ERROR("mp4demux", "Annex B conversion failed, falling back to raw AVCC copy");
+                        /* Fallback to original packet if conversion failed */
+                        out->memory.data = malloc(pkt->size);
+                        out->memory.size = pkt->size;
+                        out->memory.priv = out->memory.data;
+                        out->memory.release = free;
+                        memcpy(out->memory.data, pkt->data, pkt->size);
+                    }
+                } else {
+                    out->memory.data = malloc(pkt->size);
+                    out->memory.size = pkt->size;
+                    out->memory.priv = out->memory.data;
+                    out->memory.release = free;
+                    memcpy(out->memory.data, pkt->data, pkt->size);
+                }
 
                 AVRational tb = s->fc->streams[pkt->stream_index]->time_base;
-                out->pts = av_rescale_q(pkt->pts, tb, (AVRational){1, 1000000000});
-                out->dts = av_rescale_q(pkt->dts, tb, (AVRational){1, 1000000000});
+                zst_time_t file_pts = av_rescale_q(pkt->pts, tb, (AVRational){1, 1000000000});
+                zst_time_t file_dts = av_rescale_q(pkt->dts, tb, (AVRational){1, 1000000000});
                 out->duration = av_rescale_q(pkt->duration, tb, (AVRational){1, 1000000000});
 
+                if (s->direct_file && el->clock) {
+                    if (s->base_time == 0) {
+                        s->base_time = zst_clock_get_time(el->clock);
+                    }
+                    out->pts = s->base_time + file_pts;
+                    out->dts = s->base_time + file_dts;
+                } else {
+                    out->pts = file_pts;
+                    out->dts = file_dts;
+                }
+
+                /* Clock sync if enabled in direct-file mode */
+                if (s->direct_file && el->pipeline && el->pipeline->clock_sync && el->clock && out->dts > 0) {
+                    zst_time_t current = zst_clock_get_time(el->clock);
+                    if (out->dts > current + 5000000ULL) {
+                        zst_clock_wait(el->clock, out->dts - current);
+                    }
+                }
+
+                ZST_LOG_DEBUG("mp4demux", "Pushing packet on stream %d, size %d, pts %lld", pkt->stream_index, pkt->size, (long long)out->pts);
                 zst_pad_push(dest_pad, out);
                 zst_buffer_unref(out);
             }
+        } else {
+            ZST_LOG_DEBUG("mp4demux", "Pushed packet skipped: pad %s has no peer", dest_pad ? dest_pad->name : "NULL");
         }
 
         av_packet_unref(pkt);
+
+        /* In direct-file mode, process exactly one packet per call to play nice with the scheduler */
+        if (s->direct_file) {
+            process_result = ZST_OK;
+            break;
+        }
     }
 
     av_packet_free(&pkt);
-    return ZST_OK;
+    return process_result;
 }
 
 /* ── Sink pad push callback (push / streaming mode) ──────────────────── */
@@ -578,6 +721,7 @@ mp4_demux_start(zst_element_t* el)
     s->eos_received = 0;
     s->video_stream_idx = -1;
     s->audio_stream_idx = -1;
+    s->base_time = 0;
 
     /* Cache pad pointers early */
     s->video_pad = zst_element_get_pad(el, "video");
@@ -586,14 +730,23 @@ mp4_demux_start(zst_element_t* el)
     /* Direct-file mode: open the file immediately at start */
     if (s->direct_file && s->location[0] != '\0') {
         AVFormatContext* fc = NULL;
-        if (avformat_open_input(&fc, s->location, NULL, NULL) < 0) {
+        int err = avformat_open_input(&fc, s->location, NULL, NULL);
+        if (err < 0) {
+            char errbuf[256];
+            av_strerror(err, errbuf, sizeof(errbuf));
+            ZST_LOG_ERROR("mp4demux", "Failed to open input '%s': %d (%s)", s->location, err, errbuf);
             return ZST_ERROR;
         }
-        if (avformat_find_stream_info(fc, NULL) < 0) {
+        err = avformat_find_stream_info(fc, NULL);
+        if (err < 0) {
+            char errbuf[256];
+            av_strerror(err, errbuf, sizeof(errbuf));
+            ZST_LOG_ERROR("mp4demux", "Failed to find stream info for '%s': %d (%s)", s->location, err, errbuf);
             avformat_close_input(&fc);
             return ZST_ERROR;
         }
         s->fc = fc;
+        ZST_LOG_INFO("mp4demux", "Successfully opened direct file location '%s'", s->location);
         mp4_demux_set_stream_caps(s);
     }
 
@@ -714,6 +867,22 @@ zst_mp4_demuxer_create_with_config(const zst_mp4_demuxer_config_t* config)
 }
 
 /* ── Dynamic plugin boilerplate ──────────────────────────────────────── */
+
+/* ── Public extradata accessor ───────────────────────────────────────── */
+
+const uint8_t*
+zst_mp4_demuxer_get_video_extradata(zst_element_t* el, int* size_out)
+{
+    if (size_out) *size_out = 0;
+    if (!el) return NULL;
+    mp4_demuxer_t* s = el->priv;
+    if (!s || !s->fc || s->video_stream_idx < 0) return NULL;
+    AVCodecParameters* par = s->fc->streams[s->video_stream_idx]->codecpar;
+    if (!par->extradata || par->extradata_size <= 0) return NULL;
+    if (size_out) *size_out = par->extradata_size;
+    return par->extradata;
+}
+
 
 #ifdef BUILDING_PLUGIN
 #include "zst_plugin.h"

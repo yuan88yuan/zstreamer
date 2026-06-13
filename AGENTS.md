@@ -82,7 +82,9 @@ It provides a **GStreamer-like** pipeline architecture: elements connected via p
 │   └── mp4_demuxer.c      ← FFmpeg libavformat MP4 demuxer
 ├── tests/
 │   ├── test_core.c    ← 62 unit tests: core + scheduler + queue + caps + bus + plugins + log + conversion + codecs + advanced features
-│   └── example_record.c ← Full pipeline demo with queue elements
+│   ├── example_record.c ← Full pipeline demo with queue elements
+│   └── demo_rtsp_mod.c  ← RTSP media-on-demand demo application
+
 └── wiki/
     ├── architecture.md        ← Detailed design doc
     ├── implementation-plan.md ← Step-by-step roadmap (10 phases)

@@ -57,6 +57,46 @@ zst_result_t zst_rtsp_server_remove_session(zst_element_t* el, const char* name)
  */
 int zst_rtsp_server_session_count(zst_element_t* el);
 
+/**
+ * Callback function type for dynamic session mounting (Media-On-Demand).
+ * Called when a client requests a session/mount name that is not yet configured.
+ * The application can use this callback to dynamically create sources and
+ * call zst_rtsp_server_add_session() and link them.
+ */
+typedef zst_result_t (*zst_rtsp_server_mount_cb_t)(
+    zst_element_t* server,
+    const char* session_name,
+    void* user_data
+);
+
+/**
+ * Set the dynamic mount callback for the RTSP server.
+ */
+zst_result_t zst_rtsp_server_set_mount_callback(
+    zst_element_t* server,
+    zst_rtsp_server_mount_cb_t callback,
+    void* user_data
+);
+
+/**
+ * Set the raw avcC/hvcC extradata for a named session's video track.
+ * This data is used to populate the SDP fmtp attribute with the correct
+ * profile-level-id and sprop-parameter-sets (H.264) so that clients can
+ * initialise their decoder before the first IDR frame arrives.
+ *
+ * @param el     RTSP server element
+ * @param name   Session name (mount point)
+ * @param data   Raw avcC/hvcC extradata bytes (will be copied internally)
+ * @param size   Length of data in bytes
+ */
+zst_result_t zst_rtsp_server_session_set_extradata(
+    zst_element_t* el,
+    const char* name,
+    const uint8_t* data,
+    int size
+);
+
 #ifdef __cplusplus
 }
 #endif
+

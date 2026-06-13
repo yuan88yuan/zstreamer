@@ -6,5 +6,5 @@ includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
 Name: zstreamer
 Description: Lightweight, modular multimedia streaming framework
 Version: @PROJECT_VERSION@
-Libs: -L${libdir} -lzstreamer -lpthread @ZSTREAMER_PKG_LIBS@
+Libs: -L${libdir} -lzstreamer -lpthread @ZSTREAMER_PKG_LIBS@ -lvulkan
 Cflags: -I${includedir}/zstreamer -I${includedir}

@@ -3,6 +3,8 @@ project(zstreamer VERSION 0.1.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+add_compile_definitions(_GNU_SOURCE)
+
 
 # ── Options ──────────────────────────────────────────────────────────────
 option(BUILD_TESTS     "Build test programs" ON)
@@ -423,6 +425,18 @@ if(BUILD_TESTS)
     target_link_libraries(demo_colorbar_mp4
         PRIVATE zstreamer-elements
     )
+
+    # -- RTSP Media-On-Demand demo --
+    add_executable(demo_rtsp_mod
+        tests/demo_rtsp_mod.c
+    )
+    target_include_directories(demo_rtsp_mod
+        PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+    )
+    target_link_libraries(demo_rtsp_mod
+        PRIVATE zstreamer-elements
+    )
+
 
     add_executable(example_text_overlay
         tests/example_text_overlay.c

@@ -3,6 +3,7 @@
 =============================================================================*/
 #pragma once
 
+#include <pthread.h>
 #include "zst_types.h"
 #include "zst_element.h"
 
@@ -27,6 +28,8 @@ struct zst_pipeline {
      * is reached before delivering it, enabling real-time pacing and A/V sync.
      * Default: 0 (off) — buffers are delivered as fast as possible. */
     int clock_sync;
+
+    pthread_rwlock_t elements_lock; /* Protects elements array */
 };
 
 zst_pipeline_t* zst_pipeline_create(void);

@@ -10,6 +10,7 @@ All phases are now documented in separate files for easier maintenance.
 | 8     | [Advanced Features](phase-advanced.md) | ~417 | 🔄 In Progress |
 | 9–10  | [Future Work](phase-future.md) | ~34 | ⬜ Not Started |
 | Post-P0 | [RTMP Hardening](phase-rtmp-hardening.md) | ~60 | ✅ Done |
+| Post-P0 | [RTSP Media-On-Demand](phase-rtsp-mod.md) | ~70 | ⬜ Not Started |
 
 ---
 
@@ -39,4 +40,10 @@ All phases are now documented in separate files for easier maintenance.
 
 Detailed tasks and checklist for RTMP Source/Sink Hardening have been moved to a separate document:
 - [RTMP Hardening Plan & Status](phase-rtmp-hardening.md)
+
+
+## RTSP Server Media-On-Demand (Post-P0)
+
+Detailed tasks and checklist for RTSP Server Media-On-Demand refactoring have been moved to a separate document:
+- [RTSP Media-On-Demand Refactoring Plan](phase-rtsp-mod.md)
 

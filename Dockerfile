@@ -21,7 +21,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     pkg-config \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
 
 # ── Multimedia libraries (for element plugins) ──────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -37,6 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsrt-gnutls-dev \
     libgnutls28-dev \
     nettle-dev \
+    libvulkan-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Debugging / profiling tools ─────────────────────────────────────────

@@ -25,8 +25,11 @@
       - https://github.com/yuan88yuan/ireader-media-server
 =============================================================================*/
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <stdio.h>
+
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -220,6 +223,7 @@ typedef struct rtsp_server_session_s {
     Server element private data
 ===========================================================================*/
 typedef struct rtsp_server_priv_s {
+    zst_element_t*          self;
     int                     listen_port;
     int                     listen_fd;
     int                     running;
@@ -231,7 +235,11 @@ typedef struct rtsp_server_priv_s {
 
     rtsp_client_t*          clients;
     int                     client_count;
+
+    zst_rtsp_server_mount_cb_t mount_callback;
+    void*                      mount_user_data;
 } rtsp_server_priv_t;
+
 
 /*===========================================================================
     Helpers
@@ -400,6 +408,87 @@ static int send_rtcp_sr(rtsp_client_t* cl, int is_video) {
 }
 
 /*===========================================================================
+    Base64 encoder (RFC 4648, no line wrapping)
+===========================================================================*/
+static const char B64_CHARS[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/* Returns number of characters written (not including NUL terminator).
+   out must be at least ((in_len + 2) / 3) * 4 + 1 bytes. */
+static int base64_encode(const uint8_t* in, int in_len, char* out) {
+    int i, o = 0;
+    for (i = 0; i < in_len; i += 3) {
+        uint32_t v  = (uint32_t)in[i] << 16;
+        if (i + 1 < in_len) v |= (uint32_t)in[i+1] << 8;
+        if (i + 2 < in_len) v |= (uint32_t)in[i+2];
+        out[o++] = B64_CHARS[(v >> 18) & 0x3f];
+        out[o++] = B64_CHARS[(v >> 12) & 0x3f];
+        out[o++] = (i + 1 < in_len) ? B64_CHARS[(v >> 6) & 0x3f] : '=';
+        out[o++] = (i + 2 < in_len) ? B64_CHARS[(v     ) & 0x3f] : '=';
+    }
+    out[o] = '\0';
+    return o;
+}
+
+/*===========================================================================
+    Extract SDP fmtp parameters from avcC (H.264) extradata
+    Fills profile_level_id (6 hex chars + NUL) and sprop (base64 SPS,PPS + NUL).
+    Returns 1 on success, 0 if extradata is absent/malformed.
+===========================================================================*/
+static int avcc_to_sdp_params(const uint8_t* extra, int extra_size,
+                               char* profile_level_id,  /* at least 7 bytes */
+                               char* sprop,             /* at least 512 bytes */
+                               int   sprop_cap)
+{
+    if (!extra || extra_size < 7 || extra[0] != 1) return 0;
+
+    /* profile_level_id = profile_idc | profile_compatibility | level_idc */
+    snprintf(profile_level_id, 7, "%02x%02x%02x",
+             extra[1], extra[2], extra[3]);
+
+    /* Walk the avcC NAL unit lists */
+    int p = 5;  /* skip configurationVersion, profile/compat/level, lengthSizeMinusOne */
+    int num_sps = extra[p++] & 0x1F;
+
+    int sprop_len = 0;
+    char tmp[1024];
+
+    for (int i = 0; i < num_sps && p + 2 <= extra_size; i++) {
+        int nal_len = (extra[p] << 8) | extra[p+1];
+        p += 2;
+        if (p + nal_len > extra_size) break;
+        if (i > 0 && sprop_len + 1 < sprop_cap) {
+            sprop[sprop_len++] = ',';
+        }
+        int enc_len = base64_encode(extra + p, nal_len, tmp);
+        if (sprop_len + enc_len < sprop_cap) {
+            memcpy(sprop + sprop_len, tmp, enc_len);
+            sprop_len += enc_len;
+        }
+        p += nal_len;
+    }
+
+    if (p >= extra_size) { sprop[sprop_len] = '\0'; return 1; }
+    int num_pps = extra[p++];
+    for (int i = 0; i < num_pps && p + 2 <= extra_size; i++) {
+        int nal_len = (extra[p] << 8) | extra[p+1];
+        p += 2;
+        if (p + nal_len > extra_size) break;
+        if (sprop_len + 1 < sprop_cap) {
+            sprop[sprop_len++] = ',';
+        }
+        int enc_len = base64_encode(extra + p, nal_len, tmp);
+        if (sprop_len + enc_len < sprop_cap) {
+            memcpy(sprop + sprop_len, tmp, enc_len);
+            sprop_len += enc_len;
+        }
+        p += nal_len;
+    }
+    sprop[sprop_len] = '\0';
+    return 1;
+}
+
+/*===========================================================================
     SDP generation for a session
 ===========================================================================*/
 static int make_sdp(rtsp_server_session_t* sess, char* out, int cap) {
@@ -424,10 +513,32 @@ static int make_sdp(rtsp_server_session_t* sess, char* out, int cap) {
             "m=video 0 RTP/AVP %d\r\n"
             "a=rtpmap:%d %s/%d\r\n",
             pt, pt, enc, RTP_CLOCK_VIDEO);
-        /* fmtp with profile-level-id */
-        n += snprintf(out + n, cap - n,
-            "a=fmtp:%d packetization-mode=1;profile-level-id=42e01f\r\n"
-            "a=control:trackID=0\r\n", pt);
+
+        if (sess->video_codec == 1 && sess->extra_data && sess->extra_size > 0) {
+            /* H.264: derive profile-level-id and sprop-parameter-sets from avcC */
+            char plid[8]  = "42e01f";   /* fallback: Constrained Baseline 3.1 */
+            char sprop[1024] = "";
+            avcc_to_sdp_params(sess->extra_data, sess->extra_size,
+                               plid, sprop, (int)sizeof(sprop));
+            if (sprop[0] != '\0') {
+                n += snprintf(out + n, cap - n,
+                    "a=fmtp:%d packetization-mode=1;"
+                    "profile-level-id=%s;"
+                    "sprop-parameter-sets=%s\r\n"
+                    "a=control:trackID=0\r\n",
+                    pt, plid, sprop);
+            } else {
+                n += snprintf(out + n, cap - n,
+                    "a=fmtp:%d packetization-mode=1;profile-level-id=%s\r\n"
+                    "a=control:trackID=0\r\n",
+                    pt, plid);
+            }
+        } else {
+            /* No extradata — use generic fallback */
+            n += snprintf(out + n, cap - n,
+                "a=fmtp:%d packetization-mode=1;profile-level-id=42e01f\r\n"
+                "a=control:trackID=0\r\n", pt);
+        }
     }
 
     if (sess->has_audio) {
@@ -562,21 +673,27 @@ static int parse_rtsp_request(rtsp_client_t* cl) {
     return 0;
 }
 
-/*===========================================================================
-    Extract mount point from URI
-    Returns pointer into uri or NULL
-===========================================================================*/
-static const char* extract_mount(const char* uri) {
+static int extract_mount_clean(const char* uri, char* out, int max_len) {
+    if (!uri || !out || max_len <= 0) return 0;
     const char* p = strstr(uri, "://");
     if (p) {
         p = strchr(p + 3, '/');
-        if (!p) return NULL;
+        if (!p) return 0;
     } else {
         p = uri;
     }
     while (*p == '/') p++;
-    return p;
+
+    int len = 0;
+    while (p[len] != '\0' && p[len] != '/' && p[len] != '?' && p[len] != ';') {
+        len++;
+    }
+    if (len >= max_len) len = max_len - 1;
+    memcpy(out, p, len);
+    out[len] = '\0';
+    return len > 0;
 }
+
 
 /*===========================================================================
     Transport header parser (RFC 2326 §12.39)
@@ -692,8 +809,10 @@ static int on_options(rtsp_client_t* cl) {
 }
 
 static int on_describe(rtsp_client_t* cl) {
-    const char* mount = extract_mount(cl->uri);
-    if (!mount || !*mount) return reply_simple(cl, 404);
+    char mount[128];
+    if (!extract_mount_clean(cl->uri, mount, sizeof(mount))) {
+        return reply_simple(cl, 404);
+    }
 
     rtsp_server_priv_t* srv = cl->server;
     pthread_mutex_lock(&srv->lock);
@@ -702,6 +821,28 @@ static int on_describe(rtsp_client_t* cl) {
         if (strcmp(srv->sessions[i].name, mount) == 0) {
             sess = &srv->sessions[i];
             break;
+        }
+    }
+
+    if (!sess && srv->mount_callback) {
+        zst_rtsp_server_mount_cb_t cb = srv->mount_callback;
+        void* ud = srv->mount_user_data;
+        zst_element_t* server_el = srv->self;
+
+        pthread_mutex_unlock(&srv->lock);
+
+        ZST_LOG_INFO("rtsp_server", "triggering dynamic mount callback for session /%s", mount);
+        zst_result_t res = cb(server_el, mount, ud);
+
+        pthread_mutex_lock(&srv->lock);
+
+        if (res == ZST_OK) {
+            for (int i = 0; i < srv->session_count; i++) {
+                if (strcmp(srv->sessions[i].name, mount) == 0) {
+                    sess = &srv->sessions[i];
+                    break;
+                }
+            }
         }
     }
     pthread_mutex_unlock(&srv->lock);
@@ -717,10 +858,11 @@ static int on_describe(rtsp_client_t* cl) {
     snprintf(extras, sizeof(extras),
         "Content-Type: application/sdp\r\n"
         "Content-Base: rtsp://%s:%d/%s/\r\n",
-        cl->peer_ip, RTSP_DEFAULT_PORT, sess->name);
+        cl->peer_ip, srv->listen_port, sess->name);
 
     return send_reply(cl, 200, extras, sdp, sdp_len);
 }
+
 
 static int on_setup(rtsp_client_t* cl) {
     if (!cl->session) return reply_simple(cl, 454);
@@ -1235,13 +1377,13 @@ static zst_result_t el_close(zst_element_t* el) {
     rtsp_server_priv_t* srv = el->priv;
     if (!srv) return ZST_ERROR;
 
+    /* Stop the listener and disconnect all clients (idempotent) */
     srv->running = 0;
     if (srv->listen_thread) {
         pthread_join(srv->listen_thread, NULL);
         srv->listen_thread = 0;
     }
 
-    /* Close all clients to wake up their threads */
     pthread_mutex_lock(&srv->lock);
     for (rtsp_client_t* cl = srv->clients; cl; cl = cl->next)
         shutdown(cl->fd, SHUT_RDWR);
@@ -1252,8 +1394,37 @@ static zst_result_t el_close(zst_element_t* el) {
 
     if (srv->listen_fd >= 0) { close(srv->listen_fd); srv->listen_fd = -1; }
 
-    for (int i = 0; i < srv->session_count; i++)
+    /* Free per-session extradata — null pointer after free to prevent double-free
+       if el_close is ever called more than once (e.g., via el_stop + el_close). */
+    for (int i = 0; i < srv->session_count; i++) {
         free(srv->sessions[i].extra_data);
+        srv->sessions[i].extra_data = NULL;
+        srv->sessions[i].extra_size = 0;
+    }
+
+    return ZST_OK;
+}
+
+/* el_stop: called on PLAYING→PAUSED/NULL — stop the network listener and
+   disconnect clients, but do NOT free session memory (el_close handles that). */
+static zst_result_t el_stop(zst_element_t* el) {
+    rtsp_server_priv_t* srv = el->priv;
+    if (!srv) return ZST_ERROR;
+
+    srv->running = 0;
+    if (srv->listen_thread) {
+        pthread_join(srv->listen_thread, NULL);
+        srv->listen_thread = 0;
+    }
+
+    pthread_mutex_lock(&srv->lock);
+    for (rtsp_client_t* cl = srv->clients; cl; cl = cl->next)
+        shutdown(cl->fd, SHUT_RDWR);
+    pthread_mutex_unlock(&srv->lock);
+
+    usleep(100000);
+
+    if (srv->listen_fd >= 0) { close(srv->listen_fd); srv->listen_fd = -1; }
 
     return ZST_OK;
 }
@@ -1276,7 +1447,6 @@ static zst_result_t el_start(zst_element_t* el) {
     return ZST_OK;
 }
 
-static zst_result_t el_stop(zst_element_t* el) { return el_close(el); }
 
 static zst_result_t el_set_prop(zst_element_t* el, const char* name,
                                  const char* value)
@@ -1336,8 +1506,10 @@ zst_element_t* zst_rtsp_server_create(void) {
 
     zst_element_t* el = zst_element_create(&g_ops, priv);
     if (!el) { pthread_mutex_destroy(&priv->lock); free(priv); return NULL; }
+    priv->self = el;
     return el;
 }
+
 
 zst_result_t zst_rtsp_server_add_session(zst_element_t* el, const char* name) {
     if (!el || !name || !*name) return ZST_ERROR;
@@ -1403,6 +1575,8 @@ zst_result_t zst_rtsp_server_remove_session(zst_element_t* el, const char* name)
         zst_pad_destroy(srv->sessions[i].video_pad);
         zst_pad_destroy(srv->sessions[i].audio_pad);
         free(srv->sessions[i].extra_data);
+        srv->sessions[i].extra_data = NULL;
+        srv->sessions[i].extra_size = 0;
         for (int j = i; j < srv->session_count - 1; j++)
             srv->sessions[j] = srv->sessions[j + 1];
         srv->session_count--;
@@ -1418,6 +1592,57 @@ int zst_rtsp_server_session_count(zst_element_t* el) {
     rtsp_server_priv_t* srv = el->priv;
     return srv ? srv->session_count : 0;
 }
+
+zst_result_t zst_rtsp_server_set_mount_callback(
+    zst_element_t* server,
+    zst_rtsp_server_mount_cb_t callback,
+    void* user_data)
+{
+    if (!server) return ZST_ERROR;
+    rtsp_server_priv_t* srv = server->priv;
+    if (!srv) return ZST_ERROR;
+
+    pthread_mutex_lock(&srv->lock);
+    srv->mount_callback = callback;
+    srv->mount_user_data = user_data;
+    pthread_mutex_unlock(&srv->lock);
+
+    return ZST_OK;
+}
+
+
+zst_result_t zst_rtsp_server_session_set_extradata(
+    zst_element_t* el,
+    const char* name,
+    const uint8_t* data,
+    int size)
+{
+    if (!el || !name || !data || size <= 0) return ZST_ERROR;
+    rtsp_server_priv_t* srv = el->priv;
+    if (!srv) return ZST_ERROR;
+
+    pthread_mutex_lock(&srv->lock);
+    for (int i = 0; i < srv->session_count; i++) {
+        if (strcmp(srv->sessions[i].name, name) != 0) continue;
+        /* Replace existing extradata */
+        free(srv->sessions[i].extra_data);
+        srv->sessions[i].extra_data = malloc(size);
+        if (!srv->sessions[i].extra_data) {
+            srv->sessions[i].extra_size = 0;
+            pthread_mutex_unlock(&srv->lock);
+            return ZST_ERROR;
+        }
+        memcpy(srv->sessions[i].extra_data, data, size);
+        srv->sessions[i].extra_size = size;
+        ZST_LOG_INFO("rtsp_server", "session /%s extradata set (%d bytes)", name, size);
+        pthread_mutex_unlock(&srv->lock);
+        return ZST_OK;
+    }
+    pthread_mutex_unlock(&srv->lock);
+    ZST_LOG_ERROR("rtsp_server", "session /%s not found for set_extradata", name);
+    return ZST_ERROR;
+}
+
 
 #ifdef BUILDING_PLUGIN
 #include "zst_plugin.h"
