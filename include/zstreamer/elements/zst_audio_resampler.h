@@ -11,6 +11,10 @@ extern "C" {
 
 #define ZST_AUDIO_RESAMPLER_FACTORY "audioresampler"
 
+#define ZST_AUDIO_RESAMPLER_PROP_SAMPLE_RATE "sample-rate"
+#define ZST_AUDIO_RESAMPLER_PROP_CHANNELS    "channels"
+#define ZST_AUDIO_RESAMPLER_PROP_FORMAT      "format"
+
 zst_element_t* zst_audio_resampler_create(int target_sample_rate, int target_channels, const char* target_format);
 
 #ifdef __cplusplus

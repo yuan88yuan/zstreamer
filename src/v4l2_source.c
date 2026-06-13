@@ -36,6 +36,9 @@ typedef struct {
     uint32_t nb_buffers;
 
     zst_buffer_pool_t* pool;
+
+    char            device[128];
+    char            pixel_format[32];
 } v4l2_source_t;
 
 static void
@@ -63,8 +66,9 @@ static zst_result_t
 v4l2_open(zst_element_t* el)
 {
     v4l2_source_t* s = el->priv;
-    s->width = 640;
-    s->height = 480;
+
+    if (s->width == 0)  s->width = 640;
+    if (s->height == 0) s->height = 480;
     s->frame_count = 0;
 
     zst_buffer_pool_config_t pool_cfg = {
@@ -75,7 +79,8 @@ v4l2_open(zst_element_t* el)
     };
     s->pool = zst_buffer_pool_create(NULL, &pool_cfg);
 
-    s->fd = open("/dev/video0", O_RDWR | O_NONBLOCK);
+    const char* dev_path = s->device[0] ? s->device : "/dev/video0";
+    s->fd = open(dev_path, O_RDWR | O_NONBLOCK);
     if (s->fd < 0) {
         ZST_LOG_WARN("v4l2src", "Failed to open /dev/video0. Falling back to synthetic source.");
         s->is_mock = 1;
@@ -318,6 +323,48 @@ element_get_pool(zst_element_t* el)
     return s->pool;
 }
 
+static zst_result_t
+v4l2_set_property(zst_element_t* el, const char* name, const char* value)
+{
+    v4l2_source_t* s = el->priv;
+    if (!name || !value) return ZST_ERROR;
+
+    if (strcmp(name, "device") == 0) {
+        snprintf(s->device, sizeof(s->device), "%s", value);
+        return ZST_OK;
+    } else if (strcmp(name, "width") == 0) {
+        s->width = atoi(value);
+        return ZST_OK;
+    } else if (strcmp(name, "height") == 0) {
+        s->height = atoi(value);
+        return ZST_OK;
+    } else if (strcmp(name, "pixel-format") == 0) {
+        snprintf(s->pixel_format, sizeof(s->pixel_format), "%s", value);
+        return ZST_OK;
+    }
+    return ZST_ERROR;
+}
+
+static zst_result_t
+v4l2_get_property(zst_element_t* el, const char* name, char* value_out, size_t max_len)
+{
+    v4l2_source_t* s = el->priv;
+    if (!name || !value_out || max_len == 0) return ZST_ERROR;
+
+    if (strcmp(name, "device") == 0) {
+        snprintf(value_out, max_len, "%s", s->device);
+    } else if (strcmp(name, "width") == 0) {
+        snprintf(value_out, max_len, "%u", s->width);
+    } else if (strcmp(name, "height") == 0) {
+        snprintf(value_out, max_len, "%u", s->height);
+    } else if (strcmp(name, "pixel-format") == 0) {
+        snprintf(value_out, max_len, "%s", s->pixel_format);
+    } else {
+        return ZST_ERROR;
+    }
+    return ZST_OK;
+}
+
 static zst_element_ops_t g_ops = {
     .name    = "v4l2src",
     .open    = v4l2_open,
@@ -325,6 +372,8 @@ static zst_element_ops_t g_ops = {
     .start   = v4l2_start,
     .stop    = v4l2_stop,
     .process = v4l2_process,
+    .set_property = v4l2_set_property,
+    .get_property = v4l2_get_property,
     .get_pool = element_get_pool
 };
 

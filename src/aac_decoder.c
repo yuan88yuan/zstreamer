@@ -32,6 +32,8 @@ typedef struct {
     size_t          buffer_size;
     zst_pad_t*      sinkpad;
     zst_pad_t*      srcpad;
+
+    int             threads;
 } aac_decoder_t;
 
 static const char*
@@ -86,6 +88,7 @@ aacdec_open(zst_element_t* el)
     s->format = AV_SAMPLE_FMT_NONE;
     s->nb_samples = 0;
     s->buffer_size = 0;
+    s->threads = 0; /* auto */
     return ZST_OK;
 }
 
@@ -117,6 +120,12 @@ aacdec_init_decoder(aac_decoder_t* s)
 
     s->codec_ctx = avcodec_alloc_context3(codec);
     if (!s->codec_ctx) return ZST_ERROR;
+
+    if (s->threads > 0) {
+        s->codec_ctx->thread_count = s->threads;
+    } else {
+        s->codec_ctx->thread_count = 0; /* auto-detect */
+    }
 
     if (avcodec_open2(s->codec_ctx, codec, NULL) < 0) {
         avcodec_free_context(&s->codec_ctx);
@@ -407,12 +416,42 @@ element_get_pool(zst_element_t* el)
     return s->pool;
 }
 
+static zst_result_t
+aacdec_set_property(zst_element_t* el, const char* name, const char* value)
+{
+    aac_decoder_t* s = el->priv;
+    if (!name || !value) return ZST_ERROR;
+
+    if (strcmp(name, "threads") == 0) {
+        s->threads = atoi(value);
+        if (s->threads < 0) s->threads = 0;
+        return ZST_OK;
+    }
+    return ZST_ERROR;
+}
+
+static zst_result_t
+aacdec_get_property(zst_element_t* el, const char* name, char* value_out, size_t max_len)
+{
+    aac_decoder_t* s = el->priv;
+    if (!name || !value_out || max_len == 0) return ZST_ERROR;
+
+    if (strcmp(name, "threads") == 0) {
+        snprintf(value_out, max_len, "%d", s->threads);
+    } else {
+        return ZST_ERROR;
+    }
+    return ZST_OK;
+}
+
 static zst_element_ops_t g_ops = {
     .name     = "aacdec",
     .open     = aacdec_open,
     .close    = aacdec_close,
     .process  = aacdec_process,
     .get_caps = aacdec_get_caps,
+    .set_property = aacdec_set_property,
+    .get_property = aacdec_get_property,
     .get_pool = element_get_pool
 };
 

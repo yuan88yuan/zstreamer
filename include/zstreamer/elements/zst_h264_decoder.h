@@ -11,6 +11,8 @@ extern "C" {
 
 #define ZST_H264_DECODER_FACTORY "h264dec"
 
+#define ZST_H264_DECODER_PROP_THREADS  "threads"
+
 zst_element_t* zst_h264_decoder_create(void);
 
 #ifdef __cplusplus

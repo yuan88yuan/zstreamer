@@ -11,6 +11,8 @@ extern "C" {
 
 #define ZST_AAC_DECODER_FACTORY "aacdec"
 
+#define ZST_AAC_DECODER_PROP_THREADS  "threads"
+
 zst_element_t* zst_aac_decoder_create(void);
 
 #ifdef __cplusplus

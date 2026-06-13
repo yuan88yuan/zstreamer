@@ -26,6 +26,8 @@ zst_allocator_t* zst_allocator_dmabuf_create(void);
 
 zst_allocator_t* zst_allocator_vulkan_create(void);
 
+zst_allocator_t* zst_allocator_cuda_create(void);
+
 void* zst_allocator_dmabuf_import(zst_allocator_t* allocator, int fd, size_t size);
 
 int zst_allocator_dmabuf_get_fd(zst_allocator_t* allocator, void* ptr);

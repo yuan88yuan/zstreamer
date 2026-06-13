@@ -444,12 +444,53 @@ element_get_pool(zst_element_t* el)
     return s->pool;
 }
 
+static zst_result_t
+scaler_set_property(zst_element_t* el, const char* name, const char* value)
+{
+    video_scaler_t* s = el->priv;
+    if (!name || !value) return ZST_ERROR;
+
+    if (strcmp(name, "width") == 0) {
+        s->target_width = atoi(value);
+        if (s->target_width < 0) s->target_width = 0;
+        return ZST_OK;
+    } else if (strcmp(name, "height") == 0) {
+        s->target_height = atoi(value);
+        if (s->target_height < 0) s->target_height = 0;
+        return ZST_OK;
+    } else if (strcmp(name, "pixel-format") == 0) {
+        snprintf(s->target_pixel_format, sizeof(s->target_pixel_format), "%s", value);
+        return ZST_OK;
+    }
+    return ZST_ERROR;
+}
+
+static zst_result_t
+scaler_get_property(zst_element_t* el, const char* name, char* value_out, size_t max_len)
+{
+    video_scaler_t* s = el->priv;
+    if (!name || !value_out || max_len == 0) return ZST_ERROR;
+
+    if (strcmp(name, "width") == 0) {
+        snprintf(value_out, max_len, "%d", s->target_width);
+    } else if (strcmp(name, "height") == 0) {
+        snprintf(value_out, max_len, "%d", s->target_height);
+    } else if (strcmp(name, "pixel-format") == 0) {
+        snprintf(value_out, max_len, "%s", s->target_pixel_format);
+    } else {
+        return ZST_ERROR;
+    }
+    return ZST_OK;
+}
+
 static zst_element_ops_t g_ops = {
     .name     = "videoscaler",
     .open     = scaler_open,
     .close    = scaler_close,
     .process  = scaler_process,
     .get_caps = scaler_get_caps,
+    .set_property = scaler_set_property,
+    .get_property = scaler_get_property,
     .get_pool = element_get_pool
 };
 

@@ -491,12 +491,53 @@ element_get_pool(zst_element_t* el)
     return s->pool;
 }
 
+static zst_result_t
+resampler_set_property(zst_element_t* el, const char* name, const char* value)
+{
+    audio_resampler_t* s = el->priv;
+    if (!name || !value) return ZST_ERROR;
+
+    if (strcmp(name, "sample-rate") == 0) {
+        s->target_sample_rate = atoi(value);
+        if (s->target_sample_rate < 0) s->target_sample_rate = 0;
+        return ZST_OK;
+    } else if (strcmp(name, "channels") == 0) {
+        s->target_channels = atoi(value);
+        if (s->target_channels < 0) s->target_channels = 0;
+        return ZST_OK;
+    } else if (strcmp(name, "format") == 0) {
+        snprintf(s->target_format, sizeof(s->target_format), "%s", value);
+        return ZST_OK;
+    }
+    return ZST_ERROR;
+}
+
+static zst_result_t
+resampler_get_property(zst_element_t* el, const char* name, char* value_out, size_t max_len)
+{
+    audio_resampler_t* s = el->priv;
+    if (!name || !value_out || max_len == 0) return ZST_ERROR;
+
+    if (strcmp(name, "sample-rate") == 0) {
+        snprintf(value_out, max_len, "%d", s->target_sample_rate);
+    } else if (strcmp(name, "channels") == 0) {
+        snprintf(value_out, max_len, "%d", s->target_channels);
+    } else if (strcmp(name, "format") == 0) {
+        snprintf(value_out, max_len, "%s", s->target_format);
+    } else {
+        return ZST_ERROR;
+    }
+    return ZST_OK;
+}
+
 static zst_element_ops_t g_ops = {
     .name     = "audioresampler",
     .open     = resampler_open,
     .close    = resampler_close,
     .process  = resampler_process,
     .get_caps = resampler_get_caps,
+    .set_property = resampler_set_property,
+    .get_property = resampler_get_property,
     .get_pool = element_get_pool
 };
 

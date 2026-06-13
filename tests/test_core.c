@@ -515,6 +515,31 @@ test_queue_push_pop(void)
 }
 
 static void
+test_cuda_allocator(void)
+{
+    TEST("cuda allocator");
+    zst_allocator_t* alloc = zst_allocator_cuda_create();
+
+#ifdef HAS_CUDA
+    assert(NULL != alloc);
+    size_t size = 4096;
+    void* ptr = zst_allocator_alloc(alloc, size);
+
+    /* In CI/Docker environments, cudaMalloc may return cudaErrorNoDevice.
+       If ptr is not NULL, we free it. If it is NULL, it means no device is available,
+       which is a valid return path. */
+    if (ptr != NULL) {
+        zst_allocator_free(alloc, ptr);
+    }
+
+    zst_allocator_unref(alloc);
+#else
+    assert(NULL == alloc);
+#endif
+    PASS();
+}
+
+static void
 test_queue_timeout(void)
 {
     TEST("queue timeout");
@@ -3796,6 +3821,7 @@ test_allocator_pool_drain(void)
 static void
 test_dmabuf_allocator(void)
 {
+    TEST("dmabuf allocator");
     zst_allocator_t* alloc = zst_allocator_dmabuf_create();
     assert(NULL != alloc);
 
@@ -5691,9 +5717,10 @@ int main(void)
     printf("[allocator pool advanced]\n");
     test_allocator_pool_drain();
     test_allocator_pool_config();
-    test_pipeline_zero_malloc_integration();
     test_dmabuf_allocator();
     test_vulkan_allocator();
+    test_cuda_allocator();
+    test_pipeline_zero_malloc_integration();
 
     /* ── Clock (Phase 8b) ── */
     printf("[clock]\n");

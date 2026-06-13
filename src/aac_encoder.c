@@ -21,6 +21,8 @@ typedef struct {
     int             flushing;
     int             flush_done;
     zst_buffer_pool_t* pool;
+
+    int             bitrate;
 } aac_encoder_t;
 
 static zst_result_t
@@ -35,6 +37,7 @@ aac_open(zst_element_t* el)
     s->flushing = 0;
     s->flush_done = 0;
     s->pool = NULL;
+    s->bitrate = 128000;
     return ZST_OK;
 }
 
@@ -80,7 +83,7 @@ aac_init_encoder(aac_encoder_t* s, const zst_audio_frame_t* in_frame)
     s->codec_ctx->channels = s->channels;
     s->codec_ctx->channel_layout = s->channels == 1 ? AV_CH_LAYOUT_MONO : AV_CH_LAYOUT_STEREO;
 #endif
-    s->codec_ctx->bit_rate = 128000;
+    s->codec_ctx->bit_rate = s->bitrate > 0 ? s->bitrate : 128000;
 
     if (avcodec_open2(s->codec_ctx, codec, NULL) < 0) {
         avcodec_free_context(&s->codec_ctx);
@@ -248,11 +251,57 @@ element_get_pool(zst_element_t* el)
     return s->pool;
 }
 
+static zst_result_t
+aac_set_property(zst_element_t* el, const char* name, const char* value)
+{
+    aac_encoder_t* s = el->priv;
+    if (!name || !value) return ZST_ERROR;
+    if (s->initialized) return ZST_ERROR;
+
+    if (strcmp(name, "bitrate") == 0) {
+        s->bitrate = atoi(value);
+        if (s->bitrate < 8000) s->bitrate = 8000;
+        if (s->bitrate > 512000) s->bitrate = 512000;
+        return ZST_OK;
+    } else if (strcmp(name, "sample-rate") == 0) {
+        s->sample_rate = atoi(value);
+        if (s->sample_rate < 8000) s->sample_rate = 8000;
+        if (s->sample_rate > 192000) s->sample_rate = 192000;
+        return ZST_OK;
+    } else if (strcmp(name, "channels") == 0) {
+        s->channels = atoi(value);
+        if (s->channels < 1) s->channels = 1;
+        if (s->channels > 2) s->channels = 2;
+        return ZST_OK;
+    }
+    return ZST_ERROR;
+}
+
+static zst_result_t
+aac_get_property(zst_element_t* el, const char* name, char* value_out, size_t max_len)
+{
+    aac_encoder_t* s = el->priv;
+    if (!name || !value_out || max_len == 0) return ZST_ERROR;
+
+    if (strcmp(name, "bitrate") == 0) {
+        snprintf(value_out, max_len, "%d", s->bitrate);
+    } else if (strcmp(name, "sample-rate") == 0) {
+        snprintf(value_out, max_len, "%d", s->sample_rate);
+    } else if (strcmp(name, "channels") == 0) {
+        snprintf(value_out, max_len, "%d", s->channels);
+    } else {
+        return ZST_ERROR;
+    }
+    return ZST_OK;
+}
+
 static zst_element_ops_t g_ops = {
     .name    = "aacenc",
     .open    = aac_open,
     .close   = aac_close,
     .process = aac_process,
+    .set_property = aac_set_property,
+    .get_property = aac_get_property,
     .get_pool = element_get_pool
 };
 

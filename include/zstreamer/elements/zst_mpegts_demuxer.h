@@ -11,7 +11,6 @@ extern "C" {
 
 #define ZST_MPEGTS_DEMUXER_FACTORY "tsdemux"
 
-#define ZST_MPEGTS_DEMUX_PROP_LOCATION           "location"
 #define ZST_MPEGTS_DEMUXER_PROP_LOCATION     "location"
 
 typedef struct {

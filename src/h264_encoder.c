@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <x264.h>
 
 #include "zst_element.h"
@@ -21,6 +22,17 @@ typedef struct {
     uint32_t        height;
     int             initialized;
     zst_buffer_pool_t* pool;
+
+    char            preset[32];
+    char            tune[32];
+    char            profile[32];
+    char            level[16];
+    double          crf;
+    int64_t         bitrate;
+    int             gop_size;
+    int             keyint_min;
+    int             fps_num;
+    int             fps_den;
 } h264_encoder_t;
 
 static zst_result_t
@@ -31,6 +43,24 @@ h264_open(zst_element_t* el)
     s->x264 = NULL;
     s->pool = NULL;
     return ZST_OK;
+}
+
+static int
+h264_is_config_property(const char* name)
+{
+    if (!name) return 0;
+    return strcmp(name, "preset") == 0 ||
+           strcmp(name, "tune") == 0 ||
+           strcmp(name, "crf") == 0 ||
+           strcmp(name, "bitrate") == 0 ||
+           strcmp(name, "gop-size") == 0 ||
+           strcmp(name, "gop") == 0 ||
+           strcmp(name, "keyint") == 0 ||
+           strcmp(name, "keyframe-interval") == 0 ||
+           strcmp(name, "keyint-min") == 0 ||
+           strcmp(name, "profile") == 0 ||
+           strcmp(name, "level") == 0 ||
+           strcmp(name, "fps") == 0;
 }
 
 static zst_result_t
@@ -56,8 +86,10 @@ h264_init_encoder(h264_encoder_t* s, uint32_t width, uint32_t height)
     s->width = width;
     s->height = height;
 
-    /* Preset ultrafast, tune zerolatency */
-    if (x264_param_default_preset(&s->param, "ultrafast", "zerolatency") < 0) {
+    /* Use user-configured preset and tune, fall back to defaults */
+    const char* preset = s->preset[0] ? s->preset : "ultrafast";
+    const char* tune   = s->tune[0]   ? s->tune   : "zerolatency";
+    if (x264_param_default_preset(&s->param, preset, tune) < 0) {
         return ZST_ERROR;
     }
 
@@ -67,15 +99,31 @@ h264_init_encoder(h264_encoder_t* s, uint32_t width, uint32_t height)
     s->param.b_vfr_input = 0;
     s->param.b_annexb = 1;
     s->param.b_repeat_headers = 1;
-    s->param.i_fps_num = 30;
-    s->param.i_fps_den = 1;
-    
-    /* Rate control: CRF 23 */
-    s->param.rc.i_rc_method = X264_RC_CRF;
-    s->param.rc.f_rf_constant = 23.0;
 
-    /* Apply profile high */
-    if (x264_param_apply_profile(&s->param, "high") < 0) {
+    /* Use configured framerate, default 30/1 */
+    s->param.i_fps_num = s->fps_num > 0 ? s->fps_num : 30;
+    s->param.i_fps_den = s->fps_den > 0 ? s->fps_den : 1;
+    
+    /* Rate control: prefer CRF if bitrate not set, else ABR */
+    if (s->bitrate > 0) {
+        s->param.rc.i_rc_method = X264_RC_ABR;
+        s->param.rc.i_bitrate = (int)(s->bitrate / 1000);
+    } else {
+        s->param.rc.i_rc_method = X264_RC_CRF;
+        s->param.rc.f_rf_constant = (s->crf > 0.0) ? s->crf : 23.0;
+    }
+
+    /* GOP / keyint configuration */
+    if (s->gop_size > 0) {
+        s->param.i_keyint_max = s->gop_size;
+    }
+    if (s->keyint_min > 0) {
+        s->param.i_keyint_min = s->keyint_min;
+    }
+
+    /* Apply configured profile, default "high" */
+    const char* profile = s->profile[0] ? s->profile : "high";
+    if (x264_param_apply_profile(&s->param, profile) < 0) {
         return ZST_ERROR;
     }
 
@@ -197,6 +245,88 @@ h264_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
 }
 
 
+static zst_result_t
+h264_set_property(zst_element_t* el, const char* name, const char* value)
+{
+    h264_encoder_t* s = el->priv;
+    if (!name || !value) return ZST_ERROR;
+    if (s->initialized && h264_is_config_property(name)) return ZST_ERROR;
+
+    if (strcmp(name, "preset") == 0) {
+        snprintf(s->preset, sizeof(s->preset), "%s", value);
+        return ZST_OK;
+    } else if (strcmp(name, "tune") == 0) {
+        snprintf(s->tune, sizeof(s->tune), "%s", value);
+        return ZST_OK;
+    } else if (strcmp(name, "crf") == 0) {
+        s->crf = atof(value);
+        if (s->crf < 0.0) s->crf = 0.0;
+        if (s->crf > 51.0) s->crf = 51.0;
+        return ZST_OK;
+    } else if (strcmp(name, "bitrate") == 0) {
+        s->bitrate = atoll(value);
+        if (s->bitrate < 0) s->bitrate = 0;
+        return ZST_OK;
+    } else if (strcmp(name, "gop-size") == 0 || strcmp(name, "gop") == 0 ||
+               strcmp(name, "keyint") == 0 || strcmp(name, "keyframe-interval") == 0) {
+        s->gop_size = atoi(value);
+        if (s->gop_size < 1) s->gop_size = 1;
+        return ZST_OK;
+    } else if (strcmp(name, "keyint-min") == 0) {
+        s->keyint_min = atoi(value);
+        if (s->keyint_min < 1) s->keyint_min = 1;
+        return ZST_OK;
+    } else if (strcmp(name, "profile") == 0) {
+        snprintf(s->profile, sizeof(s->profile), "%s", value);
+        return ZST_OK;
+    } else if (strcmp(name, "level") == 0) {
+        snprintf(s->level, sizeof(s->level), "%s", value);
+        return ZST_OK;
+    } else if (strcmp(name, "fps") == 0) {
+        int num = 0, den = 1;
+        if (sscanf(value, "%d/%d", &num, &den) >= 1 && num > 0) {
+            s->fps_num = num;
+            s->fps_den = den > 0 ? den : 1;
+        } else {
+            s->fps_num = atoi(value);
+            s->fps_den = 1;
+        }
+        return ZST_OK;
+    }
+    return ZST_ERROR;
+}
+
+static zst_result_t
+h264_get_property(zst_element_t* el, const char* name, char* value_out, size_t max_len)
+{
+    h264_encoder_t* s = el->priv;
+    if (!name || !value_out || max_len == 0) return ZST_ERROR;
+
+    if (strcmp(name, "preset") == 0) {
+        snprintf(value_out, max_len, "%s", s->preset);
+    } else if (strcmp(name, "tune") == 0) {
+        snprintf(value_out, max_len, "%s", s->tune);
+    } else if (strcmp(name, "crf") == 0) {
+        snprintf(value_out, max_len, "%.3f", s->crf);
+    } else if (strcmp(name, "bitrate") == 0) {
+        snprintf(value_out, max_len, "%" PRId64, s->bitrate);
+    } else if (strcmp(name, "gop-size") == 0 || strcmp(name, "gop") == 0 ||
+               strcmp(name, "keyint") == 0 || strcmp(name, "keyframe-interval") == 0) {
+        snprintf(value_out, max_len, "%d", s->gop_size);
+    } else if (strcmp(name, "keyint-min") == 0) {
+        snprintf(value_out, max_len, "%d", s->keyint_min);
+    } else if (strcmp(name, "profile") == 0) {
+        snprintf(value_out, max_len, "%s", s->profile);
+    } else if (strcmp(name, "level") == 0) {
+        snprintf(value_out, max_len, "%s", s->level);
+    } else if (strcmp(name, "fps") == 0) {
+        snprintf(value_out, max_len, "%d/%d", s->fps_num, s->fps_den);
+    } else {
+        return ZST_ERROR;
+    }
+    return ZST_OK;
+}
+
 static zst_buffer_pool_t*
 element_get_pool(zst_element_t* el)
 {
@@ -209,6 +339,8 @@ static zst_element_ops_t g_ops = {
     .open    = h264_open,
     .close   = h264_close,
     .process = h264_process,
+    .set_property = h264_set_property,
+    .get_property = h264_get_property,
     .get_pool = element_get_pool
 };
 

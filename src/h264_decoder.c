@@ -26,6 +26,8 @@ typedef struct {
     int             format;
     zst_pad_t*      sinkpad;
     zst_pad_t*      srcpad;
+
+    int             threads;
 } h264_decoder_t;
 
 static const char*
@@ -130,6 +132,7 @@ h264_open(zst_element_t* el)
     s->width = 0;
     s->height = 0;
     s->format = AV_PIX_FMT_NONE;
+    s->threads = 0; /* auto */
     return ZST_OK;
 }
 
@@ -161,6 +164,12 @@ h264_init_decoder(h264_decoder_t* s)
 
     s->codec_ctx = avcodec_alloc_context3(codec);
     if (!s->codec_ctx) return ZST_ERROR;
+
+    if (s->threads > 0) {
+        s->codec_ctx->thread_count = s->threads;
+    } else {
+        s->codec_ctx->thread_count = 0; /* auto-detect */
+    }
 
     if (avcodec_open2(s->codec_ctx, codec, NULL) < 0) {
         avcodec_free_context(&s->codec_ctx);
@@ -398,12 +407,42 @@ element_get_pool(zst_element_t* el)
     return s->pool;
 }
 
+static zst_result_t
+h264_dec_set_property(zst_element_t* el, const char* name, const char* value)
+{
+    h264_decoder_t* s = el->priv;
+    if (!name || !value) return ZST_ERROR;
+
+    if (strcmp(name, "threads") == 0) {
+        s->threads = atoi(value);
+        if (s->threads < 0) s->threads = 0;
+        return ZST_OK;
+    }
+    return ZST_ERROR;
+}
+
+static zst_result_t
+h264_dec_get_property(zst_element_t* el, const char* name, char* value_out, size_t max_len)
+{
+    h264_decoder_t* s = el->priv;
+    if (!name || !value_out || max_len == 0) return ZST_ERROR;
+
+    if (strcmp(name, "threads") == 0) {
+        snprintf(value_out, max_len, "%d", s->threads);
+    } else {
+        return ZST_ERROR;
+    }
+    return ZST_OK;
+}
+
 static zst_element_ops_t g_ops = {
     .name     = "h264dec",
     .open     = h264_open,
     .close    = h264_close,
     .process  = h264_process,
     .get_caps = h264_get_caps,
+    .set_property = h264_dec_set_property,
+    .get_property = h264_dec_get_property,
     .get_pool = element_get_pool
 };
 

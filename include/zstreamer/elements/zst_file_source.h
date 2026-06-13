@@ -11,11 +11,6 @@ extern "C" {
 
 #define ZST_FILE_SOURCE_FACTORY          "filesrc"
 
-#define ZST_FILE_SRC_PROP_PATH                   "path"
-#define ZST_FILE_SRC_PROP_CHUNK_SIZE             "chunk-size"
-#define ZST_FILE_SRC_PROP_LOOP                   "loop"
-#define ZST_FILE_SRC_PROP_OFFSET                 "offset"
-#define ZST_FILE_SRC_PROP_LENGTH                 "length"
 #define ZST_FILE_SOURCE_PROP_PATH       "path"
 #define ZST_FILE_SOURCE_PROP_CHUNK_SIZE "chunk-size"
 #define ZST_FILE_SOURCE_PROP_LOOP       "loop"

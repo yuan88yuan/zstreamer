@@ -22,6 +22,8 @@ typedef struct {
     uint32_t        channels;
 
     zst_buffer_pool_t* pool;
+
+    char            device[128];
 } alsa_source_t;
 
 static void
@@ -40,8 +42,9 @@ static zst_result_t
 alsa_open(zst_element_t* el)
 {
     alsa_source_t* s = el->priv;
-    s->sample_rate = 44100;
-    s->channels = 2;
+
+    if (s->sample_rate == 0) s->sample_rate = 44100;
+    if (s->channels == 0)    s->channels = 2;
     s->sample_count = 0;
     s->handle = NULL;
 
@@ -53,7 +56,8 @@ alsa_open(zst_element_t* el)
     };
     s->pool = zst_buffer_pool_create(NULL, &pool_cfg);
 
-    int err = snd_pcm_open(&s->handle, "default", SND_PCM_STREAM_CAPTURE, 0);
+    const char* dev_name = s->device[0] ? s->device : "default";
+    int err = snd_pcm_open(&s->handle, dev_name, SND_PCM_STREAM_CAPTURE, 0);
     if (err < 0) {
         ZST_LOG_WARN("alsasrc", "Failed to open default ALSA capture device: %s. Falling back to synthetic source.", snd_strerror(err));
         s->is_mock = 1;
@@ -226,6 +230,47 @@ element_get_pool(zst_element_t* el)
     return s->pool;
 }
 
+static zst_result_t
+alsa_set_property(zst_element_t* el, const char* name, const char* value)
+{
+    alsa_source_t* s = el->priv;
+    if (!name || !value) return ZST_ERROR;
+
+    if (strcmp(name, "device") == 0) {
+        snprintf(s->device, sizeof(s->device), "%s", value);
+        return ZST_OK;
+    } else if (strcmp(name, "sample-rate") == 0) {
+        s->sample_rate = atoi(value);
+        if (s->sample_rate < 8000) s->sample_rate = 8000;
+        if (s->sample_rate > 192000) s->sample_rate = 192000;
+        return ZST_OK;
+    } else if (strcmp(name, "channels") == 0) {
+        s->channels = atoi(value);
+        if (s->channels < 1) s->channels = 1;
+        if (s->channels > 2) s->channels = 2;
+        return ZST_OK;
+    }
+    return ZST_ERROR;
+}
+
+static zst_result_t
+alsa_get_property(zst_element_t* el, const char* name, char* value_out, size_t max_len)
+{
+    alsa_source_t* s = el->priv;
+    if (!name || !value_out || max_len == 0) return ZST_ERROR;
+
+    if (strcmp(name, "device") == 0) {
+        snprintf(value_out, max_len, "%s", s->device);
+    } else if (strcmp(name, "sample-rate") == 0) {
+        snprintf(value_out, max_len, "%u", s->sample_rate);
+    } else if (strcmp(name, "channels") == 0) {
+        snprintf(value_out, max_len, "%u", s->channels);
+    } else {
+        return ZST_ERROR;
+    }
+    return ZST_OK;
+}
+
 static zst_element_ops_t g_ops = {
     .name          = "alsasrc",
     .open          = alsa_open,
@@ -233,6 +278,8 @@ static zst_element_ops_t g_ops = {
     .start         = alsa_start,
     .process       = alsa_process,
     .provide_clock = alsa_provide_clock,
+    .set_property  = alsa_set_property,
+    .get_property  = alsa_get_property,
     .get_pool = element_get_pool
 };
 
