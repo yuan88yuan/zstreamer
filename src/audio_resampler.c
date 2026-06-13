@@ -483,12 +483,21 @@ resampler_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     return ZST_OK;
 }
 
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    audio_resampler_t* s = el->priv;
+    return s->pool;
+}
+
 static zst_element_ops_t g_ops = {
     .name     = "audioresampler",
     .open     = resampler_open,
     .close    = resampler_close,
     .process  = resampler_process,
     .get_caps = resampler_get_caps,
+    .get_pool = element_get_pool
 };
 
 zst_element_t*
@@ -530,6 +539,26 @@ plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_pad_template_t g_audioresampler_pads[] = {
+    { "sink", ZST_PAD_SINK, "audio/x-raw" },
+    { "src", ZST_PAD_SRC, "audio/x-raw" }
+};
+
+static const zst_element_desc_t g_audioresampler_elements[] = {
+    {
+        .name = "audioresampler",
+        .long_name = "Audio Resampler",
+        .category = "Filter/Audio",
+        .description = "Converts audio sample rate, channels, or format",
+        .author = "zstreamer",
+        .properties = NULL,
+        .nb_properties = 0,
+        .pads = g_audioresampler_pads,
+        .nb_pads = sizeof(g_audioresampler_pads) / sizeof(g_audioresampler_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "audioresampler_plugin",
@@ -540,6 +569,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create_element
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_audioresampler_elements) / sizeof(g_audioresampler_elements[0]);
+    }
+    return g_audioresampler_elements;
+}
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t*

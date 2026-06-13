@@ -539,6 +539,14 @@ net_source_get_property(zst_element_t* el, const char* name, char* value_out, si
     return ZST_ERROR;
 }
 
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    net_source_t* s = el->priv;
+    return s->pool;
+}
+
 static zst_element_ops_t g_ops = {
     .name = "netsrc",
     .open = net_source_open,
@@ -549,6 +557,7 @@ static zst_element_ops_t g_ops = {
     .get_caps = net_source_get_caps,
     .set_property = net_source_set_property,
     .get_property = net_source_get_property,
+    .get_pool = element_get_pool
 };
 
 zst_element_t*
@@ -590,6 +599,34 @@ plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_property_spec_t g_netsrc_properties[] = {
+    { "host", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "127.0.0.1", "Network host to bind or connect to" },
+    { "port", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5000", "Network port" },
+    { "protocol", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "tcp", "Network protocol (tcp, udp, unix, tcp-server, unix-server)" },
+    { "path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Unix domain socket path" },
+    { "chunk-size", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "4096", "Chunk size in bytes to read at a time" },
+    { "read-timeout", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1000", "Read timeout in milliseconds" }
+};
+
+static const zst_pad_template_t g_netsrc_pads[] = {
+    { "src", ZST_PAD_SRC, "application/octet-stream" }
+};
+
+static const zst_element_desc_t g_netsrc_elements[] = {
+    {
+        .name = "netsrc",
+        .long_name = "Network Source",
+        .category = "Source/Network",
+        .description = "Receives buffers from TCP/UDP or Unix sockets",
+        .author = "zstreamer",
+        .properties = g_netsrc_properties,
+        .nb_properties = sizeof(g_netsrc_properties) / sizeof(g_netsrc_properties[0]),
+        .pads = g_netsrc_pads,
+        .nb_pads = sizeof(g_netsrc_pads) / sizeof(g_netsrc_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "netsrc_plugin",
@@ -600,6 +637,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create_element
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_netsrc_elements) / sizeof(g_netsrc_elements[0]);
+    }
+    return g_netsrc_elements;
+}
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t*

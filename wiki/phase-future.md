@@ -7,7 +7,7 @@
 - [ ] Caps negotiation fuzzing
 - [ ] Event bus stress test
 - [ ] Queue element stress test
-- [ ] Clock precision test
+- [x] Clock precision test
 - [ ] Static analysis: `cppcheck`, `clang-tidy`
 - [ ] Valgrind memory leak checks in CI
 

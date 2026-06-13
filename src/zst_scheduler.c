@@ -100,8 +100,21 @@ worker_loop(void* arg)
                     if (ret == ZST_OK && out_buf) {
                         activity = 1;
                         if (el->nb_src_pads > 0) {
+                            /* Clock-sync mode: wait until PTS is reached before delivering */
+                            if (pipe->clock_sync && el->clock && out_buf->pts > 0
+                                && !(out_buf->flags & (ZST_BUFFER_FLAG_EOS | ZST_BUFFER_FLAG_DROP))) {
+                                zst_time_t current = zst_clock_get_time(el->clock);
+                                if (out_buf->pts > current + 5000000ULL) {
+                                    zst_clock_wait(el->clock, out_buf->pts - current);
+                                }
+                            }
                             zst_pad_push(el->src_pads[0], out_buf);
                             zst_buffer_unref(out_buf);
+                            /* Downstream elements can lazily create pools while
+                             * processing the pushed buffer. Re-apply topology
+                             * sizing so those late pools are fixed before the
+                             * next buffer burst. */
+                            zst_pipeline_update_buffer_pool_sizing(pipe);
                         }
                     } else if (ret == ZST_EOF) {
                         // Propagate EOS
@@ -110,6 +123,8 @@ worker_loop(void* arg)
                             eos_buf->flags |= ZST_BUFFER_FLAG_EOS;
                             if (el->nb_src_pads > 0) {
                                 zst_pad_push(el->src_pads[0], eos_buf);
+                            } else if (el->bus) {
+                                zst_bus_post(el->bus, zst_event_new_eos(el));
                             }
                             zst_buffer_unref(eos_buf);
                         }
@@ -149,6 +164,7 @@ zst_scheduler_run(zst_scheduler_t* sched)
 
     if (sched->pipeline) {
         zst_pipeline_topological_sort(sched->pipeline);
+        zst_pipeline_update_buffer_pool_sizing(sched->pipeline);
     }
 
     __atomic_store_n(&p->running, 1, __ATOMIC_RELEASE);

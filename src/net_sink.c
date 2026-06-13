@@ -556,6 +556,33 @@ plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_property_spec_t g_netsink_properties[] = {
+    { "host", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "127.0.0.1", "Network host to connect to or listen on" },
+    { "port", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5000", "Network port" },
+    { "protocol", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "tcp", "Network protocol (tcp, udp, unix, tcp-server, unix-server)" },
+    { "path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Unix domain socket path" },
+    { "write-timeout", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1000", "Write timeout in milliseconds" }
+};
+
+static const zst_pad_template_t g_netsink_pads[] = {
+    { "sink", ZST_PAD_SINK, "application/octet-stream" }
+};
+
+static const zst_element_desc_t g_netsink_elements[] = {
+    {
+        .name = "netsink",
+        .long_name = "Network Sink",
+        .category = "Sink/Network",
+        .description = "Sends buffers to TCP/UDP or Unix sockets",
+        .author = "zstreamer",
+        .properties = g_netsink_properties,
+        .nb_properties = sizeof(g_netsink_properties) / sizeof(g_netsink_properties[0]),
+        .pads = g_netsink_pads,
+        .nb_pads = sizeof(g_netsink_pads) / sizeof(g_netsink_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "netsink_plugin",
@@ -566,6 +593,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create_element
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_netsink_elements) / sizeof(g_netsink_elements[0]);
+    }
+    return g_netsink_elements;
+}
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t*

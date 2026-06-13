@@ -21,8 +21,10 @@ It provides a **GStreamer-like** pipeline architecture: elements connected via p
 ├── include/           ← Public API headers
 │   ├── zst_types.h        ← Base types, result codes, struct forward decls
 │   ├── zst_buffer.h       ← Reference-counted buffer + typed memory
-│   ├── zst_pad.h          ← SRC/SINK connection pads
+│   ├── zst_pad.h          ← SRC/SINK connection pads + probes/blocking/segments
 │   ├── zst_element.h      ← Element ops vtable + state machine
+│   ├── zst_bin.h          ← Composite element bins + ghost pads
+│   ├── zst_segment.h      ← Segment seeking/clipping API
 │   ├── zst_pipeline.h     ← Element container with state propagation
 │   ├── zst_queue.h        ← Thread-safe bounded buffer queue
 │   ├── zst_scheduler.h    ← Single / multi-thread pipeline driver
@@ -44,6 +46,7 @@ It provides a **GStreamer-like** pipeline architecture: elements connected via p
 │   ├── zst_pipeline.c
 │   ├── zst_queue.c
 │   ├── zst_queue_element.c ← First-class queue element
+│   ├── zst_bin.c          ← Element bins + ghost pads
 │   ├── zst_scheduler.c
 │   ├── zst_log.c          ← Logging implementation
 │   ├── zst_plugin.c
@@ -73,9 +76,12 @@ It provides a **GStreamer-like** pipeline architecture: elements connected via p
 │   ├── net_sink.c         ← TCP/UDP network sink (raw bytes)
 │   ├── rtsp_source.c      ← RTSP client source (TCP interleaved + UDP)
 │   ├── rtsp_sink.c        ← RTSP client sink
-│   └── rtsp_server.c      ← Multi-session RTSP server (TCP interleaved + UDP)
+│   ├── rtsp_server.c      ← Multi-session RTSP server (TCP interleaved + UDP)
+│   ├── rtmp_source.c      ← RTMP source (FLV demux)
+│   ├── rtmp_sink.c        ← RTMP sink (FLV mux/publish)
+│   └── mp4_demuxer.c      ← FFmpeg libavformat MP4 demuxer
 ├── tests/
-│   ├── test_core.c    ← 35 unit tests: core + scheduler + queue + caps + bus + plugins + log + scaler + resampler
+│   ├── test_core.c    ← 62 unit tests: core + scheduler + queue + caps + bus + plugins + log + conversion + codecs + advanced features
 │   └── example_record.c ← Full pipeline demo with queue elements
 └── wiki/
     ├── architecture.md        ← Detailed design doc
@@ -141,18 +147,20 @@ The Dockerfile has two build targets:
 | Component      | Role                                                  |
 |----------------|-------------------------------------------------------|
 | **zst_pipeline**| Container of elements; propagates state to all        |
+| **zst_bin**     | Composite element container with ghost pads           |
 | **zst_element** | Processing node with src/sink pads + ops vtable       |
-| **zst_pad**     | Connection point; linked peer-to-peer between elements|
+| **zst_pad**     | Connection point; linked peer-to-peer between elements; probes/blocking and segment clipping |
 | **zst_buffer**  | Ref-counted data carrier with typed memory + timestamps|
 | **zst_queue**      | Thread-safe bounded queue (mutex + condvar)           |
 | **zst_queue_element** | Queue as a first-class element with worker thread   |
 | **zst_scheduler**    | Drives pipeline: single-thread inline or multi-thread pool |
 | **zst_caps**     | Caps negotiation — media type, resolution, format intersection |
-| **zst_bus**      | Async event bus for error/EOS/state/warning notifications |
+| **zst_bus**      | Async event bus for error/EOS/state/warning/segment notifications |
 | **zst_plugin**   | `dlopen()`-based dynamic element loading              |
 | **zst_log**      | Lightweight logging system with compile-time levels   |
 | **video_scaler** | Pixel format + resolution conversion via `libswscale`  |
 | **audio_resampler** | Sample rate + format conversion via `libswresample` |
+| **mp4_demuxer**  | MP4/fMP4 file demuxer via `libavformat`                |
 
 ### State Machine
 
@@ -174,16 +182,18 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | Core Framework              | ✅ All 8 core modules implemented|
 | Scheduler Integration       | ✅ Topological sort, push/pull, EOS, state hardening |
 | Queue Element               | ✅ First-class queue with worker thread |
-| Real Element Implementations| ✅ 24 elements: v4l2_source, alsa_source, h264_encoder, h264_decoder, h265_encoder, h265_decoder, aac_encoder, aac_decoder, mp4_muxer, file_sink, file_source, fake_sink, video_scaler, audio_resampler, video_test_src, audio_test_src, text_overlay, text_source, srt_parser, net_source, net_sink, rtsp_source, rtsp_sink, rtsp_server |
+| Real Element Implementations| ✅ 31 elements: v4l2_source, alsa_source, h264_encoder, h264_decoder, h265_encoder, h265_decoder, aac_encoder, aac_decoder, mp4_muxer, mp4_demuxer, file_sink, file_source, fake_sink, video_scaler, audio_resampler, video_test_src, audio_test_src, text_overlay, text_source, srt_parser, net_source, net_sink, rtsp_source, rtsp_sink, rtsp_server, rtmp_source, rtmp_sink, srt_source, srt_sink, mpegts_muxer, mpegts_demuxer |
+| Planned Element Additions   | 📝 (none remaining) |
 | Caps Negotiation            | ✅ Done                          |
 | Event Bus                   | ✅ Done                          |
 | Dynamic Plugins             | ✅ Done                          |
 | Logging System              | ✅ Done                          |
-| Unit Tests                  | ✅ 52 core tests + test_net_source + test_net_sink, all passing |
-| Allocator API + Pool        | ✅ Done (allocator interface, buffer pools, 7+ elements migrated) |
+| Unit Tests                  | ✅ 65 core tests + test_net_source + test_net_sink + install test, all passing |
+| Allocator API + Pool        | ✅ Done (allocator interface, pool, elements migrated, topology-aware sizing, comprehensive tests) |
 | Clock                       | ✅ Done (system clock + pipeline integration) |
+| Element Public API (8d)     | ✅ Done (Descriptor ABI, plugin introspection, typed properties, official metadata, convenience headers, library & installation layout) |
 | Text Overlay (4s)           | ✅ Included in Element Implementations |
-| A/V Sync (clock slaving)    | 📝 Future                        |
+| A/V Sync (clock slaving)    | ✅ Done (Scheduler wait integration, QoS dropping, and clock slaving verification tests) |
 | RTSP Server Multi-Session (4z) | ✅ Done (port 8554, multiple mount points, per-client threads, H.264/AAC RTP, TCP interleaved + UDP unicast transport) |
 | SRT Subtitle Parser (4u)    | ✅ Done                          |
 | H.264 Decoder (4v)          | ✅ Done                          |
@@ -194,14 +204,20 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | RTSP Source (UDP support)   | ✅ Done (TCP interleaved + UDP unicast transport) |
 | RTSP Sink (4p)              | ✅ Done                          |
 | RTSP Server (UDP support)   | ✅ Done (TCP interleaved + UDP unicast transport) |
-| A/V Sync (clock slaving)    | 📝 Future                        |
-| RTMP Source/Sink (4q/4r)    | 📝 Planned                       |
-| Element Bins                | 📝 Planned                       |
+| RTMP Source/Sink (4q/4r)    | ✅ Done                          |
+| Element Bins (8c)           | ✅ Done (composite bins + ghost pads) |
+| Pad Probes / Blocking (8c)  | ✅ Done                          |
+| Segment Seeking (8c)        | ✅ Done                          |
+| SRT Transport Protocols     | ✅ Done                          |
+| MPEG-TS mux/demux           | ✅ Done                          |
+| MP4 Demuxer                 | ✅ Done                        |
 | CI Pipeline                 | 📝 Future                        |
 
 ---
 
 ## Coding Conventions
+
+- The project provides a DMABUF allocator fallback using `memfd_create`. Use `zst_allocator_dmabuf_create()` to create it, `zst_allocator_dmabuf_get_fd()` to export the file descriptor, and `zst_allocator_dmabuf_import()` to map an existing fd into the allocator.
 
 - **Language:** C11 (`-std=c11`)
 - **Naming:** `zst_` prefix for all public symbols, `snake_case`

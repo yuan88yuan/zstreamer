@@ -16,6 +16,10 @@ typedef struct {
     AVCodecContext* codec_ctx;
     AVFrame*        frame;
     int             initialized;
+    int             sample_rate;
+    int             channels;
+    int             flushing;
+    int             flush_done;
     zst_buffer_pool_t* pool;
 } aac_encoder_t;
 
@@ -26,6 +30,10 @@ aac_open(zst_element_t* el)
     s->codec_ctx = NULL;
     s->frame = NULL;
     s->initialized = 0;
+    s->sample_rate = 44100;
+    s->channels = 2;
+    s->flushing = 0;
+    s->flush_done = 0;
     s->pool = NULL;
     return ZST_OK;
 }
@@ -51,21 +59,26 @@ aac_close(zst_element_t* el)
 }
 
 static zst_result_t
-aac_init_encoder(aac_encoder_t* s)
+aac_init_encoder(aac_encoder_t* s, const zst_audio_frame_t* in_frame)
 {
     const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_AAC);
-    if (!codec) return ZST_ERROR;
+    if (!codec || !in_frame) return ZST_ERROR;
+
+    s->sample_rate = (int)in_frame->sample_rate;
+    s->channels = (int)in_frame->channels;
+    if (s->sample_rate <= 0 || s->channels <= 0 || s->channels > 2) return ZST_ERROR;
 
     s->codec_ctx = avcodec_alloc_context3(codec);
     if (!s->codec_ctx) return ZST_ERROR;
 
-    s->codec_ctx->sample_rate = 44100;
+    s->codec_ctx->sample_rate = s->sample_rate;
+    s->codec_ctx->time_base = (AVRational){1, s->sample_rate};
     s->codec_ctx->sample_fmt = AV_SAMPLE_FMT_FLTP; // Float planar (native for FFmpeg AAC)
 #if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(59, 37, 100)
-    av_channel_layout_default(&s->codec_ctx->ch_layout, 2);
+    av_channel_layout_default(&s->codec_ctx->ch_layout, s->channels);
 #else
-    s->codec_ctx->channels = 2;
-    s->codec_ctx->channel_layout = AV_CH_LAYOUT_STEREO;
+    s->codec_ctx->channels = s->channels;
+    s->codec_ctx->channel_layout = s->channels == 1 ? AV_CH_LAYOUT_MONO : AV_CH_LAYOUT_STEREO;
 #endif
     s->codec_ctx->bit_rate = 128000;
 
@@ -76,13 +89,19 @@ aac_init_encoder(aac_encoder_t* s)
     }
 
     s->frame = av_frame_alloc();
-    s->frame->nb_samples = 1024;
+    if (!s->frame) {
+        avcodec_free_context(&s->codec_ctx);
+        s->codec_ctx = NULL;
+        return ZST_ERROR;
+    }
+    s->frame->nb_samples = s->codec_ctx->frame_size > 0 ? s->codec_ctx->frame_size : 1024;
     s->frame->format = AV_SAMPLE_FMT_FLTP;
+    s->frame->sample_rate = s->sample_rate;
 #if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(59, 37, 100)
-    av_channel_layout_default(&s->frame->ch_layout, 2);
+    av_channel_layout_copy(&s->frame->ch_layout, &s->codec_ctx->ch_layout);
 #else
-    s->frame->channels = 2;
-    s->frame->channel_layout = AV_CH_LAYOUT_STEREO;
+    s->frame->channels = s->channels;
+    s->frame->channel_layout = s->channels == 1 ? AV_CH_LAYOUT_MONO : AV_CH_LAYOUT_STEREO;
 #endif
 
     if (av_frame_get_buffer(s->frame, 0) < 0) {
@@ -109,48 +128,24 @@ aac_init_encoder(aac_encoder_t* s)
     }
 
     s->initialized = 1;
+    s->flushing = 0;
+    s->flush_done = 0;
     return ZST_OK;
 }
 
 static zst_result_t
-aac_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
+aac_make_eos(zst_buffer_t** out)
 {
-    aac_encoder_t* s = el->priv;
-    if (!in) return ZST_ERROR;
+    zst_buffer_t* eos_buf = zst_buffer_create(ZST_BUFFER_AUDIO_PACKET);
+    if (!eos_buf) return ZST_ERROR;
+    eos_buf->flags |= ZST_BUFFER_FLAG_EOS;
+    *out = eos_buf;
+    return ZST_OK;
+}
 
-    if (in->flags & ZST_BUFFER_FLAG_EOS) {
-        zst_buffer_t* eos_buf = zst_buffer_create(ZST_BUFFER_AUDIO_PACKET);
-        if (eos_buf) {
-            eos_buf->flags |= ZST_BUFFER_FLAG_EOS;
-            *out = eos_buf;
-            return ZST_OK;
-        }
-        return ZST_ERROR;
-    }
-
-    zst_audio_frame_t* a_frame = in->payload;
-    if (!a_frame) return ZST_ERROR;
-
-    if (!s->initialized) {
-        if (aac_init_encoder(s) != ZST_OK) return ZST_ERROR;
-    }
-
-    /* Convert S16 interleaved to FLTP float planar */
-    int16_t* src = (int16_t*)a_frame->data;
-    float* dst_l = (float*)s->frame->data[0];
-    float* dst_r = (float*)s->frame->data[1];
-
-    for (uint32_t i = 0; i < a_frame->nb_samples; i++) {
-        dst_l[i] = (float)src[i * 2] / 32768.0f;
-        dst_r[i] = (float)src[i * 2 + 1] / 32768.0f;
-    }
-
-    s->frame->pts = in->pts;
-
-    if (avcodec_send_frame(s->codec_ctx, s->frame) < 0) {
-        return ZST_ERROR;
-    }
-
+static zst_result_t
+aac_receive_packet(aac_encoder_t* s, zst_buffer_t** out)
+{
     AVPacket* av_pkt = av_packet_alloc();
     if (!av_pkt) return ZST_ERROR;
 
@@ -162,23 +157,95 @@ aac_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
             return ZST_ERROR;
         }
 
-        uint8_t* data = pkt->memory.data;
-        memcpy(data, av_pkt->data, av_pkt->size);
-
+        memcpy(pkt->memory.data, av_pkt->data, av_pkt->size);
         pkt->memory.size = av_pkt->size;
-        pkt->pts = av_pkt->pts;
-        pkt->dts = av_pkt->dts;
-
+        pkt->pts = av_rescale_q(av_pkt->pts, s->codec_ctx->time_base, (AVRational){1, 1000000000});
+        pkt->dts = av_rescale_q(av_pkt->dts, s->codec_ctx->time_base, (AVRational){1, 1000000000});
+        pkt->duration = av_rescale_q(av_pkt->duration > 0 ? av_pkt->duration : s->codec_ctx->frame_size,
+                                     s->codec_ctx->time_base, (AVRational){1, 1000000000});
         *out = pkt;
-    } else if (ret == AVERROR(EAGAIN)) {
-        *out = NULL;
-    } else {
         av_packet_free(&av_pkt);
-        return ZST_ERROR;
+        return ZST_OK;
     }
 
     av_packet_free(&av_pkt);
-    return ZST_OK;
+    if (ret == AVERROR(EAGAIN)) return ZST_AGAIN;
+    if (ret == AVERROR_EOF) return ZST_EOF;
+    return ZST_ERROR;
+}
+
+static zst_result_t
+aac_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
+{
+    aac_encoder_t* s = el->priv;
+    if (!in || !out) return ZST_ERROR;
+    *out = NULL;
+
+    if (in->flags & ZST_BUFFER_FLAG_EOS) {
+        if (!s->initialized || s->flush_done) {
+            return aac_make_eos(out);
+        }
+        if (!s->flushing) {
+            int sr = avcodec_send_frame(s->codec_ctx, NULL);
+            if (sr < 0 && sr != AVERROR(EAGAIN)) return ZST_ERROR;
+            s->flushing = 1;
+        }
+        zst_result_t r = aac_receive_packet(s, out);
+        if (r == ZST_OK) return ZST_OK;
+        if (r == ZST_AGAIN) {
+            *out = NULL;
+            return ZST_OK;
+        }
+        if (r == ZST_EOF) {
+            s->flush_done = 1;
+            return aac_make_eos(out);
+        }
+        return r;
+    }
+
+    zst_audio_frame_t* a_frame = in->payload;
+    if (!a_frame || !a_frame->data) return ZST_ERROR;
+
+    if (!s->initialized) {
+        if (aac_init_encoder(s, a_frame) != ZST_OK) return ZST_ERROR;
+    }
+
+    if ((int)a_frame->sample_rate != s->sample_rate || (int)a_frame->channels != s->channels) {
+        return ZST_ERROR;
+    }
+
+    if (av_frame_make_writable(s->frame) < 0) return ZST_ERROR;
+    s->frame->nb_samples = (int)a_frame->nb_samples;
+
+    /* Convert S16 interleaved to FLTP float planar. */
+    int16_t* src = (int16_t*)a_frame->data;
+    float* dst_l = (float*)s->frame->data[0];
+    float* dst_r = s->channels > 1 ? (float*)s->frame->data[1] : NULL;
+
+    for (uint32_t i = 0; i < a_frame->nb_samples; i++) {
+        dst_l[i] = (float)src[i * s->channels] / 32768.0f;
+        if (dst_r) dst_r[i] = (float)src[i * s->channels + 1] / 32768.0f;
+    }
+
+    s->frame->pts = av_rescale_q(in->pts, (AVRational){1, 1000000000}, s->codec_ctx->time_base);
+
+    int send_ret = avcodec_send_frame(s->codec_ctx, s->frame);
+    if (send_ret == AVERROR(EAGAIN)) {
+        return aac_receive_packet(s, out) == ZST_OK ? ZST_OK : ZST_AGAIN;
+    }
+    if (send_ret < 0) return ZST_ERROR;
+
+    zst_result_t r = aac_receive_packet(s, out);
+    if (r == ZST_AGAIN) return ZST_OK;
+    return r;
+}
+
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    aac_encoder_t* s = el->priv;
+    return s->pool;
 }
 
 static zst_element_ops_t g_ops = {
@@ -186,6 +253,7 @@ static zst_element_ops_t g_ops = {
     .open    = aac_open,
     .close   = aac_close,
     .process = aac_process,
+    .get_pool = element_get_pool
 };
 
 zst_element_t*
@@ -219,6 +287,26 @@ plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_pad_template_t g_aacenc_pads[] = {
+    { "sink", ZST_PAD_SINK, "audio/x-raw" },
+    { "src", ZST_PAD_SRC, "audio/x-aac" }
+};
+
+static const zst_element_desc_t g_aacenc_elements[] = {
+    {
+        .name = "aacenc",
+        .long_name = "AAC Encoder",
+        .category = "Codec/Encoder",
+        .description = "Encodes raw audio to AAC",
+        .author = "zstreamer",
+        .properties = NULL,
+        .nb_properties = 0,
+        .pads = g_aacenc_pads,
+        .nb_pads = sizeof(g_aacenc_pads) / sizeof(g_aacenc_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "aacencoder_plugin",
@@ -229,6 +317,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create_element
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_aacenc_elements) / sizeof(g_aacenc_elements[0]);
+    }
+    return g_aacenc_elements;
+}
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t*

@@ -22,6 +22,11 @@ struct zst_pipeline {
 
     zst_bus_t* bus;
     zst_clock_t* clock;
+
+    /* When true (non-zero), the scheduler will wait until each buffer's PTS
+     * is reached before delivering it, enabling real-time pacing and A/V sync.
+     * Default: 0 (off) — buffers are delivered as fast as possible. */
+    int clock_sync;
 };
 
 zst_pipeline_t* zst_pipeline_create(void);
@@ -57,7 +62,26 @@ zst_result_t zst_pipeline_start(
 zst_result_t zst_pipeline_stop(
     zst_pipeline_t* pipe);
 
+zst_result_t zst_pipeline_set_clock_sync(
+    zst_pipeline_t* pipe,
+    int enabled);
+
+int zst_pipeline_get_clock_sync(
+    zst_pipeline_t* pipe);
+
 void zst_pipeline_topological_sort(
+    zst_pipeline_t* pipe);
+
+int zst_pipeline_count_elements_of_type(
+    zst_pipeline_t* pipe,
+    const char* type_name);
+
+void zst_pipeline_foreach_element(
+    zst_pipeline_t* pipe,
+    void (*func)(zst_element_t*, void*),
+    void* user_data);
+
+void zst_pipeline_update_buffer_pool_sizing(
     zst_pipeline_t* pipe);
 
 #ifdef __cplusplus

@@ -25,12 +25,17 @@ typedef struct zst_buffer      zst_buffer_t;
 typedef struct zst_buffer_pool zst_buffer_pool_t;
 typedef struct zst_queue       zst_queue_t;
 typedef struct zst_pad         zst_pad_t;
-typedef struct zst_element     zst_element_t;
-typedef struct zst_pipeline    zst_pipeline_t;
+typedef struct zst_element      zst_element_t;
+typedef struct zst_element_desc zst_element_desc_t;
+typedef struct zst_pipeline     zst_pipeline_t;
 typedef struct zst_scheduler   zst_scheduler_t;
 typedef struct zst_plugin      zst_plugin_t;
 typedef struct zst_bus         zst_bus_t;
 typedef struct zst_event       zst_event_t;
+typedef struct zst_bin         zst_bin_t;
+typedef struct zst_ghost_pad   zst_ghost_pad_t;
+typedef struct zst_pad_probe   zst_pad_probe_t;
+typedef struct zst_segment     zst_segment_t;
 
 #ifdef __cplusplus
 }

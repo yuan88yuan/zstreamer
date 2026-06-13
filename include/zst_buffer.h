@@ -25,6 +25,7 @@ typedef enum {
 } zst_memory_type_t;
 
 #define ZST_BUFFER_FLAG_EOS (1 << 0)
+#define ZST_BUFFER_FLAG_DROP (1 << 1)
 
 typedef struct {
 

@@ -1,0 +1,478 @@
+/*=============================================================================
+    zst_builtins.c — Built-in element registration for the Element Public API
+
+    Provides the strong implementation of zst_register_builtin_elements() that
+    lives in libzstreamer-elements.  Each element constructor is referenced
+    via a direct (strong) extern declaration — no weak symbols — so the
+    linker naturally pulls in the element .o files from the static archive,
+    and --as-needed keeps libzstreamer-elements.so in the NEETED list.
+
+    Because this function is ONLY defined here (not in the core library),
+    any app that calls zst_register_builtin_elements() creates a strong
+    reference chain:
+
+        app → zst_register_builtin_elements (this file)
+            → zst_video_test_src_create (direct call, strong ref)
+
+    This ensures both static and shared linking work without
+    --whole-archive or --no-as-needed flags.
+=============================================================================*/
+
+#define _POSIX_C_SOURCE 200809L
+
+#include "zst_plugin.h"
+#include "zst_element_factory.h"
+#include <string.h>
+#include <stdlib.h>
+
+/*──────────────────────────────────────────────────────────────────────────
+  Strong (non-weak) forward declarations for every element constructor in
+  libzstreamer-elements.  These force the linker to include the element
+  object files when zst_register_builtin_elements() is reachable.
+──────────────────────────────────────────────────────────────────────────*/
+zst_element_t* zst_queue_element_create(const char* name);
+
+zst_element_t* zst_file_source_create(const char* path);
+zst_element_t* zst_http_source_create(const char* url);
+zst_element_t* zst_file_sink_create(const char* path);
+zst_element_t* zst_fake_sink_create(void);
+zst_element_t* zst_v4l2_source_create(void);
+zst_element_t* zst_alsa_source_create(void);
+zst_element_t* zst_h264_encoder_create(void);
+zst_element_t* zst_h264_decoder_create(void);
+zst_element_t* zst_h265_encoder_create(void);
+zst_element_t* zst_h265_decoder_create(void);
+zst_element_t* zst_aac_encoder_create(void);
+zst_element_t* zst_aac_decoder_create(void);
+zst_element_t* zst_mp4_muxer_create(void);
+zst_element_t* zst_video_scaler_create(int target_width, int target_height, const char* target_pixel_format);
+zst_element_t* zst_audio_resampler_create(int target_sample_rate, int target_channels, const char* target_format);
+zst_element_t* zst_video_test_src_create(void);
+zst_element_t* zst_audio_test_src_create(void);
+zst_element_t* zst_text_overlay_create(const char* text);
+zst_element_t* zst_text_source_create(void);
+zst_element_t* zst_srt_parser_create(const char* path);
+zst_element_t* zst_net_source_create(void);
+zst_element_t* zst_net_sink_create(void);
+zst_element_t* zst_rtsp_source_create(const char* url);
+zst_element_t* zst_rtsp_sink_create(void);
+zst_element_t* zst_rtsp_server_create(void);
+zst_element_t* zst_rtmp_source_create(const char* url);
+zst_element_t* zst_rtmp_sink_create(void);
+zst_element_t* zst_srt_source_create(void);
+zst_element_t* zst_srt_sink_create(void);
+zst_element_t* zst_mpegts_muxer_create(void);
+zst_element_t* zst_mpegts_demuxer_create(void);
+zst_element_t* zst_mp4_demuxer_create(void);
+
+/*──────────────────────────────────────────────────────────────────────────
+  Pad template tables (used by descriptor tables below).
+──────────────────────────────────────────────────────────────────────────*/
+static const zst_pad_template_t g_pad_src[]          = { { "src", ZST_PAD_SRC, "ANY" } };
+static const zst_pad_template_t g_pad_sink[]         = { { "sink", ZST_PAD_SINK, "ANY" } };
+static const zst_pad_template_t g_pad_filter[]       = {
+    { "sink", ZST_PAD_SINK, "ANY" }, { "src", ZST_PAD_SRC, "ANY" }
+};
+static const zst_pad_template_t g_pad_video_src[]    = { { "src", ZST_PAD_SRC, "video/x-raw" } };
+static const zst_pad_template_t g_pad_audio_src[]    = { { "src", ZST_PAD_SRC, "audio/x-raw" } };
+static const zst_pad_template_t g_pad_srt_parser[]   = { { "src", ZST_PAD_SRC, "text/x-raw" } };
+
+static const zst_pad_template_t g_pad_h264enc[] = {
+    { "sink", ZST_PAD_SINK, "video/x-raw" }, { "src", ZST_PAD_SRC, "video/x-h264" }
+};
+static const zst_pad_template_t g_pad_h264dec[] = {
+    { "sink", ZST_PAD_SINK, "video/x-h264" }, { "src", ZST_PAD_SRC, "video/x-raw" }
+};
+static const zst_pad_template_t g_pad_h265enc[] = {
+    { "sink", ZST_PAD_SINK, "video/x-raw" }, { "src", ZST_PAD_SRC, "video/x-h265" }
+};
+static const zst_pad_template_t g_pad_h265dec[] = {
+    { "sink", ZST_PAD_SINK, "video/x-h265" }, { "src", ZST_PAD_SRC, "video/x-raw" }
+};
+static const zst_pad_template_t g_pad_aacenc[] = {
+    { "sink", ZST_PAD_SINK, "audio/x-raw" }, { "src", ZST_PAD_SRC, "audio/x-aac" }
+};
+static const zst_pad_template_t g_pad_aacdec[] = {
+    { "sink", ZST_PAD_SINK, "audio/x-aac" }, { "src", ZST_PAD_SRC, "audio/x-raw" }
+};
+static const zst_pad_template_t g_pad_video_filter[] = {
+    { "sink", ZST_PAD_SINK, "video/x-raw" }, { "src", ZST_PAD_SRC, "video/x-raw" }
+};
+static const zst_pad_template_t g_pad_audio_filter[] = {
+    { "sink", ZST_PAD_SINK, "audio/x-raw" }, { "src", ZST_PAD_SRC, "audio/x-raw" }
+};
+
+static const zst_pad_template_t g_pad_mp4mux[]       = {
+    { "video", ZST_PAD_SINK, "video/x-h264" }, { "audio", ZST_PAD_SINK, "audio/x-aac" }, { "src", ZST_PAD_SRC, "video/quicktime" }
+};
+static const zst_pad_template_t g_pad_net_src[] = {
+    { "src", ZST_PAD_SRC, "application/octet-stream" }
+};
+static const zst_pad_template_t g_pad_net_sink[] = {
+    { "sink", ZST_PAD_SINK, "application/octet-stream" }
+};
+static const zst_pad_template_t g_pad_textoverlay[]  = {
+    { "sink", ZST_PAD_SINK, "video/x-raw" }, { "text", ZST_PAD_SINK, "text/x-raw" }, { "src", ZST_PAD_SRC, "video/x-raw" }
+};
+static const zst_pad_template_t g_pad_rtsp_src[]     = {
+    { "video", ZST_PAD_SRC, "video/x-h264" }, { "audio", ZST_PAD_SRC, "audio/x-aac" }
+};
+static const zst_pad_template_t g_pad_rtsp_sink[]    = {
+    { "video", ZST_PAD_SINK, "video/x-h264" }, { "audio", ZST_PAD_SINK, "audio/x-aac" }
+};
+static const zst_pad_template_t g_pad_rtsp_server[]  = {
+    { "video_%u", ZST_PAD_SINK, "video/x-h264" }, { "audio_%u", ZST_PAD_SINK, "audio/x-aac" }
+};
+
+static const zst_pad_template_t g_pad_rtmp_src[]     = {
+    { "video", ZST_PAD_SRC, "video/x-h264" },
+    { "audio", ZST_PAD_SRC, "audio/x-aac" }
+};
+
+static const zst_pad_template_t g_pad_rtmp_sink[]    = {
+    { "video", ZST_PAD_SINK, "video/x-h264" },
+    { "audio", ZST_PAD_SINK, "audio/x-aac" }
+};
+
+static const zst_pad_template_t g_pad_tsmux[]       = {
+    { "video", ZST_PAD_SINK, "video/x-h264" }, { "audio", ZST_PAD_SINK, "audio/x-aac" }, { "src", ZST_PAD_SRC, "video/mpegts" }
+};
+
+static const zst_pad_template_t g_pad_tsdemux[]     = {
+    { "sink", ZST_PAD_SINK, "video/mpegts" }, { "video", ZST_PAD_SRC, "video/x-h264" }, { "audio", ZST_PAD_SRC, "audio/x-aac" }
+};
+
+static const zst_pad_template_t g_pad_mp4demux[]     = {
+    { "sink", ZST_PAD_SINK, "video/quicktime" }, { "video", ZST_PAD_SRC, "video/x-h264" }, { "audio", ZST_PAD_SRC, "audio/x-aac" }
+};
+
+/*──────────────────────────────────────────────────────────────────────────
+  Property spec tables (for elements that expose typed properties).
+──────────────────────────────────────────────────────────────────────────*/
+static const zst_property_spec_t g_builtin_filesrc_props[] = {
+    { "path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Input file path" },
+    { "chunk-size", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "4096", "Maximum bytes to read per buffer" },
+    { "loop", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Loop back to the start at EOF" },
+    { "offset", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "0", "Initial byte offset" },
+    { "length", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Maximum number of bytes to read; -1 means unlimited" }
+};
+
+static const zst_property_spec_t g_builtin_httpsrc_props[] = {
+    { "url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "URL of the HTTP/HTTPS resource" },
+    { "uri", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Alias for url" },
+    { "user-agent", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "zstreamer/0.1.0", "User-Agent header value" },
+    { "headers", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Custom HTTP request headers" },
+    { "timeout", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5000", "Connection & read timeout in milliseconds" },
+    { "chunk-size", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "4096", "Maximum bytes to read per buffer" },
+    { "reconnect", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Reconnect on stream loss" },
+    { "reconnect-delay-ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "500", "Delay between reconnect attempts in milliseconds" },
+    { "max-reconnect-attempts", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Maximum reconnect attempts; -1 means unlimited" }
+};
+
+static const zst_property_spec_t g_builtin_filesink_props[] = {
+    { "path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Output file path" },
+    { "location", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Alias for path" }
+};
+
+static const zst_property_spec_t g_builtin_fakesink_props[] = {
+    { "drop-probability", ZST_PROPERTY_DOUBLE, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "0.0", "Probability in [0.0, 1.0] of dropping a buffer without counting it" },
+    { "total-buffers", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE, "0", "Number of buffers received since open" },
+    { "total-bytes", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE, "0", "Number of bytes received since open" }
+};
+
+static const zst_property_spec_t g_builtin_rtmpsrc_props[] = {
+    { "url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "RTMP Endpoint URL (supports rtmp://user:pass@host/app/stream)" },
+    { "rtmp_url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Alias for url" },
+    { "live", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "true", "Use live RTMP mode instead of recorded/VOD" },
+    { "buffer-time", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "3000", "RTMP client buffer time in milliseconds" },
+    { "swf-url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Optional SWF URL for legacy RTMP authentication" },
+    { "reconnect", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Reconnect on stream loss" },
+    { "reconnect-delay-ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "500", "Delay between reconnect attempts" },
+    { "max-reconnect-attempts", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Maximum reconnect attempts; -1 means unlimited" }
+};
+
+static const zst_property_spec_t g_builtin_rtmpsink_props[] = {
+    { "url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "RTMP Destination URL" },
+    { "rtmp_url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Alias for url" },
+    { "live", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "true", "Use live RTMP mode" },
+    { "reconnect", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Reconnect on publish failure" },
+    { "reconnect-delay-ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "500", "Delay between reconnect attempts" },
+    { "max-reconnect-attempts", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Maximum reconnect attempts; -1 means unlimited" }
+};
+
+static const zst_property_spec_t g_builtin_srtsrc_props[] = {
+    { "uri", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "SRT Connection URI" },
+    { "host", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "127.0.0.1", "SRT peer host (caller/rendezvous modes)" },
+    { "port", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "9000", "SRT port" },
+    { "mode", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "caller", "SRT connection mode (caller, listener, rendezvous)" },
+    { "latency", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "120", "SRT latency in milliseconds" },
+    { "passphrase", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "SRT AES encryption passphrase" },
+    { "pbkeylen", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "16", "SRT AES key length (16, 24, 32)" },
+    { "streamid", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "SRT stream ID" },
+    { "payload-size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1316", "SRT packet payload size" }
+};
+
+static const zst_property_spec_t g_builtin_srtsink_props[] = {
+    { "uri", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "SRT Destination URI" },
+    { "host", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "127.0.0.1", "SRT peer host (caller/rendezvous modes)" },
+    { "port", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "9000", "SRT port" },
+    { "mode", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "caller", "SRT connection mode (caller, listener, rendezvous)" },
+    { "latency", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "120", "SRT latency in milliseconds" },
+    { "passphrase", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "SRT AES encryption passphrase" },
+    { "pbkeylen", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "16", "SRT AES key length (16, 24, 32)" },
+    { "streamid", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "SRT stream ID" },
+    { "payload-size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1316", "SRT packet payload size" }
+};
+
+static const zst_property_spec_t g_builtin_rtspsrc_props[] = {
+    { "url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "RTSP URL" },
+    { "rtsp_url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Alias for url" },
+    { "username", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "RTSP username" },
+    { "password", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "RTSP password" },
+    { "transport", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "tcp", "RTSP transport: tcp or udp" },
+    { "buffer-size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "16384", "Receive buffer size" },
+    { "reconnect", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Reconnect on transport loss" },
+    { "reconnect-delay-ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "500", "Delay between reconnect attempts" },
+    { "max-reconnect-attempts", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Maximum reconnect attempts; -1 means unlimited" },
+    { "keepalive-interval-sec", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "30", "RTSP OPTIONS keepalive interval in seconds" }
+};
+
+static const zst_property_spec_t g_builtin_rtspsink_props[] = {
+    { "url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "rtsp://0.0.0.0:8554/live", "RTSP listen URL" },
+    { "listen-port", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "8554", "RTSP listen port" },
+    { "mount-point", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "live", "RTSP mount point" },
+    { "transport", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "tcp", "Preferred RTSP transport" },
+    { "max-clients", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1", "Maximum concurrent clients requested by the application" },
+    { "rtcp-interval-ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5000", "RTCP sender report interval in milliseconds" }
+};
+
+static const zst_property_spec_t g_builtin_h265enc_props[] = {
+    { "preset", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "ultrafast", "FFmpeg/libx265 preset" },
+    { "tune", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "zerolatency", "FFmpeg/libx265 tune" },
+    { "crf", ZST_PROPERTY_DOUBLE, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "23.0", "Constant Rate Factor (0-51); used when bitrate is 0" },
+    { "bitrate", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "0", "Target bitrate in bits/sec; 0 enables CRF mode" },
+    { "gop-size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "30", "GOP/keyframe interval" },
+    { "keyint-min", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1", "Minimum keyframe interval" },
+    { "profile", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "main", "HEVC profile" },
+    { "level", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "HEVC level (empty = encoder default)" }
+};
+
+static const zst_property_spec_t g_builtin_tsmux_props[] = {
+    { "width", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "640", "Video width" },
+    { "height", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "480", "Video height" },
+    { "fps", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "30", "Video frame rate" },
+    { "sample-rate", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "44100", "Audio sample rate" },
+    { "channels", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "2", "Audio channels" },
+    { "location", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Output file path (optional)" }
+};
+
+static const zst_property_spec_t g_builtin_tsdemux_props[] = {
+    { "location", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Input file path (optional)" }
+};
+
+static const zst_property_spec_t g_builtin_mp4demux_props[] = {
+    { "location", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Input MP4 file path (optional; enables direct-file mode)" }
+};
+
+static const zst_property_spec_t g_builtin_videotestsrc_props[] = {
+    { "width", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "640", "Video width" },
+    { "height", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "480", "Video height" },
+    { "fps", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "30", "Video frame rate" },
+    { "pattern", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "bars", "Synthetic pattern type" },
+    { "pixel-format", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "YUV420P", "Pixel format" },
+    { "num-buffers", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Number of buffers to output before EOF" },
+    { "loop", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Loop property" },
+    { "use-clock", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Use pipeline clock" }
+};
+
+static const zst_property_spec_t g_builtin_audiotestsrc_props[] = {
+    { "sample-rate", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "44100", "Audio sample rate" },
+    { "channels", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "2", "Audio channels" },
+    { "sample-format", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "S16LE", "Audio sample format" },
+    { "wave", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "sine", "Audio wave type" },
+    { "frequency", ZST_PROPERTY_DOUBLE, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "440.0", "Frequency of tone" },
+    { "volume", ZST_PROPERTY_DOUBLE, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "0.8", "Audio volume level" },
+    { "samples-per-buffer", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1024", "Samples per output buffer" },
+    { "num-samples", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Number of samples to output before EOF" },
+    { "num-buffers", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Number of buffers to output before EOF" },
+    { "loop", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Loop property" },
+    { "use-clock", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Use pipeline clock" }
+};
+
+static const zst_property_spec_t g_builtin_textoverlay_props[] = {
+    { "text", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Text to overlay" },
+    { "timecode", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Show timecode" },
+    { "font-size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "24", "Font size" },
+    { "font-path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Path to TTF font file" },
+    { "x", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "10", "X coordinate" },
+    { "y", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "10", "Y coordinate" }
+};
+
+static const zst_property_spec_t g_builtin_netsrc_props[] = {
+    { "host", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "127.0.0.1", "Network host to bind or connect to" },
+    { "port", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5000", "Network port" },
+    { "protocol", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "tcp", "Network protocol (tcp, udp, unix, tcp-server, unix-server)" },
+    { "path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Unix domain socket path" },
+    { "chunk-size", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "4096", "Chunk size in bytes to read at a time" },
+    { "read-timeout", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1000", "Read timeout in milliseconds" }
+};
+
+static const zst_property_spec_t g_builtin_netsink_props[] = {
+    { "host", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "127.0.0.1", "Network host to connect to or listen on" },
+    { "port", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5000", "Network port" },
+    { "protocol", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "tcp", "Network protocol (tcp, udp, unix, tcp-server, unix-server)" },
+    { "path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Unix domain socket path" },
+    { "write-timeout", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1000", "Write timeout in milliseconds" }
+};
+
+static const zst_property_spec_t g_builtin_rtspserver_props[] = {
+    { "listen-port", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "8554", "RTSP server listen port" },
+    { "listen_port", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "8554", "Alias for listen-port" },
+    { "session_count", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE, "0", "Number of active RTSP streaming sessions" },
+    { "client_count", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE, "0", "Number of connected RTSP clients" }
+};
+
+static const zst_property_spec_t g_builtin_textsource_props[] = {
+    { "width", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "640", "Video width" },
+    { "height", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "480", "Video height" },
+    { "fps", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "30", "Video frame rate" },
+    { "text", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "Hello", "Text content to display" },
+    { "text-content", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "Hello", "Alias for text" },
+    { "font-size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "24", "Font size in pixels" },
+    { "font_size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "24", "Alias for font-size" },
+    { "font-path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Path to TrueType font file" },
+    { "font_path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Alias for font-path" },
+    { "bg-color", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "black", "Background color name or #RRGGBB hex" },
+    { "background-color", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "black", "Alias for bg-color" },
+    { "text-color", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "white", "Text color name or #RRGGBB hex" },
+    { "color", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "white", "Alias for text-color" },
+    { "text_color", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "white", "Alias for text-color" },
+    { "pixel-format", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "YUV420P", "Pixel format" },
+    { "pixel_format", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "YUV420P", "Alias for pixel-format" },
+    { "num-buffers", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Number of buffers to output before EOF" },
+    { "num_buffers", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Alias for num-buffers" },
+    { "loop", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Loop the source input" },
+    { "use-clock", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Use pipeline clock" },
+    { "do-timestamp", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Alias for use-clock" },
+    { "x", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "10", "X coordinate offset" },
+    { "y", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "10", "Y coordinate offset" }
+};
+
+static const zst_property_spec_t g_builtin_mp4mux_props[] = {
+    { "width", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "640", "Video width" },
+    { "height", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "480", "Video height" },
+    { "fps", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "30", "Video frame rate" },
+    { "framerate", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "30", "Alias for fps" },
+    { "sample-rate", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "44100", "Audio sample rate" },
+    { "rate", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "44100", "Alias for sample-rate" },
+    { "channels", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "2", "Audio channels count" },
+    { "location", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Output file path" },
+    { "path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Alias for location" }
+};
+
+/*──────────────────────────────────────────────────────────────────────────
+  create_element callback — constructs an element by name using direct
+  constructor calls (no weak symbols).
+  ──────────────────────────────────────────────────────────────────────────*/
+static zst_element_t*
+create_builtin_element(const char* name)
+{
+    if (!name) return NULL;
+    if (strcmp(name, "queue") == 0)        return zst_queue_element_create(NULL);
+    if (strcmp(name, "filesrc") == 0)      return zst_file_source_create("");
+    if (strcmp(name, "httpsrc") == 0)      return zst_http_source_create("");
+    if (strcmp(name, "filesink") == 0)     return zst_file_sink_create("");
+    if (strcmp(name, "fakesink") == 0)     return zst_fake_sink_create();
+    if (strcmp(name, "v4l2src") == 0)      return zst_v4l2_source_create();
+    if (strcmp(name, "alsasrc") == 0)      return zst_alsa_source_create();
+    if (strcmp(name, "h264enc") == 0)      return zst_h264_encoder_create();
+    if (strcmp(name, "h264dec") == 0)      return zst_h264_decoder_create();
+    if (strcmp(name, "h265enc") == 0)      return zst_h265_encoder_create();
+    if (strcmp(name, "h265dec") == 0)      return zst_h265_decoder_create();
+    if (strcmp(name, "aacenc") == 0)       return zst_aac_encoder_create();
+    if (strcmp(name, "aacdec") == 0)       return zst_aac_decoder_create();
+    if (strcmp(name, "mp4mux") == 0)       return zst_mp4_muxer_create();
+    if (strcmp(name, "videoscaler") == 0)  return zst_video_scaler_create(0, 0, NULL);
+    if (strcmp(name, "audioresampler") == 0) return zst_audio_resampler_create(0, 0, NULL);
+    if (strcmp(name, "videotestsrc") == 0) return zst_video_test_src_create();
+    if (strcmp(name, "audiotestsrc") == 0) return zst_audio_test_src_create();
+    if (strcmp(name, "textoverlay") == 0)  return zst_text_overlay_create(NULL);
+    if (strcmp(name, "textsource") == 0)   return zst_text_source_create();
+    if (strcmp(name, "srt_parser") == 0)   return zst_srt_parser_create(NULL);
+    if (strcmp(name, "netsrc") == 0)       return zst_net_source_create();
+    if (strcmp(name, "netsink") == 0)      return zst_net_sink_create();
+    if (strcmp(name, "rtspsrc") == 0)      return zst_rtsp_source_create(NULL);
+    if (strcmp(name, "rtspsink") == 0)     return zst_rtsp_sink_create();
+    if (strcmp(name, "rtsp_server") == 0)  return zst_rtsp_server_create();
+    if (strcmp(name, "rtmpsrc") == 0)      return zst_rtmp_source_create(NULL);
+    if (strcmp(name, "rtmpsink") == 0)     return zst_rtmp_sink_create();
+    if (strcmp(name, "srtsrc") == 0)       return zst_srt_source_create();
+    if (strcmp(name, "srtsink") == 0)      return zst_srt_sink_create();
+    if (strcmp(name, "tsmux") == 0)        return zst_mpegts_muxer_create();
+    if (strcmp(name, "tsdemux") == 0)      return zst_mpegts_demuxer_create();
+    if (strcmp(name, "mp4demux") == 0)     return zst_mp4_demuxer_create();
+    return NULL;
+}
+
+/*──────────────────────────────────────────────────────────────────────────
+  Descriptor tables (one per element).
+──────────────────────────────────────────────────────────────────────────*/
+#define DESC(name, longname, category, desc, props, nprops, pads) \
+    { name, longname, category, desc, "zstreamer", props, nprops, pads, sizeof(pads) / sizeof((pads)[0]), NULL }
+
+static const zst_element_desc_t g_builtin_descs[] = {
+    DESC("queue",   "Queue",            "Generic",      "Thread-safe buffering element",                                                                                        NULL,                           0, g_pad_filter),
+    DESC("filesrc", "File Source",      "Source/File",  "Reads buffers from a local file",                                                                                      g_builtin_filesrc_props,        sizeof(g_builtin_filesrc_props) / sizeof(g_builtin_filesrc_props[0]), g_pad_src),
+    DESC("httpsrc", "HTTP Source",      "Source/Network", "Reads buffers from HTTP/HTTPS server",                                                                                 g_builtin_httpsrc_props,        sizeof(g_builtin_httpsrc_props) / sizeof(g_builtin_httpsrc_props[0]), g_pad_src),
+    DESC("filesink", "File Sink",       "Sink/File",    "Writes incoming buffers to a local file",                                                                              g_builtin_filesink_props,       sizeof(g_builtin_filesink_props) / sizeof(g_builtin_filesink_props[0]), g_pad_sink),
+    DESC("fakesink", "Fake Sink",       "Sink/Test",    "Consumes buffers and records simple statistics",                                                                       g_builtin_fakesink_props,       sizeof(g_builtin_fakesink_props) / sizeof(g_builtin_fakesink_props[0]), g_pad_sink),
+    DESC("v4l2src", "V4L2 Source",      "Source/Video", "Captures video from a V4L2 device",                                                                                    NULL,                           0, g_pad_video_src),
+    DESC("alsasrc", "ALSA Source",      "Source/Audio", "Captures audio from ALSA",                                                                                             NULL,                           0, g_pad_audio_src),
+    DESC("h264enc", "H.264 Encoder",    "Codec/Encoder","Encodes raw video to H.264",                                                                                           NULL,                           0, g_pad_h264enc),
+    DESC("h264dec", "H.264 Decoder",    "Codec/Decoder","Decodes H.264 video frames",                                                                                           NULL,                           0, g_pad_h264dec),
+    DESC("h265enc", "H.265 Encoder",    "Codec/Encoder","Encodes raw video to H.265",                                                                                           g_builtin_h265enc_props,        sizeof(g_builtin_h265enc_props) / sizeof(g_builtin_h265enc_props[0]), g_pad_h265enc),
+    DESC("h265dec", "H.265 Decoder",    "Codec/Decoder","Decodes H.265 video frames",                                                                                           NULL,                           0, g_pad_h265dec),
+    DESC("aacenc",  "AAC Encoder",      "Codec/Encoder","Encodes raw audio to AAC",                                                                                             NULL,                           0, g_pad_aacenc),
+    DESC("aacdec",  "AAC Decoder",      "Codec/Decoder","Decodes AAC audio frames",                                                                                             NULL,                           0, g_pad_aacdec),
+    DESC("mp4mux",  "MP4 Muxer",        "Muxer/File",   "Muxes encoded audio/video into MP4",                                                                                  g_builtin_mp4mux_props,         sizeof(g_builtin_mp4mux_props) / sizeof(g_builtin_mp4mux_props[0]), g_pad_mp4mux),
+    DESC("videoscaler", "Video Scaler", "Filter/Video", "Converts video resolution or pixel format",                                                                            NULL,                           0, g_pad_video_filter),
+    DESC("audioresampler", "Audio Resampler", "Filter/Audio", "Converts audio sample rate, channels, or format",                                                                NULL,                           0, g_pad_audio_filter),
+    DESC("videotestsrc", "Video Test Source", "Source/Test", "Generates synthetic video test patterns",                                                                         g_builtin_videotestsrc_props,   sizeof(g_builtin_videotestsrc_props) / sizeof(g_builtin_videotestsrc_props[0]), g_pad_video_src),
+    DESC("audiotestsrc", "Audio Test Source", "Source/Test", "Generates synthetic audio test signals",                                                                          g_builtin_audiotestsrc_props,   sizeof(g_builtin_audiotestsrc_props) / sizeof(g_builtin_audiotestsrc_props[0]), g_pad_audio_src),
+    DESC("textoverlay", "Text Overlay", "Filter/Video", "Overlays text on video frames",                                                                                        g_builtin_textoverlay_props,    sizeof(g_builtin_textoverlay_props) / sizeof(g_builtin_textoverlay_props[0]), g_pad_textoverlay),
+    DESC("textsource", "Text Source",   "Source/Video", "Generates video frames containing text",                                                                                g_builtin_textsource_props,     sizeof(g_builtin_textsource_props) / sizeof(g_builtin_textsource_props[0]), g_pad_video_src),
+    DESC("srt_parser", "SRT Parser",    "Parser/Text",  "Parses SubRip subtitle data",                                                                                          NULL,                           0, g_pad_srt_parser),
+    DESC("netsrc",  "Network Source",   "Source/Network","Receives buffers from TCP/UDP or Unix sockets",                                                                       g_builtin_netsrc_props,         sizeof(g_builtin_netsrc_props) / sizeof(g_builtin_netsrc_props[0]), g_pad_net_src),
+    DESC("netsink", "Network Sink",     "Sink/Network", "Sends buffers to TCP/UDP or Unix sockets",                                                                             g_builtin_netsink_props,        sizeof(g_builtin_netsink_props) / sizeof(g_builtin_netsink_props[0]), g_pad_net_sink),
+    DESC("rtspsrc", "RTSP Source",      "Source/Network","Receives audio/video from an RTSP endpoint",                                                                          g_builtin_rtspsrc_props,        sizeof(g_builtin_rtspsrc_props) / sizeof(g_builtin_rtspsrc_props[0]), g_pad_rtsp_src),
+    DESC("rtspsink", "RTSP Sink",       "Sink/Network", "Publishes audio/video to an RTSP endpoint",                                                                             g_builtin_rtspsink_props,       sizeof(g_builtin_rtspsink_props) / sizeof(g_builtin_rtspsink_props[0]), g_pad_rtsp_sink),
+    DESC("rtsp_server", "RTSP Server",  "Sink/Network", "Serves RTP streams over RTSP",                                                                                         g_builtin_rtspserver_props,     sizeof(g_builtin_rtspserver_props) / sizeof(g_builtin_rtspserver_props[0]), g_pad_rtsp_server),
+    DESC("rtmpsrc",  "RTMP Source",      "Source/Network","Receives audio/video from an RTMP endpoint",                                                                          g_builtin_rtmpsrc_props,        sizeof(g_builtin_rtmpsrc_props) / sizeof(g_builtin_rtmpsrc_props[0]), g_pad_rtmp_src),
+    DESC("rtmpsink", "RTMP Sink",        "Sink/Network", "Publishes audio/video to an RTMP endpoint",                                                                             g_builtin_rtmpsink_props,       sizeof(g_builtin_rtmpsink_props) / sizeof(g_builtin_rtmpsink_props[0]), g_pad_rtmp_sink),
+    DESC("srtsrc",   "SRT Source",       "Source/Network","Receives buffers over Secure Reliable Transport (SRT)",                                                                 g_builtin_srtsrc_props,         sizeof(g_builtin_srtsrc_props) / sizeof(g_builtin_srtsrc_props[0]), g_pad_src),
+    DESC("srtsink",  "SRT Sink",         "Sink/Network", "Sends buffers over Secure Reliable Transport (SRT)",                                                                   g_builtin_srtsink_props,        sizeof(g_builtin_srtsink_props) / sizeof(g_builtin_srtsink_props[0]), g_pad_sink),
+    DESC("tsmux",    "MPEG-TS Muxer",    "Muxer/File",   "Muxes encoded audio/video into MPEG-TS (.ts)",                                                                         g_builtin_tsmux_props,          sizeof(g_builtin_tsmux_props) / sizeof(g_builtin_tsmux_props[0]), g_pad_tsmux),
+    DESC("tsdemux",  "MPEG-TS Demuxer",  "Demuxer",      "Demuxes MPEG-TS (.ts) into encoded audio/video",                                                                       g_builtin_tsdemux_props,        sizeof(g_builtin_tsdemux_props) / sizeof(g_builtin_tsdemux_props[0]), g_pad_tsdemux),
+    DESC("mp4demux", "MP4 Demuxer",      "Demuxer/File", "Demuxes MP4 (.mp4/.mov/.m4a/.m4v) into encoded audio/video",                                                             g_builtin_mp4demux_props,       sizeof(g_builtin_mp4demux_props) / sizeof(g_builtin_mp4demux_props[0]), g_pad_mp4demux)
+};
+
+/*──────────────────────────────────────────────────────────────────────────
+  zst_register_builtin_elements — register every built-in element with the
+  factory.  Only exists in libzstreamer-elements (not in core), so any
+  caller creates a strong link dependency on the elements library.
+──────────────────────────────────────────────────────────────────────────*/
+zst_result_t
+zst_register_builtin_elements(void)
+{
+    zst_result_t ret;
+
+    ret = zst_plugin_registry_init();
+    if (ret != ZST_OK) return ret;
+
+    ret = zst_plugin_registry_add_entry(
+        g_builtin_descs,
+        sizeof(g_builtin_descs) / sizeof(g_builtin_descs[0]),
+        create_builtin_element);
+
+    return ret;
+}

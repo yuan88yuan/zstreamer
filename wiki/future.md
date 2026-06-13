@@ -6,8 +6,8 @@ This document lists features that are still planned across all phases.
 
 | Item | Description | Status |
 |------|-------------|--------|
-| 4q — RTMP Source | RTMP/FLV pull client for receiving live streams | 📝 Planned |
-| 4r — RTMP Sink | RTMP push client for publishing live streams | 📝 Planned |
+| 4q — RTMP Source | RTMP/FLV pull client for receiving live streams | ✅ Done |
+| 4r — RTMP Sink | RTMP push client for publishing live streams | ✅ Done |
 
 ## Allocator & Pool — Phase 8a
 
@@ -22,7 +22,7 @@ This document lists features that are still planned across all phases.
 
 | Item | Description | Status |
 |------|-------------|--------|
-| A/V Sync (clock slaving) | Slave video/audio clocks to pipeline master clock | 📝 Planned |
+| A/V Sync (clock slaving) | Slave video/audio clocks to pipeline master clock | ✅ Done |
 
 ## Advanced Features — Phase 8c
 
@@ -44,6 +44,6 @@ This document lists features that are still planned across all phases.
 
 | Item | Description | Status |
 |------|-------------|--------|
-| SRT source/sink | Secure Reliable Transport protocol (UDT-based) | 📝 Planned |
+| SRT source/sink | Secure Reliable Transport protocol (UDT-based) | ✅ Done |
 
 > **Note:** The `srt_parser` element (phase 4u) already implements SRT **subtitle** file parsing (`.srt`). The SRT **transport protocol** is a separate feature.

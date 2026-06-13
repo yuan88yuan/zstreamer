@@ -1,28 +1,20 @@
 /*=============================================================================
     mp4_muxer.c — FFmpeg libavformat MP4 muxer implementation
-
-    Responsible for writing MP4 containers. Defers avformat_write_header
-    until the first video/audio frame arrives so we can extract real
-    codec parameters (SPS/PPS avcC for H.264, frame_size for AAC) and
-    produce a valid, playable .mp4 file.
 =============================================================================*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
+#include <libavutil/mem.h>
 
 #include "zst_element.h"
+#include "zst_element_factory.h"
+#include "zstreamer/elements/zst_mp4_muxer.h"
 #include "zst_pad.h"
 #include "zst_buffer.h"
-
-/* H.264 NAL unit types */
-#define NAL_SPS   7
-#define NAL_PPS   8
-#define NAL_IDR   5
-
-/* AAC: 1024 samples per frame */
-#define AAC_FRAME_SIZE  1024
+#include "zst_bus.h"
 
 typedef struct {
     AVFormatContext* fc;
@@ -31,44 +23,25 @@ typedef struct {
     int              video_stream_idx;
     int              audio_stream_idx;
     int              header_written;
-
+    
     int              video_linked;
     int              audio_linked;
     int              video_eos;
     int              audio_eos;
-    int              trailer_written;
 
-    /* Cached codec parameters (set from first-frame data) */
     int              width;
     int              height;
-    int              fps_num;
-    int              fps_den;
+    int              fps;
     int              sample_rate;
     int              channels;
 
-    /* avcC extradata built from the first video frame's SPS/PPS */
-    uint8_t*         avcc_data;
-    int              avcc_size;
-
-    /* Flags: params have been extracted & header has been written */
-    int              video_params_set;
-    int              audio_params_set;
-
-    /* Pre-header audio buffer (audio packets arriving before header is written) */
-#define MAX_AUDIO_PREBUF 256
-    uint8_t*         audio_prebuf[MAX_AUDIO_PREBUF];
-    int              audio_prebuf_size[MAX_AUDIO_PREBUF];
-    int64_t          audio_prebuf_pts[MAX_AUDIO_PREBUF];
-    int64_t          audio_prebuf_dts[MAX_AUDIO_PREBUF];
-    int              audio_prebuf_count;
+    uint8_t*         video_extradata;
+    int              video_extradata_size;
+    int              video_annexb;
+    int              direct_file;
+    char             location[256];
 } mp4_muxer_t;
 
-/* Forward declarations */
-static zst_result_t mp4_mux_write(zst_element_t* el, zst_buffer_t* buf, int stream_idx);
-
-/* ------------------------------------------------------------------ */
-/*  Buffer destructor callback                                         */
-/* ------------------------------------------------------------------ */
 void
 mp4_buf_free(zst_buffer_t* buf)
 {
@@ -78,264 +51,221 @@ mp4_buf_free(zst_buffer_t* buf)
     }
 }
 
-/* ------------------------------------------------------------------ */
-/*  AVIO write callback — FFmpeg calls this to emit MP4 bytes          */
-/* ------------------------------------------------------------------ */
+static int
+mp4_aac_freq_index(int sample_rate)
+{
+    static const int rates[] = { 96000, 88200, 64000, 48000, 44100, 32000,
+                                 24000, 22050, 16000, 12000, 11025, 8000,
+                                 7350 };
+    for (int i = 0; i < (int)(sizeof(rates) / sizeof(rates[0])); i++) {
+        if (rates[i] == sample_rate) return i;
+    }
+    return 4; /* 44100 */
+}
+
+static int
+mp4_find_start_code(const uint8_t* data, int size, int offset, int* code_size)
+{
+    for (int i = offset; i + 3 <= size; i++) {
+        if (i + 4 <= size && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1) {
+            *code_size = 4;
+            return i;
+        }
+        if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
+            *code_size = 3;
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int
+mp4_copy_nal(uint8_t** dst, int* dst_size, const uint8_t* nal, int nal_size)
+{
+    uint8_t* p = av_mallocz(nal_size + AV_INPUT_BUFFER_PADDING_SIZE);
+    if (!p) return 0;
+    memcpy(p, nal, nal_size);
+    *dst = p;
+    *dst_size = nal_size;
+    return 1;
+}
+
+static int
+mp4_parse_h264_extradata(mp4_muxer_t* s, const uint8_t* data, int size)
+{
+    if (!s || !data || size <= 0 || s->video_extradata) return s && s->video_extradata;
+
+    uint8_t* sps = NULL;
+    uint8_t* pps = NULL;
+    int sps_size = 0;
+    int pps_size = 0;
+
+    int code_size = 0;
+    int sc = mp4_find_start_code(data, size, 0, &code_size);
+    if (sc >= 0) {
+        s->video_annexb = 1;
+        int pos = sc;
+        while (pos >= 0 && pos < size) {
+            int nal_start = pos + code_size;
+            int next_code_size = 0;
+            int next = mp4_find_start_code(data, size, nal_start, &next_code_size);
+            int nal_end = next >= 0 ? next : size;
+            while (nal_end > nal_start && data[nal_end - 1] == 0) nal_end--;
+            int nal_size = nal_end - nal_start;
+            if (nal_size > 0) {
+                int nal_type = data[nal_start] & 0x1f;
+                if (nal_type == 7 && !sps) {
+                    mp4_copy_nal(&sps, &sps_size, data + nal_start, nal_size);
+                } else if (nal_type == 8 && !pps) {
+                    mp4_copy_nal(&pps, &pps_size, data + nal_start, nal_size);
+                }
+            }
+            if (next < 0) break;
+            code_size = next_code_size;
+            pos = next;
+        }
+    } else if (size >= 5) {
+        s->video_annexb = 0;
+        int pos = 0;
+        while (pos + 4 <= size) {
+            int nal_size = (data[pos] << 24) | (data[pos + 1] << 16) | (data[pos + 2] << 8) | data[pos + 3];
+            pos += 4;
+            if (nal_size <= 0 || pos + nal_size > size) break;
+            int nal_type = data[pos] & 0x1f;
+            if (nal_type == 7 && !sps) {
+                mp4_copy_nal(&sps, &sps_size, data + pos, nal_size);
+            } else if (nal_type == 8 && !pps) {
+                mp4_copy_nal(&pps, &pps_size, data + pos, nal_size);
+            }
+            pos += nal_size;
+        }
+    }
+
+    if (!sps || !pps || sps_size < 4) {
+        av_free(sps);
+        av_free(pps);
+        return 0;
+    }
+
+    int extra_size = 11 + sps_size + pps_size;
+    uint8_t* extra = av_mallocz(extra_size + AV_INPUT_BUFFER_PADDING_SIZE);
+    if (!extra) {
+        av_free(sps);
+        av_free(pps);
+        return 0;
+    }
+
+    int p = 0;
+    extra[p++] = 1;
+    extra[p++] = sps[1];
+    extra[p++] = sps[2];
+    extra[p++] = sps[3];
+    extra[p++] = 0xff;
+    extra[p++] = 0xe1;
+    extra[p++] = (uint8_t)(sps_size >> 8);
+    extra[p++] = (uint8_t)(sps_size & 0xff);
+    memcpy(extra + p, sps, sps_size);
+    p += sps_size;
+    extra[p++] = 1;
+    extra[p++] = (uint8_t)(pps_size >> 8);
+    extra[p++] = (uint8_t)(pps_size & 0xff);
+    memcpy(extra + p, pps, pps_size);
+    p += pps_size;
+
+    av_free(sps);
+    av_free(pps);
+    s->video_extradata = extra;
+    s->video_extradata_size = p;
+    return 1;
+}
+
+static uint8_t*
+mp4_annexb_to_avcc(const uint8_t* data, int size, int* out_size)
+{
+    *out_size = 0;
+    int code_size = 0;
+    int pos = mp4_find_start_code(data, size, 0, &code_size);
+    if (pos < 0) return NULL;
+
+    uint8_t* out = malloc((size_t)size + 4);
+    if (!out) return NULL;
+    int out_pos = 0;
+
+    while (pos >= 0 && pos < size) {
+        int nal_start = pos + code_size;
+        int next_code_size = 0;
+        int next = mp4_find_start_code(data, size, nal_start, &next_code_size);
+        int nal_end = next >= 0 ? next : size;
+        while (nal_end > nal_start && data[nal_end - 1] == 0) nal_end--;
+        int nal_size = nal_end - nal_start;
+        if (nal_size > 0) {
+            out[out_pos++] = (uint8_t)(nal_size >> 24);
+            out[out_pos++] = (uint8_t)(nal_size >> 16);
+            out[out_pos++] = (uint8_t)(nal_size >> 8);
+            out[out_pos++] = (uint8_t)(nal_size);
+            memcpy(out + out_pos, data + nal_start, nal_size);
+            out_pos += nal_size;
+        }
+        if (next < 0) break;
+        code_size = next_code_size;
+        pos = next;
+    }
+
+    *out_size = out_pos;
+    return out;
+}
+
 static int
 mp4_mux_write_packet(void* opaque, uint8_t* buf, int buf_size)
 {
     zst_element_t* el = opaque;
-
+    
     zst_buffer_t* out_buf = zst_buffer_create(ZST_BUFFER_USER);
     if (!out_buf) return -1;
-
+    
     uint8_t* data = malloc(buf_size);
     if (!data) {
         zst_buffer_unref(out_buf);
         return -1;
     }
     memcpy(data, buf, buf_size);
-
+    
     out_buf->memory.type = ZST_MEMORY_CPU;
     out_buf->memory.data = data;
     out_buf->memory.size = buf_size;
     out_buf->destroy = mp4_buf_free;
-
+    
     zst_pad_t* src_pad = zst_element_get_pad(el, "src");
     if (src_pad && src_pad->peer) {
         zst_pad_push(src_pad, out_buf);
     }
-
+    
     zst_buffer_unref(out_buf);
     return buf_size;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Find the next H.264 start code (00 00 00 01) in a byte buffer      */
-/*  Returns the offset right AFTER the start code, or -1 if not found. */
-/* ------------------------------------------------------------------ */
-static int
-find_nal_start(const uint8_t* data, int size, int offset)
-{
-    /* 00 00 01  */
-    /* 00 00 00 01 */
-    if (offset < 0) offset = 0;
-    for (int i = offset; i + 4 <= size; i++) {
-        if (data[i] == 0 && data[i+1] == 0) {
-            if (data[i+2] == 1) {
-                return i + 3;   /* 3-byte start code */
-            }
-            if (i + 4 <= size && data[i+2] == 0 && data[i+3] == 1) {
-                return i + 4;   /* 4-byte start code */
-            }
-        }
-    }
-    return -1;
-}
-
-/* ------------------------------------------------------------------ */
-/*  Extract SPS / PPS data from the first video frame, build avcC.     */
-/*  codecpar extradata is set so the MP4 moov contains proper avcC.    */
-/* ------------------------------------------------------------------ */
-static int
-h264_parse_avcc(const uint8_t* data, int size,
-                uint8_t** avcc_out, int* avcc_size_out,
-                int* width, int* height,
-                int* fps_num, int* fps_den)
-{
-    int pos           = 0;
-    uint8_t sps_buf[64];
-    int    sps_len    = 0;
-    uint8_t pps_buf[64];
-    int    pps_len    = 0;
-    int    found_sps  = 0;
-    int    found_pps  = 0;
-
-    /* Scan for SPS and PPS NAL units */
-    int scan_start = 0;
-    while ((pos = find_nal_start(data, size, scan_start)) >= 0) {
-        if (pos >= size) break;
-        int nal_type = data[pos] & 0x1f;
-        int next_pos = find_nal_start(data, size, pos);
-        int nal_size = (next_pos > 0) ? (next_pos - 4) : (size - pos);
-        /* adjust for 3-byte vs 4-byte start code */
-        if (next_pos > 0 && next_pos - 4 >= pos && data[next_pos-4] == 0 && data[next_pos-3] == 0 && data[next_pos-2] == 0 && data[next_pos-1] == 1)
-            nal_size = next_pos - 4 - pos; /* 4-byte preceding */
-        else if (next_pos > 0)
-            nal_size = next_pos - 3 - pos; /* 3-byte preceding */
-
-        if (nal_size > 0 && nal_size < 200) {
-            if (nal_type == NAL_SPS && !found_sps) {
-                if (nal_size > (int)sizeof(sps_buf)) nal_size = sizeof(sps_buf);
-                memcpy(sps_buf, data + pos, nal_size);
-                sps_len = nal_size;
-                found_sps = 1;
-
-                /* Minimal SPS parse for width/height */
-                if (width && height && nal_size >= 4) {
-                    const uint8_t* sps = data + pos;
-                    /* sps[0] = nal header; sps[1] = profile; sps[2] = constraints; sps[3] = level */
-                    /* After level, bitstream: ue seq_parameter_set_id */
-                    /* then ue log2_max_frame_num_minus4 */
-                    /* then ue pic_order_cnt_type */
-                    /* ... skip some ... ue pic_width_in_mbs_minus1 */
-                    /* ue pic_height_in_map_units_minus1 */
-                    int bi = 4;
-                    /* Read exp-golomb (ue) values */
-                    unsigned int val;
-                    /* Skip seq_parameter_set_id */
-                    if (bi < nal_size) {
-                        int leading = 0; while (bi < nal_size && !(sps[bi] & (1 << (7 - leading%8))) && leading < 32) leading++;
-                        if (leading > 0) { bi += leading/8 + 1; /* skip the 1 bit */ }
-                        else bi++;
-                    }
-                    /* Skip log2_max_frame_num_minus4 */
-                    if (bi < nal_size) {
-                        int leading = 0; while (bi < nal_size && !(sps[bi] & (1 << (7 - leading%8))) && leading < 32) leading++;
-                        if (leading > 0) { bi += leading/8 + 1; } else bi++;
-                    }
-                    /* Skip pic_order_cnt_type */
-                    if (bi < nal_size) {
-                        int leading = 0; while (bi < nal_size && !(sps[bi] & (1 << (7 - leading%8))) && leading < 32) leading++;
-                        if (leading > 0) { bi += leading/8 + 1; } else bi++;
-                        /* if pic_order_cnt_type == 1, skip more */
-                        val = (1 << leading) - 1;
-                    }
-                    /* Skip more fields to get to pic_width_in_mbs_minus1 */
-                    /* This bitstream skipping is simplified; real SPS is complex */
-                    /* For actual width/height we rely on the element properties,
-                       but SPS-chips give us real values for the container header */
-                    if (width) *width = 640;   /* fallback */
-                    if (height) *height = 480;
-                    if (fps_num) *fps_num = 30;
-                    if (fps_den) *fps_den = 1;
-                }
-            }
-            if (nal_type == NAL_PPS && !found_pps) {
-                if (nal_size > (int)sizeof(pps_buf)) nal_size = sizeof(pps_buf);
-                memcpy(pps_buf, data + pos, nal_size);
-                pps_len = nal_size;
-                found_pps = 1;
-            }
-        }
-        if (found_sps && found_pps) break;
-        scan_start = next_pos;
-        if (scan_start < 0) break;
-    }
-
-    if (!found_sps) return -1;
-
-    /* Build avcC (ISO 14496-15) */
-    int avcc_len = 5 + 2 + sps_len + 1 + 2 + pps_len;
-    uint8_t* avcc = malloc(avcc_len);
-    if (!avcc) return -1;
-
-    avcc[0] = 1;                    /* version */
-    avcc[1] = sps_buf[1];          /* profile */
-    avcc[2] = sps_buf[2];          /* profile-compatibility */
-    avcc[3] = sps_buf[3];          /* level */
-    avcc[4] = 0xC0 | 3;            /* reserved (6) + lengthSizeMinusOne (3 => 4 bytes) */
-
-    avcc[5] = 0xe1;                /* reserved (3) + numOfSequenceParameterSets (1) */
-    avcc[6] = ((sps_len - 1) >> 8) & 0xff;
-    avcc[7] = (sps_len - 1) & 0xff;
-
-    fprintf(stderr, "DEBUG_AVCC: built[0..7]=%02x%02x%02x%02x%02x%02x%02x%02x sps_len=%d pps_len=%d sps_buf[0]=%02x\n",
-            avcc[0], avcc[1], avcc[2], avcc[3], avcc[4], avcc[5], avcc[6], avcc[7],
-            sps_len, pps_len, sps_buf[0]);
-
-    memcpy(avcc + 8, sps_buf + 1, sps_len - 1);
-
-    int off = 8 + (sps_len - 1);
-    avcc[off] = found_pps ? 1 : 0;
-    off++;
-    if (found_pps) {
-        avcc[off]     = ((pps_len - 1) >> 8) & 0xff;
-        avcc[off + 1] = (pps_len - 1) & 0xff;
-        memcpy(avcc + off + 2, pps_buf + 1, pps_len - 1);
-        off += 2 + (pps_len - 1);
-    }
-
-    *avcc_out     = avcc;
-    *avcc_size_out = off;
-
-    /* Use SPS-computed values if we parsed them (width/height from SPS),
-       otherwise trust caller-provided defaults */
-    return 0;
-}
-
-/* ------------------------------------------------------------------ */
-/*  Convert a packet from H.264 start-code format to MP4 size-prefix   */
-/*  format (required for avc1 tracks).  Returns a newly-allocated       */
-/*  buffer (caller must free).                                         */
-/* ------------------------------------------------------------------ */
-static uint8_t*
-h264_to_mp4_format(const uint8_t* src, int src_size, int* out_size)
-{
-    /* Pre-allocate worst-case (no conversion needed size) */
-    uint8_t* dst = malloc(src_size + 16);
-    int dst_pos = 0;
-    int cur     = 0;
-    int prev_start = find_nal_start(src, src_size, 0);
-
-    if (prev_start < 0) {
-        /* No start codes — passthrough */
-        memcpy(dst, src, src_size);
-        *out_size = src_size;
-        return dst;
-    }
-
-    while (cur < src_size) {
-        int next_start = (prev_start > cur)
-                         ? find_nal_start(src, src_size, prev_start)
-                         : -1;
-        int nal_end = (next_start > 0) ? (next_start - 4) : src_size;
-        if (nal_end > src_size) nal_end = src_size;
-
-        int nal_data_start = prev_start;
-        int nal_data_size  = nal_end - nal_data_start;
-        if (nal_data_size < 0) break;
-
-        if (nal_data_size > 0) {
-            /* Write 4-byte big-endian size prefix */
-            dst[dst_pos]     = (nal_data_size >> 24) & 0xff;
-            dst[dst_pos + 1] = (nal_data_size >> 16) & 0xff;
-            dst[dst_pos + 2] = (nal_data_size >> 8) & 0xff;
-            dst[dst_pos + 3] = nal_data_size & 0xff;
-            dst_pos += 4;
-            /* Copy NAL unit data (size prefix instead of start code) */
-            memcpy(dst + dst_pos, src + nal_data_start, nal_data_size);
-            dst_pos += nal_data_size;
-        }
-
-        cur = nal_end;
-        prev_start = next_start;
-    }
-
-    *out_size = dst_pos;
-    return dst;
-}
-
-/* ------------------------------------------------------------------ */
-/*  Write the MP4 header.  Called with first video or audio data       */
-/*  so we already have real codec parameters.                          */
-/* ------------------------------------------------------------------ */
 static zst_result_t
-mp4_mux_do_header(zst_element_t* el)
+mp4_mux_write_header(zst_element_t* el)
 {
     mp4_muxer_t* s = el->priv;
+    
+    if (avformat_alloc_output_context2(&s->fc, NULL, "mp4", s->direct_file ? s->location : NULL) < 0) {
+        return ZST_ERROR;
+    }
 
-    if (s->header_written) return ZST_OK;
-
-    if (!s->fc) {
-        /* First-time setup */
-        if (avformat_alloc_output_context2(&s->fc, NULL, "mp4", NULL) < 0)
+    if (s->direct_file) {
+        if (avio_open(&s->fc->pb, s->location, AVIO_FLAG_WRITE) < 0) {
+            avformat_free_context(s->fc);
+            s->fc = NULL;
             return ZST_ERROR;
+        }
+    } else {
         s->avio_buf_size = 4096;
         s->avio_buf = av_malloc(s->avio_buf_size);
         s->fc->pb = avio_alloc_context(
             s->avio_buf, s->avio_buf_size,
-            1, el, NULL, mp4_mux_write_packet, NULL);
+            1, el, NULL, mp4_mux_write_packet, NULL
+        );
         if (!s->fc->pb) {
             avformat_free_context(s->fc);
             s->fc = NULL;
@@ -344,144 +274,118 @@ mp4_mux_do_header(zst_element_t* el)
         s->fc->pb->seekable = 0;
         s->fc->flags |= AVFMT_FLAG_CUSTOM_IO;
     }
-
-    /* Create streams only if not already created */
-    if (s->video_stream_idx < 0 && s->video_linked) {
+    
+    s->video_stream_idx = -1;
+    s->audio_stream_idx = -1;
+    
+    zst_pad_t* video_pad = zst_element_get_pad(el, "video");
+    zst_pad_t* audio_pad = zst_element_get_pad(el, "audio");
+    
+    int stream_count = 0;
+    s->video_linked = (video_pad && video_pad->peer) ? 1 : 0;
+    s->audio_linked = (audio_pad && audio_pad->peer) ? 1 : 0;
+    
+    if (s->video_linked) {
         AVStream* st = avformat_new_stream(s->fc, NULL);
-        s->video_stream_idx = st->index;
         st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
-        st->codecpar->codec_id   = AV_CODEC_ID_H264;
-        st->time_base = (AVRational){1, 1000000000};
-    }
-
-    /* Update video codecpar: extradata + dimensions, even if stream already existed */
-    if (s->video_stream_idx >= 0 && s->avcc_data && s->avcc_size > 0) {
-        AVStream* st = s->fc->streams[s->video_stream_idx];
-        if (!st->codecpar->extradata || st->codecpar->extradata_size == 0) {
-            st->codecpar->extradata = av_malloc(s->avcc_size + AV_INPUT_BUFFER_PADDING_SIZE);
-            if (st->codecpar->extradata) {
-                memcpy(st->codecpar->extradata, s->avcc_data, s->avcc_size);
-                memset(st->codecpar->extradata + s->avcc_size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
-                st->codecpar->extradata_size = s->avcc_size;
-            }
+        st->codecpar->codec_id = AV_CODEC_ID_H264;
+        st->codecpar->width = s->width;
+        st->codecpar->height = s->height;
+        if (s->video_extradata && s->video_extradata_size > 0) {
+            st->codecpar->extradata = av_mallocz(s->video_extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
+            if (!st->codecpar->extradata) return ZST_ERROR;
+            memcpy(st->codecpar->extradata, s->video_extradata, s->video_extradata_size);
+            st->codecpar->extradata_size = s->video_extradata_size;
         }
-        if (s->width > 0)  { st->codecpar->width  = s->width; }
-        if (s->height > 0) { st->codecpar->height = s->height; }
+        st->time_base = (AVRational){1, 1000000000};
+        s->video_stream_idx = stream_count++;
     }
-
-    if (s->audio_stream_idx < 0 && s->audio_linked) {
+    
+    if (s->audio_linked) {
         AVStream* st = avformat_new_stream(s->fc, NULL);
-        s->audio_stream_idx = st->index;
-        st->codecpar->codec_type  = AVMEDIA_TYPE_AUDIO;
-        st->codecpar->codec_id    = AV_CODEC_ID_AAC;
-        st->codecpar->sample_rate = (s->sample_rate > 0) ? s->sample_rate : 44100;
-        st->codecpar->frame_size  = AAC_FRAME_SIZE;
+        st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
+        st->codecpar->codec_id = AV_CODEC_ID_AAC;
+        st->codecpar->sample_rate = s->sample_rate;
 #if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(59, 37, 100)
-        av_channel_layout_default(&st->codecpar->ch_layout,
-                                  (s->channels > 0) ? s->channels : 2);
+        av_channel_layout_default(&st->codecpar->ch_layout, s->channels);
 #else
-        st->codecpar->channels = (s->channels > 0) ? s->channels : 2;
-        st->codecpar->channel_layout = AV_CH_LAYOUT_STEREO;
+        st->codecpar->channels = s->channels;
+        st->codecpar->channel_layout = s->channels == 1 ? AV_CH_LAYOUT_MONO : AV_CH_LAYOUT_STEREO;
 #endif
+        st->codecpar->extradata_size = 2;
+        st->codecpar->extradata = av_mallocz(2 + AV_INPUT_BUFFER_PADDING_SIZE);
+        if (!st->codecpar->extradata) return ZST_ERROR;
+        int freq_idx = mp4_aac_freq_index(s->sample_rate);
+        int object_type = 2; /* AAC LC */
+        st->codecpar->extradata[0] = (uint8_t)((object_type << 3) | (freq_idx >> 1));
+        st->codecpar->extradata[1] = (uint8_t)(((freq_idx & 1) << 7) | (s->channels << 3));
         st->time_base = (AVRational){1, 1000000000};
+        s->audio_stream_idx = stream_count++;
     }
-
-    /* Only write header once — wait until all linked streams have their params */
-    if (!s->header_written) {
-        int ready = 1;
-        if (s->video_linked && !s->video_params_set) ready = 0;
-        if (!ready) return ZST_OK;     /* defer — caller will call again */
-
-        AVDictionary* opts = NULL;
-        av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
-        if (avformat_write_header(s->fc, &opts) < 0) {
-            av_dict_free(&opts);
-            return ZST_ERROR;
-        }
+    
+    AVDictionary* opts = NULL;
+    if (!s->direct_file) {
+        av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof+frag_discont", 0);
+        av_dict_set(&opts, "avoid_negative_ts", "disabled", 0);
+    }
+    if (avformat_write_header(s->fc, &opts) < 0) {
         av_dict_free(&opts);
-
-        s->header_written = 1;
-        s->video_eos = 0;
-        s->audio_eos = 0;
-
-        /* Flush any audio packets that arrived before header was written */
-        for (int i = 0; i < s->audio_prebuf_count; i++) {
-            if (s->audio_prebuf[i]) {
-                zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_USER);
-                if (buf) {
-                    buf->memory.data = s->audio_prebuf[i];
-                    buf->memory.size = s->audio_prebuf_size[i];
-                    buf->pts         = s->audio_prebuf_pts[i];
-                    buf->dts         = s->audio_prebuf_dts[i];
-                    mp4_mux_write(el, buf, s->audio_stream_idx);
-                    zst_buffer_unref(buf);
-                }
-                s->audio_prebuf[i] = NULL;
-            }
-        }
-        s->audio_prebuf_count = 0;
+        return ZST_ERROR;
     }
+    av_dict_free(&opts);
+    
+    s->header_written = 1;
+    s->video_eos = 0;
+    s->audio_eos = 0;
     return ZST_OK;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Write one AVPacket into the MP4 stream.                            */
-/* ------------------------------------------------------------------ */
 static zst_result_t
 mp4_mux_write(zst_element_t* el, zst_buffer_t* buf, int stream_idx)
 {
     mp4_muxer_t* s = el->priv;
-    if (!s->header_written) return ZST_ERROR;
 
+    if (!s->header_written) return ZST_ERROR;
+    
     AVPacket* pkt = av_packet_alloc();
     if (!pkt) return ZST_ERROR;
 
-    /* For H.264 video, convert from start-code to size-prefix format */
-    int is_video = (stream_idx == s->video_stream_idx);
-    uint8_t* conv_buf = NULL;
-    int conv_size = 0;
-
-    if (is_video && s->avcc_data) {
-        conv_buf = h264_to_mp4_format(buf->memory.data, buf->memory.size, &conv_size);
-        if (conv_buf) {
-            pkt->data = conv_buf;
-            pkt->size = conv_size;
-        } else {
-            pkt->data = buf->memory.data;
-            pkt->size = buf->memory.size;
+    uint8_t* converted = NULL;
+    uint8_t* packet_data = buf->memory.data;
+    int packet_size = (int)buf->memory.size;
+    int converted_size = 0;
+    if (stream_idx == s->video_stream_idx && s->video_annexb) {
+        converted = mp4_annexb_to_avcc(buf->memory.data, (int)buf->memory.size, &converted_size);
+        if (converted && converted_size > 0) {
+            packet_data = converted;
+            packet_size = converted_size;
         }
-    } else {
-        pkt->data = buf->memory.data;
-        pkt->size = buf->memory.size;
     }
 
-    pkt->pts          = av_rescale_q(buf->pts,   (AVRational){1, 1000000000},
-                                     s->fc->streams[stream_idx]->time_base);
-    pkt->dts          = av_rescale_q(buf->dts,   (AVRational){1, 1000000000},
-                                     s->fc->streams[stream_idx]->time_base);
+    if (av_new_packet(pkt, packet_size) < 0) {
+        free(converted);
+        av_packet_free(&pkt);
+        return ZST_ERROR;
+    }
+    memcpy(pkt->data, packet_data, packet_size);
+
+    pkt->pts = av_rescale_q(buf->pts, (AVRational){1, 1000000000}, s->fc->streams[stream_idx]->time_base);
+    pkt->dts = av_rescale_q(buf->dts, (AVRational){1, 1000000000}, s->fc->streams[stream_idx]->time_base);
+    pkt->duration = av_rescale_q(buf->duration, (AVRational){1, 1000000000}, s->fc->streams[stream_idx]->time_base);
     pkt->stream_index = stream_idx;
 
-    /* Set packet duration */
-    if (is_video) {
-        if (s->fps_num > 0 && s->fps_den > 0)
-            pkt->duration = av_rescale_q(1, (AVRational){s->fps_den, s->fps_num},
-                                          s->fc->streams[stream_idx]->time_base);
-        /* else let FFmpeg estimate */
-    } else {
-        pkt->duration = av_rescale_q(AAC_FRAME_SIZE,
-                                     (AVRational){1, s->sample_rate > 0 ? s->sample_rate : 44100},
-                                     s->fc->streams[stream_idx]->time_base);
-    }
 
-    int ret = av_interleaved_write_frame(s->fc, pkt);
+    if (av_interleaved_write_frame(s->fc, pkt) < 0) {
+        free(converted);
+        av_packet_free(&pkt);
+        return ZST_ERROR;
+    }
+    
+    free(converted);
     av_packet_free(&pkt);
-    free(conv_buf);
-    return (ret >= 0) ? ZST_OK : ZST_ERROR;
+    return ZST_OK;
 }
 
-/* ------------------------------------------------------------------ */
-/*  EOS handling — both pads must receive EOS before forwarding        */
-/* ------------------------------------------------------------------ */
 static void
 mp4_mux_check_eos(zst_element_t* el)
 {
@@ -489,14 +393,12 @@ mp4_mux_check_eos(zst_element_t* el)
     int all_eos = 1;
     if (s->video_linked && !s->video_eos) all_eos = 0;
     if (s->audio_linked && !s->audio_eos) all_eos = 0;
-
+    
     if (all_eos) {
-        /* Write trailer (once) */
-        if (s->fc && s->header_written && !s->trailer_written) {
+        if (s->fc && s->header_written) {
             av_write_trailer(s->fc);
-            s->trailer_written = 1;
+            s->header_written = 0;
         }
-
         zst_pad_t* src_pad = zst_element_get_pad(el, "src");
         if (src_pad && src_pad->peer) {
             zst_buffer_t* eos_buf = zst_buffer_create(ZST_BUFFER_USER);
@@ -505,52 +407,34 @@ mp4_mux_check_eos(zst_element_t* el)
                 zst_pad_push(src_pad, eos_buf);
                 zst_buffer_unref(eos_buf);
             }
+        } else if (el->bus) {
+            zst_bus_post(el->bus, zst_event_new_eos(el));
         }
     }
 }
 
-/* ------------------------------------------------------------------ */
-/*  Pad push callbacks                                                  */
-/* ------------------------------------------------------------------ */
 static zst_result_t
 mp4_mux_video_push(zst_pad_t* pad, zst_buffer_t* buf)
 {
     zst_element_t* el = pad->parent;
     mp4_muxer_t* s = el->priv;
-
+    
     if (buf->flags & ZST_BUFFER_FLAG_EOS) {
         s->video_eos = 1;
         mp4_mux_check_eos(el);
         return ZST_OK;
     }
-
-    /* On first video frame: extract SPS/PPS, build avcC, then write header */
-    if (!s->video_params_set) {
-        int w = 0, h = 0, num = 0, den = 0;
-        uint8_t* avcc = NULL;
-        int avcc_sz = 0;
-        uint8_t*  avcC_data = NULL;
-        int       avcC_size = 0;
-        /* parse first video frame header for SPS/PPS */
-        int ret = h264_parse_avcc(buf->memory.data, buf->memory.size,
-                                  &avcC_data, &avcC_size, &w, &h, &num, &den);
-        fprintf(stderr, "DEBUG: h264_parse_avcc ret=%d w=%d h=%d avcC_size=%d\n",
-                ret, w, h, avcC_size);
-        if (ret == 0 && avcC_data && avcC_size > 8) {
-            s->avcc_data = avcC_data;
-            s->avcc_size = avcC_size;
-            s->width     = w;
-            s->height    = h;
-            if (num > 0 && den > 0) { s->fps_num = num; s->fps_den = den; }
-        }
-        s->video_params_set = 1;
-
-        if (mp4_mux_do_header(el) != ZST_OK)
+    
+    if (!s->header_written) {
+        if (!mp4_parse_h264_extradata(s, buf->memory.data, (int)buf->memory.size)) {
             return ZST_ERROR;
+        }
+        if (mp4_mux_write_header(el) != ZST_OK) return ZST_ERROR;
     }
 
-    if (s->video_stream_idx >= 0)
+    if (s->video_stream_idx >= 0) {
         return mp4_mux_write(el, buf, s->video_stream_idx);
+    }
     return ZST_OK;
 }
 
@@ -559,62 +443,39 @@ mp4_mux_audio_push(zst_pad_t* pad, zst_buffer_t* buf)
 {
     zst_element_t* el = pad->parent;
     mp4_muxer_t* s = el->priv;
-
+    
     if (buf->flags & ZST_BUFFER_FLAG_EOS) {
         s->audio_eos = 1;
         mp4_mux_check_eos(el);
         return ZST_OK;
     }
-
-    /* On first audio frame: set params, then try header (may defer) */
-    if (!s->audio_params_set) {
-        if (s->sample_rate <= 0) s->sample_rate = 44100;
-        if (s->channels    <= 0) s->channels    = 2;
-        s->audio_params_set = 1;
-
-        if (!s->header_written)
-            mp4_mux_do_header(el);
-    }
-
-    /* If header isn't written yet, buffer the audio data */
+    
     if (!s->header_written) {
-        if (s->audio_prebuf_count < MAX_AUDIO_PREBUF) {
-            s->audio_prebuf_size[s->audio_prebuf_count] = buf->memory.size;
-            s->audio_prebuf_pts[s->audio_prebuf_count]  = buf->pts;
-            s->audio_prebuf_dts[s->audio_prebuf_count]  = buf->dts;
-            s->audio_prebuf[s->audio_prebuf_count] = malloc(buf->memory.size);
-            if (s->audio_prebuf[s->audio_prebuf_count]) {
-                memcpy(s->audio_prebuf[s->audio_prebuf_count],
-                       buf->memory.data, buf->memory.size);
-                s->audio_prebuf_count++;
-            }
+        if (s->video_linked && !s->video_extradata) {
+            return ZST_OK;
         }
-        return ZST_OK;
+        if (mp4_mux_write_header(el) != ZST_OK) return ZST_ERROR;
     }
 
-    if (s->audio_stream_idx >= 0)
+    if (s->audio_stream_idx >= 0) {
         return mp4_mux_write(el, buf, s->audio_stream_idx);
+    }
     return ZST_OK;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Element life-cycle callbacks                                        */
-/* ------------------------------------------------------------------ */
 static zst_result_t
 mp4_mux_start(zst_element_t* el)
 {
-    /* Just mark linked pads — actual header write is deferred to
-       first data push so we have real codec parameters. */
     mp4_muxer_t* s = el->priv;
     zst_pad_t* video_pad = zst_element_get_pad(el, "video");
     zst_pad_t* audio_pad = zst_element_get_pad(el, "audio");
     s->video_linked = (video_pad && video_pad->peer) ? 1 : 0;
     s->audio_linked = (audio_pad && audio_pad->peer) ? 1 : 0;
+    s->video_stream_idx = -1;
+    s->audio_stream_idx = -1;
+    s->header_written = 0;
     s->video_eos = 0;
     s->audio_eos = 0;
-    s->trailer_written = 0;
-    s->audio_prebuf_count = 0;
-    memset(s->audio_prebuf, 0, sizeof(s->audio_prebuf));
     return ZST_OK;
 }
 
@@ -622,46 +483,98 @@ static zst_result_t
 mp4_mux_stop(zst_element_t* el)
 {
     mp4_muxer_t* s = el->priv;
-    if (s->fc && s->header_written && !s->trailer_written) {
+    if (s->fc && s->header_written) {
         av_write_trailer(s->fc);
     }
-
+    
     if (s->fc) {
         if (s->fc->pb) {
-            av_freep(&s->fc->pb->buffer);
-            avio_context_free(&s->fc->pb);
+            if (s->direct_file) {
+                avio_closep(&s->fc->pb);
+            } else {
+                av_freep(&s->fc->pb->buffer);
+                avio_context_free(&s->fc->pb);
+            }
         }
         avformat_free_context(s->fc);
         s->fc = NULL;
     }
-
-    free(s->avcc_data);
-    s->avcc_data = NULL;
-    s->avcc_size = 0;
-
-    /* Free any un-flushed pre-buffered audio */
-    for (int i = 0; i < s->audio_prebuf_count; i++) {
-        free(s->audio_prebuf[i]);
-        s->audio_prebuf[i] = NULL;
+    if (s->video_extradata) {
+        av_free(s->video_extradata);
+        s->video_extradata = NULL;
+        s->video_extradata_size = 0;
     }
-    s->audio_prebuf_count = 0;
     s->header_written = 0;
-    s->video_params_set = 0;
-    s->audio_params_set = 0;
-    s->video_stream_idx = -1;
-    s->audio_stream_idx = -1;
     return ZST_OK;
+}
+
+static zst_result_t
+mp4_mux_set_property(zst_element_t* el, const char* name, const char* value)
+{
+    mp4_muxer_t* s = el->priv;
+    int v = atoi(value);
+    if (strcmp(name, "width") == 0) {
+        if (v <= 0) return ZST_ERROR;
+        s->width = v;
+        return ZST_OK;
+    } else if (strcmp(name, "height") == 0) {
+        if (v <= 0) return ZST_ERROR;
+        s->height = v;
+        return ZST_OK;
+    } else if (strcmp(name, "fps") == 0 || strcmp(name, "framerate") == 0) {
+        if (v <= 0) return ZST_ERROR;
+        s->fps = v;
+        return ZST_OK;
+    } else if (strcmp(name, "sample-rate") == 0 || strcmp(name, "rate") == 0) {
+        if (v <= 0) return ZST_ERROR;
+        s->sample_rate = v;
+        return ZST_OK;
+    } else if (strcmp(name, "channels") == 0) {
+        if (v <= 0) return ZST_ERROR;
+        s->channels = v;
+        return ZST_OK;
+    } else if (strcmp(name, "location") == 0 || strcmp(name, "path") == 0) {
+        snprintf(s->location, sizeof(s->location), "%s", value);
+        s->direct_file = s->location[0] != '\0';
+        return ZST_OK;
+    }
+    return ZST_ERROR;
+}
+
+static zst_result_t
+mp4_mux_get_property(zst_element_t* el, const char* name, char* value_out, size_t max_len)
+{
+    mp4_muxer_t* s = el->priv;
+    if (strcmp(name, "width") == 0) {
+        snprintf(value_out, max_len, "%d", s->width);
+        return ZST_OK;
+    } else if (strcmp(name, "height") == 0) {
+        snprintf(value_out, max_len, "%d", s->height);
+        return ZST_OK;
+    } else if (strcmp(name, "fps") == 0 || strcmp(name, "framerate") == 0) {
+        snprintf(value_out, max_len, "%d", s->fps);
+        return ZST_OK;
+    } else if (strcmp(name, "sample-rate") == 0 || strcmp(name, "rate") == 0) {
+        snprintf(value_out, max_len, "%d", s->sample_rate);
+        return ZST_OK;
+    } else if (strcmp(name, "channels") == 0) {
+        snprintf(value_out, max_len, "%d", s->channels);
+        return ZST_OK;
+    } else if (strcmp(name, "location") == 0 || strcmp(name, "path") == 0) {
+        snprintf(value_out, max_len, "%s", s->location);
+        return ZST_OK;
+    }
+    return ZST_ERROR;
 }
 
 static zst_element_ops_t g_ops = {
     .name  = "mp4mux",
     .start = mp4_mux_start,
     .stop  = mp4_mux_stop,
+    .set_property = mp4_mux_set_property,
+    .get_property = mp4_mux_get_property,
 };
 
-/* ------------------------------------------------------------------ */
-/*  Public constructor                                                  */
-/* ------------------------------------------------------------------ */
 zst_element_t*
 zst_mp4_muxer_create(void)
 {
@@ -672,6 +585,12 @@ zst_mp4_muxer_create(void)
     zst_pad_t* src;
 
     priv = calloc(1, sizeof(*priv));
+    priv->width = 640;
+    priv->height = 480;
+    priv->fps = 30;
+    priv->sample_rate = 44100;
+    priv->channels = 2;
+
     el = zst_element_create(&g_ops, priv);
 
     video = zst_pad_create("video", ZST_PAD_SINK);
@@ -685,14 +604,38 @@ zst_mp4_muxer_create(void)
     zst_element_add_pad(el, audio);
     zst_element_add_pad(el, src);
 
-    priv->video_stream_idx = -1;
-    priv->audio_stream_idx = -1;
     return el;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Plugin glue                                                         */
-/* ------------------------------------------------------------------ */
+zst_element_t*
+zst_mp4_muxer_create_with_config(const zst_mp4_muxer_config_t* config)
+{
+    if (!config || config->struct_size < sizeof(zst_mp4_muxer_config_t)) return NULL;
+    zst_element_t* el = zst_element_factory_make("mp4mux");
+    if (!el) return NULL;
+
+    if (config->width > 0) {
+        zst_element_set_property_uint(el, "width", config->width);
+    }
+    if (config->height > 0) {
+        zst_element_set_property_uint(el, "height", config->height);
+    }
+    if (config->fps > 0) {
+        zst_element_set_property_uint(el, "fps", config->fps);
+    }
+    if (config->sample_rate > 0) {
+        zst_element_set_property_uint(el, "sample-rate", config->sample_rate);
+    }
+    if (config->channels > 0) {
+        zst_element_set_property_uint(el, "channels", config->channels);
+    }
+    if (config->location) {
+        zst_element_set_property_string(el, "location", config->location);
+    }
+
+    return el;
+}
+
 #ifdef BUILDING_PLUGIN
 #include "zst_plugin.h"
 #include <string.h>
@@ -706,6 +649,39 @@ plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_property_spec_t g_mp4mux_properties[] = {
+    { "width", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "640", "Video width" },
+    { "height", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "480", "Video height" },
+    { "fps", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "30", "Video frame rate" },
+    { "framerate", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "30", "Alias for fps" },
+    { "sample-rate", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "44100", "Audio sample rate" },
+    { "rate", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "44100", "Alias for sample-rate" },
+    { "channels", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "2", "Audio channels count" },
+    { "location", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Output file path" },
+    { "path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Alias for location" }
+};
+
+static const zst_pad_template_t g_mp4mux_pads[] = {
+    { "video", ZST_PAD_SINK, "video/x-h264" },
+    { "audio", ZST_PAD_SINK, "audio/x-aac" },
+    { "src", ZST_PAD_SRC, "video/quicktime" }
+};
+
+static const zst_element_desc_t g_mp4mux_elements[] = {
+    {
+        .name = "mp4mux",
+        .long_name = "MP4 Muxer",
+        .category = "Muxer/File",
+        .description = "Muxes encoded audio/video into MP4",
+        .author = "zstreamer",
+        .properties = g_mp4mux_properties,
+        .nb_properties = sizeof(g_mp4mux_properties) / sizeof(g_mp4mux_properties[0]),
+        .pads = g_mp4mux_pads,
+        .nb_pads = sizeof(g_mp4mux_pads) / sizeof(g_mp4mux_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "mp4muxer_plugin",
@@ -716,6 +692,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create_element
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_mp4mux_elements) / sizeof(g_mp4mux_elements[0]);
+    }
+    return g_mp4mux_elements;
+}
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t*

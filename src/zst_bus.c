@@ -283,6 +283,18 @@ zst_event_new_warning(zst_element_t* src, zst_result_t result, const char* messa
     return ev;
 }
 
+zst_event_t*
+zst_event_new_segment(zst_element_t* src, const zst_segment_t* segment)
+{
+    if (!segment) return NULL;
+    zst_event_t* ev = calloc(1, sizeof(*ev));
+    if (!ev) return NULL;
+    ev->type = ZST_EVENT_SEGMENT;
+    ev->src = src;
+    ev->as.segment = *segment;
+    return ev;
+}
+
 void
 zst_event_destroy(zst_event_t* event)
 {

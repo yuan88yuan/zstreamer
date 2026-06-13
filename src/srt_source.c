@@ -1,0 +1,710 @@
+/*=============================================================================
+    srt_source.c — SRT (Secure Reliable Transport) Source Element
+=============================================================================*/
+
+#define _POSIX_C_SOURCE 200809L
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <errno.h>
+#include <unistd.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <pthread.h>
+#include <srt/srt.h>
+
+#include "zst_element.h"
+#include "zst_buffer.h"
+#include "zst_buffer_pool.h"
+#include "zst_log.h"
+#include "zst_clock.h"
+
+typedef struct {
+    char uri[512];
+    char host[128];
+    int port;
+    char mode[32]; // "caller", "listener", "rendezvous"
+    int latency;   // in ms
+    char passphrase[128];
+    int pbkeylen;  // 16, 24, 32
+    char streamid[512];
+    int payload_size;
+
+    SRTSOCKET listen_sock;
+    SRTSOCKET conn_sock;
+    bool connecting;
+
+    zst_buffer_pool_t* pool;
+
+    uint64_t reconnect_delay_ms;
+    uint64_t next_reconnect_time_ms;
+
+    // Timestamp mapping
+    uint64_t base_srt_time;
+    uint64_t base_pts;
+} srt_source_t;
+
+static uint64_t
+srt_source_current_time_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)(ts.tv_nsec / 1000000ULL);
+}
+
+// Global SRT initialization tracker
+pthread_mutex_t s_srt_init_mutex = PTHREAD_MUTEX_INITIALIZER;
+int s_srt_init_count = 0;
+
+static void srt_global_init(void) {
+    pthread_mutex_lock(&s_srt_init_mutex);
+    if (s_srt_init_count == 0) {
+        srt_startup();
+    }
+    s_srt_init_count++;
+    pthread_mutex_unlock(&s_srt_init_mutex);
+}
+
+static void srt_global_cleanup(void) {
+    pthread_mutex_lock(&s_srt_init_mutex);
+    s_srt_init_count--;
+    if (s_srt_init_count == 0) {
+        srt_cleanup();
+    }
+    pthread_mutex_unlock(&s_srt_init_mutex);
+}
+
+static void srt_parse_uri(const char* uri, char* host, size_t host_len, int* port,
+                          char* mode, size_t mode_len, int* latency,
+                          char* passphrase, size_t passphrase_len, int* pbkeylen,
+                          char* streamid, size_t streamid_len, int* payload_size) {
+    if (!uri || strncmp(uri, "srt://", 6) != 0) return;
+    const char* p = uri + 6;
+    const char* col = strchr(p, ':');
+    const char* q = strchr(p, '?');
+
+    if (col && (!q || col < q)) {
+        size_t len = col - p;
+        if (len >= host_len) len = host_len - 1;
+        strncpy(host, p, len);
+        host[len] = '\0';
+        p = col + 1;
+        q = strchr(p, '?');
+        if (q) {
+            *port = atoi(p);
+            p = q + 1;
+        } else {
+            *port = atoi(p);
+            return;
+        }
+    } else if (q) {
+        size_t len = q - p;
+        if (len >= host_len) len = host_len - 1;
+        strncpy(host, p, len);
+        host[len] = '\0';
+        p = q + 1;
+    } else {
+        strncpy(host, p, host_len - 1);
+        host[host_len - 1] = '\0';
+        return;
+    }
+
+    while (p && *p) {
+        const char* next = strchr(p, '&');
+        size_t len = next ? (size_t)(next - p) : strlen(p);
+        char pair[256];
+        if (len >= sizeof(pair)) len = sizeof(pair) - 1;
+        strncpy(pair, p, len);
+        pair[len] = '\0';
+
+        char* eq = strchr(pair, '=');
+        if (eq) {
+            *eq = '\0';
+            char* key = pair;
+            char* val = eq + 1;
+            if (strcmp(key, "mode") == 0) {
+                strncpy(mode, val, mode_len - 1);
+                mode[mode_len - 1] = '\0';
+            } else if (strcmp(key, "latency") == 0) {
+                *latency = atoi(val);
+            } else if (strcmp(key, "passphrase") == 0) {
+                strncpy(passphrase, val, passphrase_len - 1);
+                passphrase[passphrase_len - 1] = '\0';
+            } else if (strcmp(key, "pbkeylen") == 0) {
+                *pbkeylen = atoi(val);
+            } else if (strcmp(key, "streamid") == 0) {
+                strncpy(streamid, val, streamid_len - 1);
+                streamid[streamid_len - 1] = '\0';
+            } else if (strcmp(key, "payload-size") == 0) {
+                *payload_size = atoi(val);
+            }
+        }
+        p = next ? next + 1 : NULL;
+    }
+}
+
+static zst_result_t
+srt_source_open(zst_element_t* el)
+{
+    srt_source_t* s = el->priv;
+    srt_global_init();
+
+    s->listen_sock = SRT_INVALID_SOCK;
+    s->conn_sock = SRT_INVALID_SOCK;
+    s->connecting = false;
+    s->reconnect_delay_ms = 500;
+    s->next_reconnect_time_ms = 0;
+    s->base_srt_time = 0;
+    s->base_pts = 0;
+
+    if (s->payload_size <= 0) {
+        s->payload_size = 1316;
+    }
+
+    zst_buffer_pool_config_t pool_cfg = {
+        .min_buffers = 4,
+        .max_buffers = 16,
+        .buffer_size = (size_t)s->payload_size,
+        .buffer_type = ZST_BUFFER_USER
+    };
+    s->pool = zst_buffer_pool_create(NULL, &pool_cfg);
+    if (!s->pool) {
+        ZST_LOG_ERROR("srtsrc", "Failed to create buffer pool");
+        srt_global_cleanup();
+        return ZST_ERROR;
+    }
+
+    if (strcmp(s->mode, "listener") == 0) {
+        s->listen_sock = srt_create_socket();
+        if (s->listen_sock == SRT_INVALID_SOCK) {
+            ZST_LOG_ERROR("srtsrc", "Failed to create listener socket: %s", srt_getlasterror_str());
+            zst_buffer_pool_destroy(s->pool);
+            s->pool = NULL;
+            srt_global_cleanup();
+            return ZST_ERROR;
+        }
+
+        int syn = 0;
+        srt_setsockopt(s->listen_sock, 0, SRTO_RCVSYN, &syn, sizeof(syn));
+
+        int reuse = 1;
+        srt_setsockopt(s->listen_sock, 0, SRTO_REUSEADDR, &reuse, sizeof(reuse));
+
+        int latency = s->latency;
+        srt_setsockopt(s->listen_sock, 0, SRTO_LATENCY, &latency, sizeof(latency));
+
+        if (strlen(s->passphrase) > 0) {
+            srt_setsockopt(s->listen_sock, 0, SRTO_PASSPHRASE, s->passphrase, strlen(s->passphrase));
+            int keylen = s->pbkeylen;
+            srt_setsockopt(s->listen_sock, 0, SRTO_PBKEYLEN, &keylen, sizeof(keylen));
+        }
+
+        if (strlen(s->streamid) > 0) {
+            srt_setsockopt(s->listen_sock, 0, SRTO_STREAMID, s->streamid, strlen(s->streamid));
+        }
+
+        struct sockaddr_in addr = {0};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(s->port);
+        if (strlen(s->host) > 0 && strcmp(s->host, "127.0.0.1") != 0 && strcmp(s->host, "0.0.0.0") != 0) {
+            inet_pton(AF_INET, s->host, &addr.sin_addr);
+        } else {
+            addr.sin_addr.s_addr = INADDR_ANY;
+        }
+
+        if (srt_bind(s->listen_sock, (struct sockaddr*)&addr, sizeof(addr)) == SRT_ERROR) {
+            ZST_LOG_ERROR("srtsrc", "srt_bind failed: %s", srt_getlasterror_str());
+            srt_close(s->listen_sock);
+            s->listen_sock = SRT_INVALID_SOCK;
+            zst_buffer_pool_destroy(s->pool);
+            s->pool = NULL;
+            srt_global_cleanup();
+            return ZST_ERROR;
+        }
+
+        if (srt_listen(s->listen_sock, 1) == SRT_ERROR) {
+            ZST_LOG_ERROR("srtsrc", "srt_listen failed: %s", srt_getlasterror_str());
+            srt_close(s->listen_sock);
+            s->listen_sock = SRT_INVALID_SOCK;
+            zst_buffer_pool_destroy(s->pool);
+            s->pool = NULL;
+            srt_global_cleanup();
+            return ZST_ERROR;
+        }
+        ZST_LOG_INFO("srtsrc", "Listening on port %d", s->port);
+    }
+
+    return ZST_OK;
+}
+
+static zst_result_t
+srt_source_close(zst_element_t* el)
+{
+    srt_source_t* s = el->priv;
+    if (s->conn_sock != SRT_INVALID_SOCK) {
+        srt_close(s->conn_sock);
+        s->conn_sock = SRT_INVALID_SOCK;
+    }
+    if (s->listen_sock != SRT_INVALID_SOCK) {
+        srt_close(s->listen_sock);
+        s->listen_sock = SRT_INVALID_SOCK;
+    }
+    if (s->pool) {
+        zst_buffer_pool_destroy(s->pool);
+        s->pool = NULL;
+    }
+    srt_global_cleanup();
+    return ZST_OK;
+}
+
+static zst_result_t
+srt_source_start(zst_element_t* el)
+{
+    srt_source_t* s = el->priv;
+    s->reconnect_delay_ms = 500;
+    s->next_reconnect_time_ms = 0;
+    s->base_srt_time = 0;
+    s->base_pts = 0;
+    s->connecting = false;
+    return ZST_OK;
+}
+
+static zst_result_t
+srt_source_stop(zst_element_t* el)
+{
+    srt_source_t* s = el->priv;
+    if (s->conn_sock != SRT_INVALID_SOCK) {
+        srt_close(s->conn_sock);
+        s->conn_sock = SRT_INVALID_SOCK;
+    }
+    s->connecting = false;
+    return ZST_OK;
+}
+
+static zst_result_t
+srt_source_ensure_connection(zst_element_t* el, srt_source_t* s)
+{
+    if (s->conn_sock != SRT_INVALID_SOCK && !s->connecting) {
+        return ZST_OK;
+    }
+
+    if (strcmp(s->mode, "listener") == 0) {
+        struct sockaddr_in peer;
+        int peer_len = sizeof(peer);
+        SRTSOCKET client = srt_accept(s->listen_sock, (struct sockaddr*)&peer, &peer_len);
+        if (client == SRT_INVALID_SOCK) {
+            int err = srt_getlasterror(NULL);
+            if (err == SRT_EASYNCRCV) {
+                return ZST_TIMEOUT;
+            }
+            ZST_LOG_ERROR("srtsrc", "srt_accept failed: %s", srt_getlasterror_str());
+            return ZST_ERROR;
+        }
+        s->conn_sock = client;
+        int syn = 0;
+        srt_setsockopt(s->conn_sock, 0, SRTO_RCVSYN, &syn, sizeof(syn));
+        srt_setsockopt(s->conn_sock, 0, SRTO_SNDSYN, &syn, sizeof(syn));
+        ZST_LOG_INFO("srtsrc", "Accepted SRT connection");
+        return ZST_OK;
+    }
+
+    // Caller or Rendezvous mode
+    uint64_t now = srt_source_current_time_ms();
+    if (!s->connecting) {
+        if (now < s->next_reconnect_time_ms) {
+            return ZST_TIMEOUT;
+        }
+
+        s->conn_sock = srt_create_socket();
+        if (s->conn_sock == SRT_INVALID_SOCK) {
+            ZST_LOG_ERROR("srtsrc", "Failed to create socket: %s", srt_getlasterror_str());
+            return ZST_ERROR;
+        }
+
+        int syn = 0;
+        srt_setsockopt(s->conn_sock, 0, SRTO_RCVSYN, &syn, sizeof(syn));
+        srt_setsockopt(s->conn_sock, 0, SRTO_SNDSYN, &syn, sizeof(syn));
+
+        int latency = s->latency;
+        srt_setsockopt(s->conn_sock, 0, SRTO_LATENCY, &latency, sizeof(latency));
+
+        if (strcmp(s->mode, "rendezvous") == 0) {
+            int rend = 1;
+            srt_setsockopt(s->conn_sock, 0, SRTO_RENDEZVOUS, &rend, sizeof(rend));
+        }
+
+        if (strlen(s->passphrase) > 0) {
+            srt_setsockopt(s->conn_sock, 0, SRTO_PASSPHRASE, s->passphrase, strlen(s->passphrase));
+            int keylen = s->pbkeylen;
+            srt_setsockopt(s->conn_sock, 0, SRTO_PBKEYLEN, &keylen, sizeof(keylen));
+        }
+
+        if (strlen(s->streamid) > 0) {
+            srt_setsockopt(s->conn_sock, 0, SRTO_STREAMID, s->streamid, strlen(s->streamid));
+        }
+
+        struct sockaddr_in addr = {0};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(s->port);
+        if (inet_pton(AF_INET, s->host, &addr.sin_addr) != 1) {
+            ZST_LOG_ERROR("srtsrc", "Invalid host address '%s'", s->host);
+            srt_close(s->conn_sock);
+            s->conn_sock = SRT_INVALID_SOCK;
+            return ZST_ERROR;
+        }
+
+        ZST_LOG_INFO("srtsrc", "Connecting to %s:%d (mode: %s)", s->host, s->port, s->mode);
+        int res = srt_connect(s->conn_sock, (struct sockaddr*)&addr, sizeof(addr));
+        if (res == SRT_ERROR) {
+            int err = srt_getlasterror(NULL);
+            if (err != SRT_EASYNCSND) {
+                ZST_LOG_WARN("srtsrc", "srt_connect failed immediately: %s", srt_getlasterror_str());
+                srt_close(s->conn_sock);
+                s->conn_sock = SRT_INVALID_SOCK;
+                s->next_reconnect_time_ms = now + s->reconnect_delay_ms;
+                s->reconnect_delay_ms = (s->reconnect_delay_ms * 2 > 5000) ? 5000 : s->reconnect_delay_ms * 2;
+                return ZST_TIMEOUT;
+            }
+        }
+        s->connecting = true;
+        return ZST_TIMEOUT;
+    }
+
+    // We are connecting
+    SRT_SOCKSTATUS status = srt_getsockstate(s->conn_sock);
+    if (status == SRTS_CONNECTED) {
+        s->connecting = false;
+        s->reconnect_delay_ms = 500;
+        ZST_LOG_INFO("srtsrc", "SRT connected successfully");
+        return ZST_OK;
+    } else if (status == SRTS_CONNECTING) {
+        return ZST_TIMEOUT;
+    } else {
+        ZST_LOG_WARN("srtsrc", "SRT connection failed, socket status: %d", status);
+        srt_close(s->conn_sock);
+        s->conn_sock = SRT_INVALID_SOCK;
+        s->connecting = false;
+        s->next_reconnect_time_ms = now + s->reconnect_delay_ms;
+        s->reconnect_delay_ms = (s->reconnect_delay_ms * 2 > 5000) ? 5000 : s->reconnect_delay_ms * 2;
+        return ZST_TIMEOUT;
+    }
+}
+
+static zst_result_t
+srt_source_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
+{
+    (void)in;
+    srt_source_t* s = el->priv;
+
+    zst_result_t conn_res = srt_source_ensure_connection(el, s);
+    if (conn_res != ZST_OK) {
+        return conn_res;
+    }
+
+    zst_buffer_t* buf = zst_buffer_create_with_pool(s->pool);
+    if (!buf) {
+        return ZST_ERROR;
+    }
+
+    SRT_MSGCTRL ctrl = srt_msgctrl_default;
+    int n = srt_recvmsg2(s->conn_sock, (char*)buf->memory.data, s->payload_size, &ctrl);
+    if (n > 0) {
+        buf->memory.size = (size_t)n;
+
+        // Timestamp mapping
+        uint64_t srt_time = ctrl.srctime; // microseconds
+        if (s->base_srt_time == 0) {
+            s->base_srt_time = srt_time;
+            if (el->clock) {
+                s->base_pts = zst_clock_get_time(el->clock);
+            } else {
+                s->base_pts = 0;
+            }
+        }
+        buf->pts = s->base_pts + (srt_time - s->base_srt_time) * 1000ULL;
+        buf->duration = 0;
+
+        *out = buf;
+        return ZST_OK;
+    }
+
+    zst_buffer_unref(buf);
+
+    if (n == 0) {
+        // EOF
+        ZST_LOG_INFO("srtsrc", "SRT connection closed by peer");
+        srt_close(s->conn_sock);
+        s->conn_sock = SRT_INVALID_SOCK;
+        s->base_srt_time = 0;
+        return ZST_EOF;
+    }
+
+    int err = srt_getlasterror(NULL);
+    if (err == SRT_EASYNCRCV) {
+        return ZST_TIMEOUT;
+    }
+
+    // Connection broken or lost
+    ZST_LOG_WARN("srtsrc", "SRT socket error: %s (error code: %d)", srt_getlasterror_str(), err);
+    srt_close(s->conn_sock);
+    s->conn_sock = SRT_INVALID_SOCK;
+    s->base_srt_time = 0;
+
+    if (err == SRT_ECONNLOST || err == SRT_ENOCONN) {
+        return ZST_EOF; // Graceful EOS on link loss/close
+    }
+    return ZST_TIMEOUT;
+}
+
+static zst_caps_t*
+srt_source_get_caps(zst_element_t* el, zst_pad_t* pad, const zst_caps_t* filter)
+{
+    (void)el;
+    (void)pad;
+    (void)filter;
+
+    zst_caps_t* caps = zst_caps_create();
+    if (!caps) return NULL;
+
+    zst_caps_struct_t* caps_mp2t = calloc(1, sizeof(*caps_mp2t));
+    if (caps_mp2t) {
+        strncpy(caps_mp2t->media_type, "video/mp2t", sizeof(caps_mp2t->media_type) - 1);
+        caps_mp2t->type = ZST_CAPS_ANY;
+        caps_mp2t->next = NULL;
+        zst_caps_append(caps, caps_mp2t);
+    }
+
+    zst_caps_struct_t* caps_raw = calloc(1, sizeof(*caps_raw));
+    if (caps_raw) {
+        strncpy(caps_raw->media_type, "application/octet-stream", sizeof(caps_raw->media_type) - 1);
+        caps_raw->type = ZST_CAPS_ANY;
+        caps_raw->next = NULL;
+        zst_caps_append(caps, caps_raw);
+    }
+
+    return caps;
+}
+
+static zst_result_t
+srt_source_set_property(zst_element_t* el, const char* name, const char* value)
+{
+    srt_source_t* s = el->priv;
+    if (strcmp(name, "uri") == 0) {
+        strncpy(s->uri, value, sizeof(s->uri) - 1);
+        s->uri[sizeof(s->uri) - 1] = '\0';
+        srt_parse_uri(s->uri, s->host, sizeof(s->host), &s->port,
+                      s->mode, sizeof(s->mode), &s->latency,
+                      s->passphrase, sizeof(s->passphrase), &s->pbkeylen,
+                      s->streamid, sizeof(s->streamid), &s->payload_size);
+        return ZST_OK;
+    }
+    if (strcmp(name, "host") == 0) {
+        strncpy(s->host, value, sizeof(s->host) - 1);
+        s->host[sizeof(s->host) - 1] = '\0';
+        return ZST_OK;
+    }
+    if (strcmp(name, "port") == 0) {
+        s->port = atoi(value);
+        return ZST_OK;
+    }
+    if (strcmp(name, "mode") == 0) {
+        strncpy(s->mode, value, sizeof(s->mode) - 1);
+        s->mode[sizeof(s->mode) - 1] = '\0';
+        return ZST_OK;
+    }
+    if (strcmp(name, "latency") == 0) {
+        s->latency = atoi(value);
+        return ZST_OK;
+    }
+    if (strcmp(name, "passphrase") == 0) {
+        strncpy(s->passphrase, value, sizeof(s->passphrase) - 1);
+        s->passphrase[sizeof(s->passphrase) - 1] = '\0';
+        return ZST_OK;
+    }
+    if (strcmp(name, "pbkeylen") == 0) {
+        s->pbkeylen = atoi(value);
+        return ZST_OK;
+    }
+    if (strcmp(name, "streamid") == 0) {
+        strncpy(s->streamid, value, sizeof(s->streamid) - 1);
+        s->streamid[sizeof(s->streamid) - 1] = '\0';
+        return ZST_OK;
+    }
+    if (strcmp(name, "payload-size") == 0) {
+        s->payload_size = atoi(value);
+        return ZST_OK;
+    }
+    return ZST_ERROR;
+}
+
+static zst_result_t
+srt_source_get_property(zst_element_t* el, const char* name, char* value_out, size_t max_len)
+{
+    srt_source_t* s = el->priv;
+    if (strcmp(name, "uri") == 0) {
+        strncpy(value_out, s->uri, max_len);
+        return ZST_OK;
+    }
+    if (strcmp(name, "host") == 0) {
+        strncpy(value_out, s->host, max_len);
+        return ZST_OK;
+    }
+    if (strcmp(name, "port") == 0) {
+        snprintf(value_out, max_len, "%d", s->port);
+        return ZST_OK;
+    }
+    if (strcmp(name, "mode") == 0) {
+        strncpy(value_out, s->mode, max_len);
+        return ZST_OK;
+    }
+    if (strcmp(name, "latency") == 0) {
+        snprintf(value_out, max_len, "%d", s->latency);
+        return ZST_OK;
+    }
+    if (strcmp(name, "passphrase") == 0) {
+        strncpy(value_out, s->passphrase, max_len);
+        return ZST_OK;
+    }
+    if (strcmp(name, "pbkeylen") == 0) {
+        snprintf(value_out, max_len, "%d", s->pbkeylen);
+        return ZST_OK;
+    }
+    if (strcmp(name, "streamid") == 0) {
+        strncpy(value_out, s->streamid, max_len);
+        return ZST_OK;
+    }
+    if (strcmp(name, "payload-size") == 0) {
+        snprintf(value_out, max_len, "%d", s->payload_size);
+        return ZST_OK;
+    }
+    return ZST_ERROR;
+}
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    srt_source_t* s = el->priv;
+    return s->pool;
+}
+
+static zst_element_ops_t g_ops = {
+    .name = "srtsrc",
+    .open = srt_source_open,
+    .close = srt_source_close,
+    .start = srt_source_start,
+    .stop = srt_source_stop,
+    .process = srt_source_process,
+    .get_caps = srt_source_get_caps,
+    .set_property = srt_source_set_property,
+    .get_property = srt_source_get_property,
+    .get_pool = element_get_pool
+};
+
+zst_element_t*
+zst_srt_source_create(void)
+{
+    zst_element_t* el;
+    srt_source_t* priv;
+    zst_pad_t* src;
+
+    priv = calloc(1, sizeof(*priv));
+    if (!priv) return NULL;
+
+    priv->port = 9000;
+    strcpy(priv->host, "127.0.0.1");
+    strcpy(priv->mode, "caller");
+    priv->latency = 120;
+    priv->pbkeylen = 16;
+    priv->payload_size = 1316;
+    priv->listen_sock = SRT_INVALID_SOCK;
+    priv->conn_sock = SRT_INVALID_SOCK;
+    priv->connecting = false;
+
+    el = zst_element_create(&g_ops, priv);
+    src = zst_pad_create("src", ZST_PAD_SRC);
+    zst_element_add_pad(el, src);
+
+    return el;
+}
+
+#ifdef BUILDING_PLUGIN
+#include "zst_plugin.h"
+
+static zst_element_t*
+plugin_create_element(const char* name)
+{
+    if (strcmp(name, "srtsrc") == 0) {
+        return zst_srt_source_create();
+    }
+    return NULL;
+}
+
+static const zst_property_spec_t g_srtsrc_properties[] = {
+    { "uri", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "SRT Connection URI" },
+    { "host", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "127.0.0.1", "SRT peer host (caller/rendezvous modes)" },
+    { "port", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "9000", "SRT port" },
+    { "mode", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "caller", "SRT connection mode (caller, listener, rendezvous)" },
+    { "latency", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "120", "SRT latency in milliseconds" },
+    { "passphrase", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "SRT AES encryption passphrase" },
+    { "pbkeylen", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "16", "SRT AES key length (16, 24, 32)" },
+    { "streamid", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "SRT stream ID" },
+    { "payload-size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1316", "SRT packet payload size" }
+};
+
+static const zst_pad_template_t g_srtsrc_pads[] = {
+    { "src", ZST_PAD_SRC, "ANY" }
+};
+
+static const zst_element_desc_t g_srtsrc_elements[] = {
+    {
+        .name = "srtsrc",
+        .long_name = "SRT Source",
+        .category = "Source/Network",
+        .description = "Receives buffers over Secure Reliable Transport (SRT)",
+        .author = "zstreamer",
+        .properties = g_srtsrc_properties,
+        .nb_properties = sizeof(g_srtsrc_properties) / sizeof(g_srtsrc_properties[0]),
+        .pads = g_srtsrc_pads,
+        .nb_pads = sizeof(g_srtsrc_pads) / sizeof(g_srtsrc_pads[0]),
+        .create = NULL
+    }
+};
+
+static zst_plugin_t g_plugin = {
+    .desc = {
+        .name = "srtsrc_plugin",
+        .author = "zstreamer",
+        .version = "1.0.0",
+        .init = NULL,
+        .deinit = NULL
+    },
+    .create_element = plugin_create_element
+};
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_srtsrc_elements) / sizeof(g_srtsrc_elements[0]);
+    }
+    return g_srtsrc_elements;
+}
+
+ZST_PLUGIN_EXPORT
+zst_plugin_t*
+zst_get_plugin(void)
+{
+    zst_plugin_t* p = malloc(sizeof(*p));
+    if (p) {
+        *p = g_plugin;
+    }
+    return p;
+}
+#endif

@@ -5,6 +5,7 @@
 
 #include "zst_types.h"
 #include "zst_element.h"
+#include "zst_element_factory.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -37,6 +38,9 @@ struct zst_plugin {
 
 typedef zst_plugin_t* (*zst_get_plugin_fn)(void);
 
+typedef const zst_element_desc_t* (*zst_get_plugin_elements_fn)(
+    uint32_t* nb_elements_out);
+
 #define ZST_PLUGIN_EXPORT \
     __attribute__((visibility("default")))
 
@@ -59,11 +63,25 @@ zst_result_t zst_plugin_registry_scan(
 
 zst_result_t zst_plugin_registry_scan_env(void);
 
-zst_element_t* zst_element_factory_make(
-    const char* name);
+/* Internal: register elements directly with the factory registry.
+ * Used by the elements library's zst_register_builtin_elements().
+ *
+ * Parameters:
+ *   elements       — array of element descriptors
+ *   nb_elements    — number of descriptors
+ *   create_element — callback that constructs an element by name
+ */
+zst_result_t zst_plugin_registry_add_entry(
+    const zst_element_desc_t* elements,
+    uint32_t nb_elements,
+    zst_create_element_fn create_element);
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t* zst_get_plugin(void);
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t* zst_get_plugin_elements(
+    uint32_t* nb_elements_out);
 
 #ifdef __cplusplus
 }

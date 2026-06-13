@@ -9,6 +9,8 @@
 #include <stdbool.h>
 
 #include "zst_element.h"
+#include "zst_element_factory.h"
+#include "zstreamer/elements/zst_video_test_src.h"
 #include "zst_log.h"
 #include "zst_buffer.h"
 #include "zst_buffer_pool.h"
@@ -30,6 +32,7 @@ typedef struct {
     char pixel_format[32];
     int num_buffers;
     bool loop;
+    bool use_clock;
 
     uint64_t frame_count;
     zst_buffer_pool_t* pool;
@@ -159,10 +162,7 @@ static zst_result_t video_test_src_process(zst_element_t* el, zst_buffer_t* in, 
         if (s->loop) {
             s->frame_count = 0;
         } else {
-            zst_buffer_t* eos_buf = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
-            if (eos_buf) eos_buf->flags |= ZST_BUFFER_FLAG_EOS;
-            *out = eos_buf;
-            return ZST_OK;
+            return ZST_EOF;
         }
     }
 
@@ -206,12 +206,13 @@ static zst_result_t video_test_src_process(zst_element_t* el, zst_buffer_t* in, 
         case PATTERN_BLACK: render_black(s, y_plane, u_plane, v_plane); break;
     }
 
-    uint64_t dur_ns = 1000000ULL / s->fps; // Microseconds as requested
-    if (el->clock) {
+    uint64_t dur_ns = 1000000000ULL / s->fps;
+    if (s->use_clock && el->clock) {
         buf->pts = zst_clock_get_time(el->clock);
     } else {
         buf->pts = s->frame_count * dur_ns;
     }
+    buf->dts = buf->pts;
     buf->duration = dur_ns;
 
     s->frame_count++;
@@ -263,6 +264,9 @@ static zst_result_t video_test_src_set_property(zst_element_t* el, const char* n
     } else if (strcmp(name, "loop") == 0) {
         s->loop = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0);
         return ZST_OK;
+    } else if (strcmp(name, "use-clock") == 0 || strcmp(name, "do-timestamp") == 0) {
+        s->use_clock = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcmp(value, "yes") == 0);
+        return ZST_OK;
     }
     return ZST_ERROR;
 }
@@ -297,8 +301,19 @@ static zst_result_t video_test_src_get_property(zst_element_t* el, const char* n
     } else if (strcmp(name, "loop") == 0) {
         strncpy(value_out, s->loop ? "true" : "false", max_len);
         return ZST_OK;
+    } else if (strcmp(name, "use-clock") == 0 || strcmp(name, "do-timestamp") == 0) {
+        strncpy(value_out, s->use_clock ? "true" : "false", max_len);
+        return ZST_OK;
     }
     return ZST_ERROR;
+}
+
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    video_test_src_t* s = el->priv;
+    return s->pool;
 }
 
 static zst_element_ops_t g_ops = {
@@ -309,6 +324,7 @@ static zst_element_ops_t g_ops = {
     .get_caps = video_test_src_get_caps,
     .set_property = video_test_src_set_property,
     .get_property = video_test_src_get_property,
+    .get_pool = element_get_pool
 };
 
 zst_element_t* zst_video_test_src_create(void)
@@ -325,12 +341,42 @@ zst_element_t* zst_video_test_src_create(void)
     strcpy(priv->pixel_format, "YUV420P");
     priv->num_buffers = -1;
     priv->loop = false;
+    priv->use_clock = false;
     priv->frame_count = 0;
 
     el = zst_element_create(&g_ops, priv);
 
     src = zst_pad_create("src", ZST_PAD_SRC);
     zst_element_add_pad(el, src);
+
+    return el;
+}
+
+zst_element_t*
+zst_video_test_src_create_with_config(const zst_video_test_src_config_t* config)
+{
+    if (!config || config->struct_size < sizeof(zst_video_test_src_config_t)) return NULL;
+    zst_element_t* el = zst_element_factory_make("videotestsrc");
+    if (!el) return NULL;
+
+    if (config->width > 0) {
+        zst_element_set_property_uint(el, "width", config->width);
+    }
+    if (config->height > 0) {
+        zst_element_set_property_uint(el, "height", config->height);
+    }
+    if (config->fps > 0) {
+        zst_element_set_property_uint(el, "fps", config->fps);
+    }
+    if (config->pattern) {
+        zst_element_set_property_string(el, "pattern", config->pattern);
+    }
+    if (config->pixel_format) {
+        zst_element_set_property_string(el, "pixel-format", config->pixel_format);
+    }
+    zst_element_set_property_int(el, "num-buffers", config->num_buffers);
+    zst_element_set_property_bool(el, "loop", config->loop);
+    zst_element_set_property_bool(el, "use-clock", config->use_clock);
 
     return el;
 }
@@ -346,6 +392,25 @@ static zst_element_t* plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_pad_template_t g_videotestsrc_pads[] = {
+    { "src", ZST_PAD_SRC, "ANY" }
+};
+
+static const zst_element_desc_t g_videotestsrc_elements[] = {
+    {
+        .name = "videotestsrc",
+        .long_name = "Video Test Source",
+        .category = "Source/Test",
+        .description = "Generates synthetic video test patterns",
+        .author = "zstreamer",
+        .properties = NULL,
+        .nb_properties = 0,
+        .pads = g_videotestsrc_pads,
+        .nb_pads = sizeof(g_videotestsrc_pads) / sizeof(g_videotestsrc_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "videotestsrc_plugin",
@@ -356,6 +421,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create_element
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_videotestsrc_elements) / sizeof(g_videotestsrc_elements[0]);
+    }
+    return g_videotestsrc_elements;
+}
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t* zst_get_plugin(void)

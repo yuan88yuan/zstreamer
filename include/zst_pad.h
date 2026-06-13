@@ -6,6 +6,8 @@
 #include "zst_types.h"
 #include "zst_buffer.h"
 #include "zst_caps.h"
+#include "zst_segment.h"
+#include <pthread.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,6 +26,26 @@ typedef zst_result_t (*zst_pad_pull_fn)(
     zst_pad_t* pad,
     zst_buffer_t** out);
 
+typedef enum {
+    ZST_PAD_PROBE_PRE_BUFFER  = 1u << 0,
+    ZST_PAD_PROBE_POST_BUFFER = 1u << 1,
+    ZST_PAD_PROBE_PRE_EVENT   = 1u << 2,
+    ZST_PAD_PROBE_POST_EVENT  = 1u << 3
+} zst_pad_probe_type_t;
+
+typedef enum {
+    ZST_PAD_PROBE_OK,
+    ZST_PAD_PROBE_DROP,
+    ZST_PAD_PROBE_BLOCK,
+    ZST_PAD_PROBE_REBLOCK
+} zst_pad_probe_return_t;
+
+typedef zst_pad_probe_return_t (*zst_pad_probe_fn)(
+    zst_pad_t* pad,
+    zst_buffer_t* buf,
+    zst_pad_probe_type_t type,
+    void* user_data);
+
 struct zst_pad {
 
     const char* name;
@@ -41,6 +63,22 @@ struct zst_pad {
     zst_pad_t* peer;
 
     void* priv;
+
+    void (*destroy_priv)(
+        zst_pad_t* pad);
+
+    zst_pad_probe_t* probes;
+    uint64_t next_probe_id;
+
+    pthread_mutex_t probe_lock;
+    pthread_cond_t probe_cond;
+    int blocked;
+    int block_callback_fired;
+    zst_pad_probe_fn block_callback;
+    void* block_user_data;
+
+    int has_segment;
+    zst_segment_t segment;
 };
 
 zst_pad_t* zst_pad_create(
@@ -82,6 +120,45 @@ zst_result_t zst_pad_set_template_caps(
 zst_result_t zst_pad_negotiate(
     zst_pad_t* src,
     zst_pad_t* sink);
+
+uint64_t zst_pad_add_probe(
+    zst_pad_t* pad,
+    uint32_t types,
+    zst_pad_probe_fn callback,
+    void* user_data);
+
+zst_result_t zst_pad_remove_probe(
+    zst_pad_t* pad,
+    uint64_t probe_id);
+
+zst_result_t zst_pad_block(
+    zst_pad_t* pad);
+
+zst_result_t zst_pad_unblock(
+    zst_pad_t* pad);
+
+int zst_pad_is_blocked(
+    zst_pad_t* pad);
+
+zst_result_t zst_pad_set_block_callback(
+    zst_pad_t* pad,
+    zst_pad_probe_fn callback,
+    void* user_data);
+
+zst_result_t zst_pad_set_segment(
+    zst_pad_t* pad,
+    const zst_segment_t* segment);
+
+zst_result_t zst_pad_get_segment(
+    zst_pad_t* pad,
+    zst_segment_t* segment_out);
+
+void zst_pad_clear_segment(
+    zst_pad_t* pad);
+
+zst_result_t zst_pad_push_segment(
+    zst_pad_t* src,
+    const zst_segment_t* segment);
 
 #ifdef __cplusplus
 }

@@ -9,6 +9,8 @@
 #include <stdint.h>
 
 #include "zst_element.h"
+#include "zst_element_factory.h"
+#include "zstreamer/elements/zst_audio_test_src.h"
 #include "zst_buffer.h"
 #include "zst_buffer_pool.h"
 #include "zst_clock.h"
@@ -35,6 +37,7 @@ typedef struct {
     int64_t num_samples;
     int64_t num_buffers;
     bool loop;
+    bool use_clock;
 
     uint64_t sample_count;
     uint64_t buffer_count;
@@ -261,14 +264,6 @@ audio_test_src_stop(zst_element_t* el)
     return ZST_OK;
 }
 
-static zst_buffer_t*
-audio_test_src_create_eos(void)
-{
-    zst_buffer_t* eos_buf = zst_buffer_create(ZST_BUFFER_AUDIO_FRAME);
-    if (eos_buf) eos_buf->flags |= ZST_BUFFER_FLAG_EOS;
-    return eos_buf;
-}
-
 static double
 audio_test_src_next_sample(audio_test_src_t* s)
 {
@@ -312,8 +307,7 @@ audio_test_src_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     *out = NULL;
 
     if (s->stopped) {
-        *out = audio_test_src_create_eos();
-        return *out ? ZST_OK : ZST_ERROR;
+        return ZST_EOF;
     }
 
     bool hit_buffer_limit = s->num_buffers >= 0 && s->buffer_count >= (uint64_t)s->num_buffers;
@@ -324,8 +318,7 @@ audio_test_src_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
             s->buffer_count = 0;
             audio_test_src_reset_signal_state(s);
         } else {
-            *out = audio_test_src_create_eos();
-            return *out ? ZST_OK : ZST_ERROR;
+            return ZST_EOF;
         }
     }
 
@@ -334,8 +327,7 @@ audio_test_src_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
         uint64_t remaining = (uint64_t)s->num_samples - s->sample_count;
         if (remaining < nb_samples) nb_samples = (uint32_t)remaining;
         if (nb_samples == 0) {
-            *out = audio_test_src_create_eos();
-            return *out ? ZST_OK : ZST_ERROR;
+            return ZST_EOF;
         }
     }
 
@@ -387,11 +379,12 @@ audio_test_src_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     s->sample_count += nb_samples;
     s->buffer_count++;
 
-    if (el->clock) {
+    if (s->use_clock && el->clock) {
         buf->pts = zst_clock_get_time(el->clock);
     } else {
         buf->pts = start_sample * 1000000000ULL / s->sample_rate;
     }
+    buf->dts = buf->pts;
     buf->duration = (uint64_t)nb_samples * 1000000000ULL / s->sample_rate;
 
     *out = buf;
@@ -465,6 +458,9 @@ audio_test_src_set_property(zst_element_t* el, const char* name, const char* val
     } else if (strcmp(name, "loop") == 0) {
         s->loop = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcmp(value, "yes") == 0);
         return ZST_OK;
+    } else if (strcmp(name, "use-clock") == 0 || strcmp(name, "do-timestamp") == 0) {
+        s->use_clock = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcmp(value, "yes") == 0);
+        return ZST_OK;
     }
 
     return ZST_ERROR;
@@ -504,6 +500,9 @@ audio_test_src_get_property(zst_element_t* el, const char* name, char* value_out
         return ZST_OK;
     } else if (strcmp(name, "loop") == 0) {
         snprintf(value_out, max_len, "%s", s->loop ? "true" : "false");
+        return ZST_OK;
+    } else if (strcmp(name, "use-clock") == 0 || strcmp(name, "do-timestamp") == 0) {
+        snprintf(value_out, max_len, "%s", s->use_clock ? "true" : "false");
         return ZST_OK;
     }
 
@@ -546,6 +545,14 @@ audio_test_src_provide_clock(zst_element_t* el)
     return clock;
 }
 
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    audio_test_src_t* s = el->priv;
+    return s->pool;
+}
+
 static zst_element_ops_t g_ops = {
     .name = "audiotestsrc",
     .open = audio_test_src_open,
@@ -557,6 +564,7 @@ static zst_element_ops_t g_ops = {
     .provide_clock = audio_test_src_provide_clock,
     .set_property = audio_test_src_set_property,
     .get_property = audio_test_src_get_property,
+    .get_pool = element_get_pool
 };
 
 zst_element_t*
@@ -575,6 +583,7 @@ zst_audio_test_src_create(void)
     priv->num_samples = -1;
     priv->num_buffers = -1;
     priv->loop = false;
+    priv->use_clock = false;
     audio_test_src_reset_signal_state(priv);
 
     zst_element_t* el = zst_element_create(&g_ops, priv);
@@ -593,6 +602,42 @@ zst_audio_test_src_create(void)
     return el;
 }
 
+zst_element_t*
+zst_audio_test_src_create_with_config(const zst_audio_test_src_config_t* config)
+{
+    if (!config || config->struct_size < sizeof(zst_audio_test_src_config_t)) return NULL;
+    zst_element_t* el = zst_element_factory_make("audiotestsrc");
+    if (!el) return NULL;
+
+    if (config->sample_rate > 0) {
+        zst_element_set_property_uint(el, "sample-rate", config->sample_rate);
+    }
+    if (config->channels > 0) {
+        zst_element_set_property_uint(el, "channels", config->channels);
+    }
+    if (config->sample_format) {
+        zst_element_set_property_string(el, "sample-format", config->sample_format);
+    }
+    if (config->wave) {
+        zst_element_set_property_string(el, "wave", config->wave);
+    }
+    if (config->frequency >= 0.0) {
+        zst_element_set_property_double(el, "frequency", config->frequency);
+    }
+    if (config->volume >= 0.0) {
+        zst_element_set_property_double(el, "volume", config->volume);
+    }
+    if (config->samples_per_buffer > 0) {
+        zst_element_set_property_uint(el, "samples-per-buffer", config->samples_per_buffer);
+    }
+    zst_element_set_property_int(el, "num-samples", config->num_samples);
+    zst_element_set_property_int(el, "num-buffers", config->num_buffers);
+    zst_element_set_property_bool(el, "loop", config->loop);
+    zst_element_set_property_bool(el, "use-clock", config->use_clock);
+
+    return el;
+}
+
 #ifdef BUILDING_PLUGIN
 #include "zst_plugin.h"
 
@@ -605,6 +650,25 @@ plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_pad_template_t g_audiotestsrc_pads[] = {
+    { "src", ZST_PAD_SRC, "ANY" }
+};
+
+static const zst_element_desc_t g_audiotestsrc_elements[] = {
+    {
+        .name = "audiotestsrc",
+        .long_name = "Audio Test Source",
+        .category = "Source/Test",
+        .description = "Generates synthetic audio test signals",
+        .author = "zstreamer",
+        .properties = NULL,
+        .nb_properties = 0,
+        .pads = g_audiotestsrc_pads,
+        .nb_pads = sizeof(g_audiotestsrc_pads) / sizeof(g_audiotestsrc_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "audiotestsrc_plugin",
@@ -615,6 +679,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create_element
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_audiotestsrc_elements) / sizeof(g_audiotestsrc_elements[0]);
+    }
+    return g_audiotestsrc_elements;
+}
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t*

@@ -1,8 +1,8 @@
-# Element Implementations — Phase 4  (✅ 4a-4p, 4s, 4t, 4v-4y; 📝 4q, 4r, 4u)
+# Element Implementations — Phase 4  (✅ 33 implemented; 📝 planned additions)
 
-Fourteen elements are fully implemented with real hardware/codec integration and synthetic fallbacks for headless environments.
-Additional elements are planned: network I/O for stream ingestion, RTSP/RTMP for live streaming, subtitle parsing utilities, and expanded codec coverage.
-Two handle format conversion (scaling, resampling) — essential once caps negotiation (Phase 5) requires automatic conversion between mismatched formats.
+Thirty-three production elements are implemented with real hardware/codec/protocol integrations and synthetic fallbacks where appropriate.
+Additional planned elements cover future protocol/container expansion.
+Two implemented elements handle format conversion (scaling, resampling) — essential once caps negotiation (Phase 5) requires automatic conversion between mismatched formats.
 
 ### 4a — V4L2 Source  (✅ done)
 - [x] Open `/dev/video0` with O_RDWR | O_NONBLOCK
@@ -225,6 +225,7 @@ Parse SRT subtitle format into timed text events and feed them to `text_overlay`
 - [x] Parse SRT subtitle format into timed text events
 - [x] Feed parsed text segments to `text_overlay` via `text` sink pad (pts/duration)
 - [ ] Support ASS/SSA format parsing (advanced styling)
+- [x] **Test deliverables**: Unit tests verifying parsing of subtitle files, segment timing, and correct PTS/duration propagation (planned)
 
 ### 4v — H.264 Decoder  (✅ done)
 
@@ -248,11 +249,11 @@ Encodes raw video frames to H.265/HEVC for lower bitrate streaming and storage p
 - [x] `h265enc` element with 1 sink pad (`video/x-raw`) and 1 src pad (`video/x-h265`)
 - [x] Backend: x265 (`libx265`) or FFmpeg HEVC encoder (`AV_CODEC_ID_HEVC`)
 - [x] Accept I420/YUV420P frames from `zst_video_frame_t` payload
-- [ ] Configurable preset/tune, CRF/bitrate, GOP/keyframe interval, profile/level
-- [ ] Output VPS/SPS/PPS headers and frame NAL units in Annex B format
+- [x] Configurable preset/tune, CRF/bitrate, GOP/keyframe interval, profile/level
+- [x] Output VPS/SPS/PPS headers and frame NAL units in Annex B format
 - [x] PTS passthrough and monotonic DTS generation where needed
-- [ ] EOS flush: drain delayed encoder frames before propagating EOS
-- [ ] Caps negotiation: advertise `video/x-h265` with stream format/profile metadata
+- [x] EOS flush: drain delayed encoder frames before propagating EOS
+- [x] Caps negotiation: advertise `video/x-h265` with stream format/profile metadata
 
 **Dependencies:** `libavcodec-dev`, `libavutil-dev`
 
@@ -262,12 +263,12 @@ Decodes H.265/HEVC packets into raw video frames for HEVC ingest, transcoding, o
 
 - [x] `h265dec` element with 1 sink pad (`video/x-h265`) and 1 src pad (`video/x-raw`)
 - [x] FFmpeg `libavcodec` decoder integration (`AV_CODEC_ID_HEVC`)
-- [ ] Accept Annex B bytestream and hvcC/extradata forms where possible
+- [x] Accept Annex B bytestream and hvcC/extradata forms where possible
 - [x] Convert `AVFrame` output into `zst_video_frame_t` payloads
 - [x] Preserve PTS/DTS/duration and handle B-frame reordering
-- [ ] Caps negotiation: advertise raw pixel format, width, height, framerate
+- [x] Caps negotiation: advertise raw pixel format, width, height, framerate
 - [x] EOS drain/flush: send NULL packet, emit delayed frames, then propagate EOS
-- [ ] Decoder reset on parameter-set changes or corruption recovery
+- [x] Decoder reset on parameter-set changes or corruption recovery
 
 **Dependencies:** `libavcodec-dev`, `libavutil-dev` (in Docker)
 
@@ -296,12 +297,12 @@ Receives live or on-demand streaming media from an RTSP server (DESCRIBE/SETUP/P
 - [x] RTSP control: DESCRIBE (SDP parsing), SETUP (transport negotiation), PLAY/PAUSE/TEARDOWN
 - [x] RTP/RTCP transport: UDP (unicast + multicast), TCP interleaved mode
 - [x] SDP → caps negotiation: map payload types (PT) to `video/x-h264`, `audio/aac`, etc.
-- [ ] RTSP authentication: Basic, Digest
-- [ ] Reconnection: automatic re-SETUP on transport loss, exponential back-off
-- [ ] NTP timestamp correlation: map RTP timestamps → pipeline clock via RTCP SR
+- [x] RTSP authentication: Basic and Digest (MD5, qop=auth) with URL or property credentials
+- [x] Reconnection: automatic re-DESCRIBE/SETUP/PLAY on transport loss with configurable delay and attempt limit
+- [x] NTP timestamp correlation: RTCP Sender Reports map RTP timestamps to wall-clock based PTS
 - [x] Configurable `rtsp_url`, `username`, `password`, `transport` (udp/tcp), `buffer_size`
-- [ ] RTSP keep-alive: OPTIONS pings to prevent server timeout
-- [ ] EOS on RTSP BYE or TEARDOWN
+- [x] RTSP keep-alive: periodic OPTIONS pings to prevent server timeout
+- [x] EOS on RTSP BYE/TEARDOWN or RTCP BYE
 
 ### 4p — RTSP Sink  (✅ Done)
 
@@ -311,24 +312,24 @@ Acts as an RTSP server element that accepts incoming RTP streams and makes them 
 - [x] Built-in lightweight RTSP server: listen on configurable port, handle DESCRIBE/SETUP/PLAY
 - [x] SDP generation from input caps: generate SDP body from pad caps on all pads ready
 - [x] RTP/RTCP transport: UDP unicast per connected client, TCP interleaved fallback
-- [ ] Multiple concurrent client support — each client gets its own RTP stream
+- [ ] Multiple concurrent client support — use `rtsp_server` (4z) for full multi-client serving; `rtspsink` remains the simple FFmpeg-backed RTSP sink
 - [x] RTP packetisation: H.264 (RFC 3984), AAC (RFC 3640), generic payload wrapping
-- [ ] RTCP sender reports: generate SR packets with NTP/RTP timestamps
-- [x] Configurable `listen_port`, `mount_point`, `max_clients`, `transport`
+- [x] RTCP sender reports: generated by the RTSP/RTP muxing backend; configurable sender-report interval exposed as `rtcp-interval-ms`
+- [x] Configurable `listen_port`, `mount_point`, `max_clients`, `transport`, `rtcp-interval-ms`
 
-### 4q — RTMP Source  (📝 Planned)
+### 4q — RTMP Source  (✅ Done)
 
 Connects to an RTMP server (or receives RTMP pushes) and demuxes the FLV stream into video/audio buffers. Essential for consuming from live streaming platforms, OBS pushes, and legacy IP cameras.
 
-- [ ] `rtmp_source` element with 2 src pads (video, audio)
-- [ ] RTMP handshake + connect: `connect("rtmp://host/live/streamkey")`, `createStream`, `play`
-- [ ] FLV demuxing: parse FLV tag headers, extract video (H.264/HEVC/AV1) and audio (AAC/MP3)
-- [ ] AMF0/AMF3 metadata parsing: extract `onMetaData` (width, height, framerate, samplerate)
-- [ ] Timestamp mapping: FLV timestamps → pipeline clock PTS
-- [ ] Configurable `rtmp_url`, `live` (true/false for live vs VOD), `buffer_time`, `swf_url`
-- [ ] Authentication: `rtmp://user:pass@host/app/streamkey`
-- [ ] Reconnection: auto-reconnect on stream loss, exponential back-off
-- [ ] EOS on RTMP stream end or `deleteStream`
+- [x] `rtmp_source` element with 2 src pads (video, audio)
+- [x] RTMP handshake + connect: `connect("rtmp://host/live/streamkey")`, `createStream`, `play`
+- [x] FLV demuxing: parse FLV tag headers, extract video (H.264/HEVC/AV1) and audio (AAC/MP3)
+- [x] AMF0/AMF3 metadata parsing: extract `onMetaData` (width, height, framerate, samplerate)
+- [x] Timestamp mapping: FLV timestamps → pipeline clock PTS
+- [x] Configurable `rtmp_url`, `live` (true/false for live vs VOD), `buffer_time`, `swf_url`
+- [x] Authentication: `rtmp://user:pass@host/app/streamkey` URL form supported by FFmpeg RTMP input
+- [x] Reconnection: auto-reconnect on stream loss with configurable delay and attempt limit
+- [x] EOS on RTMP stream end or `deleteStream`
 
 ### 4z — RTSP Server (Multi-Session)  (✅ Done)
 
@@ -351,16 +352,87 @@ Designed using patterns from ireader/media-server's librtsp.
 - [x] H.264 NAL unit scan and fragmentation
 - [x] Dynamic plugin build (`libzst_rtsp_server.so`)
 
-### 4r — RTMP Sink  (📝 Planned)
+### 4r — RTMP Sink  (✅ Done)
 
 Publishes pipeline output to an RTMP ingest endpoint — the standard way to push to YouTube Live, Twitch, Facebook Live, and most CDNs.
 
-- [ ] `rtmp_sink` element with 2 sink pads (video, audio)
-- [ ] RTMP handshake + publish: `connect(...)`, `publish("streamkey")`
-- [ ] FLV muxing: wrap incoming H.264/AAC buffers into FLV tags, maintain correct tag boundaries
-- [ ] AMF0 metadata injection: `@setDataFrame("onMetaData")` with `width`, `height`, `framerate`, `videocodecid`, `audiocodecid`, `duration`
-- [ ] Timestamp generation: pipeline clock → FLV timestamps (milliseconds, monotonically increasing)
-- [ ] Configurable `rtmp_url`, `live` (true = no buffer, low latency)
-- [ ] Authentication: `rtmp://user:pass@host/app/streamkey`
-- [ ] Reconnection: auto-reconnect on publish failure, exponential back-off
-- [ ] EOS passthrough: send `FCUnpublish` on stream end, clean disconnect
+- [x] `rtmp_sink` element with 2 sink pads (video, audio)
+- [x] RTMP handshake + publish: `connect(...)`, `publish("streamkey")`
+- [x] FLV muxing: wrap incoming H.264/AAC buffers into FLV tags, maintain correct tag boundaries
+- [x] AMF0 metadata injection: `@setDataFrame("onMetaData")` with `width`, `height`, `framerate`, `videocodecid`, `audiocodecid`, `duration`
+- [x] Timestamp generation: pipeline clock → FLV timestamps (milliseconds, monotonically increasing)
+- [x] Configurable `rtmp_url`, `live` (true = no buffer, low latency)
+- [x] Authentication: `rtmp://user:pass@host/app/streamkey`
+- [x] Reconnection: auto-reconnect on publish failure, exponential back-off
+- [x] EOS passthrough: send `FCUnpublish` on stream end, clean disconnect
+
+### 4aa — SRT Transport Protocols (Secure Reliable Transport Source & Sink)  (✅ Done)
+
+Adds Secure Reliable Transport (SRT) ingest and egress elements for low-latency, loss-resilient contribution workflows. This is a transport protocol and is distinct from **4u SRT Subtitle Parser** (SubRip text subtitles).
+
+- [x] `srtsrc` element with 1+ src pads for received MPEG-TS or raw byte-stream payloads
+- [x] `srtsink` element with 1 sink pad for MPEG-TS or raw byte-stream payloads
+- [x] Backend: `libsrt` socket API (`srt_create_socket`, `srt_connect`, `srt_bind`, `srt_listen`, `srt_accept`, `srt_sendmsg2`, `srt_recvmsg2`)
+- [x] Modes: caller, listener, and rendezvous
+- [x] Configurable URI/properties: `uri`, `host`, `port`, `mode`, `latency`, `passphrase`, `pbkeylen`, `streamid`, `payload-size`
+- [x] AES encryption support via SRT passphrase/key length
+- [x] Reconnection and exponential back-off on link loss
+- [x] Timestamp mapping from SRT packet time / pipeline clock to buffer PTS
+- [x] EOS on socket close or graceful shutdown
+- [x] Caps negotiation: advertise `video/mp2t` for MPEG-TS mode and `application/octet-stream` for raw mode
+- [x] Optional integrated MPEG-TS demux/mux handoff for H.264/H.265/AAC pipelines
+
+**Dependencies:** `libsrt-dev`
+
+### 4ab — MPEG Transport Stream Muxer / Demuxer (`.ts`)  (✅ Done)
+
+Adds MPEG-TS container support for broadcast, SRT contribution, HLS segmenting, and interoperability with common streaming tools. The muxer/demuxer should support encoded H.264, H.265/HEVC, and AAC payloads.
+
+- [x] `tsmux` element with sink pads for `video/x-h264`, `video/x-h265`, and `audio/aac`, plus one `video/mp2t` src pad
+- [x] `tsdemux` element with one `video/mp2t` sink pad and dynamic/static src pads for H.264, H.265, and AAC elementary streams
+- [x] Backend: FFmpeg `libavformat` MPEG-TS muxer/demuxer or native TS packet writer/parser
+- [x] PAT/PMT generation and parsing with stream type mapping for H.264 (`0x1b`), H.265 (`0x24`), and AAC (`0x0f`)
+- [x] PES packetization/depacketization with correct PTS/DTS propagation
+- [x] PCR generation, continuity counters, adaptation fields, and packet alignment to 188-byte TS packets
+- [x] Annex B handling for H.264/H.265 payloads, including parameter-set propagation where needed
+- [x] AAC ADTS / LATM handling strategy documented and implemented for mux/demux compatibility
+- [x] EOS handling: flush partial PES/TS packets and propagate downstream EOS
+- [x] Caps negotiation: `video/mp2t` container caps and elementary stream caps on demuxed pads
+- [x] Tests: H.264/AAC and H.265/AAC mux → demux roundtrip preserves payload boundaries and timestamps
+
+**Dependencies:** `libavformat-dev`, `libavcodec-dev`, `libavutil-dev` (if FFmpeg-backed)
+
+### 4ac — MP4 File Demuxer  (✅ done)
+
+Demuxes MP4/fragmented-MP4 files or byte streams into encoded elementary audio/video buffers for decode, remux, or streaming pipelines.
+
+- [x] `mp4demux` element with one sink pad and video/audio src pads
+- [x] Backend: FFmpeg `libavformat` demuxer (`avformat_open_input`, `av_read_frame`) with custom AVIO support for pipeline buffers
+- [x] Track discovery: expose H.264, H.265/HEVC, AAC, and other tracks where present
+- [x] Preserve PTS/DTS/duration and map MP4 track timescales to zstreamer nanosecond timestamps
+- [x] Support fragmented MP4 (`moof`/`mdat`) via push-mode streaming with custom non-seekable AVIO
+- [x] Direct-file mode: `location` property opens MP4 file directly via `avformat_open_input()`
+- [x] EOS handling after final packet and error reporting
+- [x] Caps negotiation: `video/x-h264`, `video/x-h265`, `audio/aac` (and more) output pads
+- [x] Tests: MP4 mux→demux roundtrip with H.264/AAC; verify packet counts, timestamps; property/factory tests
+
+**Dependencies:** `libavformat-dev`, `libavcodec-dev`, `libavutil-dev`
+
+### 4ad — HTTP Source  (✅ done)
+
+Fetches static files or progressive streams over HTTP or HTTPS and pushes the response body downstream as a sequence of buffers. Analogous to GStreamer's `souphttpsrc`.
+
+- [x] `httpsrc` element with 1 src pad
+- [x] Backend: FFmpeg libavformat network protocol handler or `libcurl`
+- [x] Configurable `url` / `uri` property
+- [x] Handle standard HTTP GET requests, redirection (301, 302, 307), and chunked transfer encoding
+- [x] Support custom request headers (e.g. `User-Agent`, `Authorization`)
+- [x] Connection timeout, receive timeout, and error recovery/retry logic
+- [x] Emit `EOS` when Content-Length is reached or connection is closed by peer
+- [x] Buffer pool integration for low-overhead memory recycling
+- [x] Caps negotiation: advertise `application/octet-stream` or media-type based on `Content-Type` header (if known)
+- [x] Tests: verify streaming from a mock HTTP server, check redirect handling, and verify EOS propagation
+
+**Dependencies:** `libcurl4-openssl-dev` or `libavformat-dev`
+
+

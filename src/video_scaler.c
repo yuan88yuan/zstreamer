@@ -436,12 +436,21 @@ scaler_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     return ZST_OK;
 }
 
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    video_scaler_t* s = el->priv;
+    return s->pool;
+}
+
 static zst_element_ops_t g_ops = {
     .name     = "videoscaler",
     .open     = scaler_open,
     .close    = scaler_close,
     .process  = scaler_process,
     .get_caps = scaler_get_caps,
+    .get_pool = element_get_pool
 };
 
 zst_element_t*
@@ -483,6 +492,26 @@ plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_pad_template_t g_videoscaler_pads[] = {
+    { "sink", ZST_PAD_SINK, "video/x-raw" },
+    { "src", ZST_PAD_SRC, "video/x-raw" }
+};
+
+static const zst_element_desc_t g_videoscaler_elements[] = {
+    {
+        .name = "videoscaler",
+        .long_name = "Video Scaler",
+        .category = "Filter/Video",
+        .description = "Converts video resolution or pixel format",
+        .author = "zstreamer",
+        .properties = NULL,
+        .nb_properties = 0,
+        .pads = g_videoscaler_pads,
+        .nb_pads = sizeof(g_videoscaler_pads) / sizeof(g_videoscaler_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "videoscaler_plugin",
@@ -493,6 +522,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create_element
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_videoscaler_elements) / sizeof(g_videoscaler_elements[0]);
+    }
+    return g_videoscaler_elements;
+}
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t*

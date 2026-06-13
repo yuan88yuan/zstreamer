@@ -89,15 +89,17 @@ slave_clock_wait(zst_clock_t* clock, zst_time_t time)
 {
     slave_clock_priv_t* priv = clock->priv;
 
+    /* time is a relative duration from the caller's perspective.
+       Convert it to the reference clock's time domain and pass
+       the same relative duration to the reference clock. */
     pthread_mutex_lock(&priv->lock);
     double alpha = priv->alpha;
-    zst_time_t base_master = priv->base_master;
-    zst_time_t base_ref = priv->base_ref;
     pthread_mutex_unlock(&priv->lock);
 
-    int64_t diff_master = (int64_t)time - (int64_t)base_master;
-    zst_time_t ref_time = base_ref + (int64_t)((long double)diff_master / (long double)alpha);
-    zst_clock_wait(priv->reference, ref_time);
+    zst_time_t ref_duration = (alpha > 0.0)
+        ? (zst_time_t)((long double)time / (long double)alpha)
+        : time;
+    zst_clock_wait(priv->reference, ref_duration);
 }
 
 static void

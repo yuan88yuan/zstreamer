@@ -27,6 +27,7 @@ typedef struct {
     char pixel_format[32];
     int num_buffers;
     bool loop;
+    bool use_clock;
     int x;
     int y;
 
@@ -323,12 +324,13 @@ static zst_result_t text_source_process(zst_element_t* el, zst_buffer_t* in, zst
         }
     }
 
-    uint64_t dur_ns = 1000000ULL / s->fps;
-    if (el->clock) {
+    uint64_t dur_ns = 1000000000ULL / s->fps;
+    if (s->use_clock && el->clock) {
         buf->pts = zst_clock_get_time(el->clock);
     } else {
         buf->pts = s->frame_count * dur_ns;
     }
+    buf->dts = buf->pts;
     buf->duration = dur_ns;
 
     s->frame_count++;
@@ -391,6 +393,9 @@ static zst_result_t text_source_set_property(zst_element_t* el, const char* name
     } else if (strcmp(name, "loop") == 0) {
         s->loop = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0);
         return ZST_OK;
+    } else if (strcmp(name, "use-clock") == 0 || strcmp(name, "do-timestamp") == 0) {
+        s->use_clock = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcmp(value, "yes") == 0);
+        return ZST_OK;
     } else if (strcmp(name, "x") == 0) {
         s->x = atoi(value);
         return ZST_OK;
@@ -437,6 +442,9 @@ static zst_result_t text_source_get_property(zst_element_t* el, const char* name
     } else if (strcmp(name, "loop") == 0) {
         strncpy(value_out, s->loop ? "true" : "false", max_len);
         return ZST_OK;
+    } else if (strcmp(name, "use-clock") == 0 || strcmp(name, "do-timestamp") == 0) {
+        strncpy(value_out, s->use_clock ? "true" : "false", max_len);
+        return ZST_OK;
     } else if (strcmp(name, "x") == 0) {
         snprintf(value_out, max_len, "%d", s->x);
         return ZST_OK;
@@ -447,6 +455,14 @@ static zst_result_t text_source_get_property(zst_element_t* el, const char* name
     return ZST_ERROR;
 }
 
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    text_source_t* s = el->priv;
+    return s->pool;
+}
+
 static zst_element_ops_t g_ops = {
     .name = "textsource",
     .open = text_source_open,
@@ -455,6 +471,7 @@ static zst_element_ops_t g_ops = {
     .get_caps = text_source_get_caps,
     .set_property = text_source_set_property,
     .get_property = text_source_get_property,
+    .get_pool = element_get_pool
 };
 
 zst_element_t* zst_text_source_create(void)
@@ -473,6 +490,7 @@ zst_element_t* zst_text_source_create(void)
     strcpy(priv->pixel_format, "YUV420P");
     priv->num_buffers = -1;
     priv->loop = false;
+    priv->use_clock = false;
     priv->x = 10;
     priv->y = 50;
     priv->frame_count = 0;
@@ -503,6 +521,51 @@ static zst_element_t* plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_property_spec_t g_textsource_properties[] = {
+    { "width", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "640", "Video width" },
+    { "height", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "480", "Video height" },
+    { "fps", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "30", "Video frame rate" },
+    { "text", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "Hello", "Text content to display" },
+    { "text-content", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "Hello", "Alias for text" },
+    { "font-size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "24", "Font size in pixels" },
+    { "font_size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "24", "Alias for font-size" },
+    { "font-path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Path to TrueType font file" },
+    { "font_path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Alias for font-path" },
+    { "bg-color", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "black", "Background color name or #RRGGBB hex" },
+    { "background-color", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "black", "Alias for bg-color" },
+    { "text-color", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "white", "Text color name or #RRGGBB hex" },
+    { "color", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "white", "Alias for text-color" },
+    { "text_color", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "white", "Alias for text-color" },
+    { "pixel-format", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "YUV420P", "Pixel format" },
+    { "pixel_format", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "YUV420P", "Alias for pixel-format" },
+    { "num-buffers", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Number of buffers to output before EOF" },
+    { "num_buffers", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Alias for num-buffers" },
+    { "loop", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Loop the source input" },
+    { "use-clock", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Use pipeline clock" },
+    { "do-timestamp", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Alias for use-clock" },
+    { "x", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "10", "X coordinate offset" },
+    { "y", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "10", "Y coordinate offset" }
+};
+
+static const zst_pad_template_t g_textsource_pads[] = {
+    { "src", ZST_PAD_SRC, "video/x-raw" }
+};
+
+static const zst_element_desc_t g_textsource_elements[] = {
+    {
+        .name = "textsource",
+        .long_name = "Text Source",
+        .category = "Source/Video",
+        .description = "Generates video frames containing text",
+        .author = "zstreamer",
+        .properties = g_textsource_properties,
+        .nb_properties = sizeof(g_textsource_properties) / sizeof(g_textsource_properties[0]),
+        .pads = g_textsource_pads,
+        .nb_pads = sizeof(g_textsource_pads) / sizeof(g_textsource_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "textsource_plugin",
@@ -513,6 +576,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create_element
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_textsource_elements) / sizeof(g_textsource_elements[0]);
+    }
+    return g_textsource_elements;
+}
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t* zst_get_plugin(void)

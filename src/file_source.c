@@ -8,6 +8,8 @@
 #include <stdbool.h>
 
 #include "zst_element.h"
+#include "zstreamer/elements/zst_file_source.h"
+#include "zst_element_factory.h"
 #include "zst_buffer.h"
 #include "zst_buffer_pool.h"
 #include "zst_log.h"
@@ -265,10 +267,17 @@ file_source_set_property(zst_element_t* el, const char* name, const char* value)
         s->loop = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0);
         return ZST_OK;
     } else if (strcmp(name, "offset") == 0) {
-        s->offset = atoll(value);
+        int64_t new_offset = atoll(value);
+        if (new_offset < 0) return ZST_ERROR;
+        s->offset = new_offset;
+        s->bytes_read = 0;
+        if (s->fp && fseek(s->fp, s->offset, SEEK_SET) != 0) {
+            return ZST_ERROR;
+        }
         return ZST_OK;
     } else if (strcmp(name, "length") == 0) {
         s->length = atoll(value);
+        s->bytes_read = 0;
         return ZST_OK;
     }
     return ZST_ERROR;
@@ -299,6 +308,14 @@ file_source_get_property(zst_element_t* el, const char* name, char* value_out, s
     return ZST_ERROR;
 }
 
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    file_source_t* s = el->priv;
+    return s->pool;
+}
+
 static zst_element_ops_t g_ops = {
     .name = "filesrc",
     .open = file_source_open,
@@ -306,7 +323,8 @@ static zst_element_ops_t g_ops = {
     .process = file_source_process,
     .get_caps = file_source_get_caps,
     .set_property = file_source_set_property,
-    .get_property = file_source_get_property
+    .get_property = file_source_get_property,
+    .get_pool = element_get_pool
 };
 
 zst_element_t*
@@ -345,6 +363,26 @@ zst_file_source_create(const char* path)
     return el;
 }
 
+zst_element_t*
+zst_file_source_create_with_config(const zst_file_source_config_t* config)
+{
+    if (!config || config->struct_size < sizeof(zst_file_source_config_t)) return NULL;
+    zst_element_t* el = zst_element_factory_make("filesrc");
+    if (!el) return NULL;
+
+    if (config->path) {
+        zst_element_set_property_string(el, "path", config->path);
+    }
+    if (config->chunk_size > 0) {
+        zst_element_set_property_uint(el, "chunk-size", config->chunk_size);
+    }
+    zst_element_set_property_bool(el, "loop", config->loop);
+    zst_element_set_property_int(el, "offset", config->offset);
+    zst_element_set_property_int(el, "length", config->length);
+
+    return el;
+}
+
 #ifdef BUILDING_PLUGIN
 #include "zst_plugin.h"
 
@@ -357,6 +395,38 @@ plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_property_spec_t g_filesrc_properties[] = {
+    { "path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE,
+      "", "Input file path" },
+    { "chunk-size", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE,
+      "4096", "Maximum bytes to read per buffer" },
+    { "loop", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE,
+      "false", "Loop back to the start at EOF" },
+    { "offset", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE,
+      "0", "Initial byte offset" },
+    { "length", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE,
+      "-1", "Maximum number of bytes to read; -1 means unlimited" }
+};
+
+static const zst_pad_template_t g_filesrc_pads[] = {
+    { "src", ZST_PAD_SRC, "ANY" }
+};
+
+static const zst_element_desc_t g_filesrc_elements[] = {
+    {
+        .name = "filesrc",
+        .long_name = "File Source",
+        .category = "Source/File",
+        .description = "Reads buffers from a local file",
+        .author = "zstreamer",
+        .properties = g_filesrc_properties,
+        .nb_properties = sizeof(g_filesrc_properties) / sizeof(g_filesrc_properties[0]),
+        .pads = g_filesrc_pads,
+        .nb_pads = sizeof(g_filesrc_pads) / sizeof(g_filesrc_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "filesrc_plugin",
@@ -367,6 +437,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create_element
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_filesrc_elements) / sizeof(g_filesrc_elements[0]);
+    }
+    return g_filesrc_elements;
+}
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t*

@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <limits.h>
 #include <libavcodec/avcodec.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/pixfmt.h>
@@ -63,6 +64,12 @@ h265_is_annexb(const uint8_t* data, size_t size)
 }
 
 static int
+h265_hvcc_config_record(const uint8_t* data, size_t size)
+{
+    return data && size > 23 && data[0] == 0x01;
+}
+
+static int
 h265_hvcc_4byte_lengths_valid(const uint8_t* data, size_t size)
 {
     size_t pos = 0;
@@ -81,6 +88,57 @@ h265_hvcc_4byte_lengths_valid(const uint8_t* data, size_t size)
 }
 
 static zst_result_t
+h265_packet_from_hvcc_config(const uint8_t* data, size_t size, AVPacket* pkt)
+{
+    if (!data || !pkt || size <= 23 || data[0] != 0x01) return ZST_ERROR;
+
+    const uint8_t* p = data + 22;
+    const uint8_t* end = data + size;
+    uint8_t length_size = (uint8_t)((data[21] & 0x03u) + 1u);
+    (void)length_size;
+    uint8_t num_arrays = *p++;
+    size_t out_size = 0;
+
+    const uint8_t* q = p;
+    for (uint8_t ai = 0; ai < num_arrays; ai++) {
+        if (q + 3 > end) return ZST_ERROR;
+        q++; /* array_completeness + NAL_unit_type */
+        uint16_t num_nalus = ((uint16_t)q[0] << 8) | q[1];
+        q += 2;
+        for (uint16_t ni = 0; ni < num_nalus; ni++) {
+            if (q + 2 > end) return ZST_ERROR;
+            uint16_t n = ((uint16_t)q[0] << 8) | q[1];
+            q += 2;
+            if (q + n > end) return ZST_ERROR;
+            out_size += 4u + n;
+            q += n;
+        }
+    }
+    if (out_size == 0 || out_size > INT_MAX) return ZST_ERROR;
+
+    if (av_new_packet(pkt, (int)out_size) < 0) return ZST_ERROR;
+    uint8_t* out = pkt->data;
+    for (uint8_t ai = 0; ai < num_arrays; ai++) {
+        p++; /* array header */
+        uint16_t num_nalus = ((uint16_t)p[0] << 8) | p[1];
+        p += 2;
+        for (uint16_t ni = 0; ni < num_nalus; ni++) {
+            uint16_t n = ((uint16_t)p[0] << 8) | p[1];
+            p += 2;
+            out[0] = 0x00;
+            out[1] = 0x00;
+            out[2] = 0x00;
+            out[3] = 0x01;
+            out += 4;
+            memcpy(out, p, n);
+            out += n;
+            p += n;
+        }
+    }
+    return ZST_OK;
+}
+
+static zst_result_t
 h265_packet_from_buffer(zst_buffer_t* in, AVPacket* pkt)
 {
     if (!pkt || !in) return ZST_ERROR;
@@ -93,7 +151,9 @@ h265_packet_from_buffer(zst_buffer_t* in, AVPacket* pkt)
     size_t size = in->memory.size;
     if (!data || size == 0) return ZST_ERROR;
 
-    if (!h265_is_annexb(data, size) && h265_hvcc_4byte_lengths_valid(data, size)) {
+    if (h265_hvcc_config_record(data, size)) {
+        if (h265_packet_from_hvcc_config(data, size, pkt) != ZST_OK) return ZST_ERROR;
+    } else if (!h265_is_annexb(data, size) && h265_hvcc_4byte_lengths_valid(data, size)) {
         if (av_new_packet(pkt, (int)size) < 0) return ZST_ERROR;
         size_t pos = 0;
         uint8_t* out = pkt->data;
@@ -319,6 +379,12 @@ h265_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     }
 
     if (ret < 0 && ret != AVERROR_EOF) {
+#ifdef AVERROR_INPUT_CHANGED
+        if (ret == AVERROR_INPUT_CHANGED) {
+            avcodec_flush_buffers(s->codec_ctx);
+            return ZST_AGAIN;
+        }
+#endif
         avcodec_flush_buffers(s->codec_ctx);
         return ret == AVERROR_INVALIDDATA ? ZST_AGAIN : ZST_ERROR;
     }
@@ -328,6 +394,12 @@ h265_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
         if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
             break;
         } else if (ret < 0) {
+#ifdef AVERROR_INPUT_CHANGED
+            if (ret == AVERROR_INPUT_CHANGED) {
+                avcodec_flush_buffers(s->codec_ctx);
+                return ZST_AGAIN;
+            }
+#endif
             avcodec_flush_buffers(s->codec_ctx);
             return ret == AVERROR_INVALIDDATA ? ZST_AGAIN : ZST_ERROR;
         }
@@ -388,12 +460,21 @@ h265_get_caps(zst_element_t* el, zst_pad_t* pad, const zst_caps_t* filter)
     return caps;
 }
 
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    h265_decoder_t* s = el->priv;
+    return s->pool;
+}
+
 static zst_element_ops_t g_ops = {
     .name     = "h265dec",
     .open     = h265_open,
     .close    = h265_close,
     .process  = h265_process,
     .get_caps = h265_get_caps,
+    .get_pool = element_get_pool
 };
 
 zst_element_t*
@@ -433,6 +514,26 @@ plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_pad_template_t g_h265dec_pads[] = {
+    { "sink", ZST_PAD_SINK, "video/x-h265" },
+    { "src", ZST_PAD_SRC, "video/x-raw" }
+};
+
+static const zst_element_desc_t g_h265dec_elements[] = {
+    {
+        .name = "h265dec",
+        .long_name = "H.265 Decoder",
+        .category = "Codec/Decoder",
+        .description = "Decodes H.265 video frames",
+        .author = "zstreamer",
+        .properties = NULL,
+        .nb_properties = 0,
+        .pads = g_h265dec_pads,
+        .nb_pads = sizeof(g_h265dec_pads) / sizeof(g_h265dec_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "h265decoder_plugin",
@@ -443,6 +544,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create_element
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_h265dec_elements) / sizeof(g_h265dec_elements[0]);
+    }
+    return g_h265dec_elements;
+}
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t*

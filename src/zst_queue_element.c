@@ -7,6 +7,7 @@
 #include "zst_pad.h"
 #include "zst_buffer.h"
 #include "zst_clock.h"
+#include "zst_bus.h"
 #include <string.h>
 #include "zst_buffer_pool.h"
 #include <stdlib.h>
@@ -38,11 +39,20 @@ queue_el_worker(void* arg)
                 zst_time_t current = zst_clock_get_time(el->clock);
                 /* If it's too early, wait until PTS */
                 if (buf->pts > current + 5000000ULL) { /* 5ms early threshold */
-                    zst_clock_wait(el->clock, buf->pts - current);
+                    if (buf->pts - current < 5000000000ULL) { /* 5s safeguard */
+                        zst_clock_wait(el->clock, buf->pts - current);
+                    }
                 } else if (buf->pts < current - 100000000ULL) { /* 100ms late threshold */
-                    /* Drop late buffer */
-                    zst_buffer_unref(buf);
-                    continue;
+                    if (current - buf->pts < 5000000000ULL) { /* 5s safeguard */
+                        /* Drop late buffer (QoS) */
+                        buf->flags |= ZST_BUFFER_FLAG_DROP;
+                        if (el->bus) {
+                            zst_event_t* qos_ev = zst_event_new_warning(el, ZST_ERROR, "QoS: Queue element dropped late frame");
+                            zst_bus_post(el->bus, qos_ev);
+                        }
+                        zst_buffer_unref(buf);
+                        continue;
+                    }
                 }
             }
 
@@ -61,6 +71,11 @@ queue_el_sink_push(zst_pad_t* pad, zst_buffer_t* buf)
     queue_el_priv_t* priv = el->priv;
 
     if (!priv->queue) return ZST_ERROR;
+
+    /* Skip/discard immediately if flagged as drop (QoS) */
+    if (buf && (buf->flags & ZST_BUFFER_FLAG_DROP)) {
+        return ZST_OK;
+    }
 
     /* Optionally attach pool: if a pool is configured and it's not an EOS buffer,
        we acquire a buffer from the pool, copy the incoming buffer's data,

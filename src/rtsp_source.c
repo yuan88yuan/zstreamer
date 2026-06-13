@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <stdint.h>
 #include <unistd.h>
 #include <errno.h>
@@ -43,6 +44,8 @@
 #include <netdb.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <libavutil/md5.h>
+#include <libavutil/mem.h>
 
 #include "zst_element.h"
 #include "zst_pad.h"
@@ -102,6 +105,11 @@ typedef struct {
     uint16_t client_rtcp_port;  /* our (client) RTCP port */
     uint16_t server_rtp_port;   /* server RTP port (from SETUP response) */
     uint16_t server_rtcp_port;  /* server RTCP port (from SETUP response) */
+    /* RTCP SR state for NTP/RTP timestamp correlation */
+    int      has_sr;
+    uint64_t last_ntp_time;
+    uint32_t last_rtp_time;
+
     /* SPS/PPS for H.264 extracted from fmtp or stream */
     uint8_t* extra_data;
     int      extra_size;
@@ -122,6 +130,8 @@ typedef struct {
     /* Receive buffer */
     uint8_t  buf[RTSP_BUF_SIZE];
     int      buf_len;
+    char     last_response[RTSP_BUF_SIZE];
+    int      last_response_len;
     int      interleaved_mode;  /* 1=reading interleaved, 0=reading RTSP response */
 
     /* RTSP state machine */
@@ -190,7 +200,16 @@ typedef struct {
     zst_pad_t*       audio_pad;
     zst_caps_t*      video_caps;
     zst_caps_t*      audio_caps;
+    char             username[64];
+    char             password[64];
+    int              buffer_size;
+    int              reconnect;
+    int              reconnect_delay_ms;
+    int              max_reconnect_attempts;
+    int              keepalive_interval_sec;
     int              running;
+    int              lock_initialized;
+    int              thread_started;
     pthread_t        thread;
     pthread_mutex_t  lock;  /* protects push to downstream */
 } rtsp_source_priv_t;
@@ -204,6 +223,60 @@ static uint64_t now_us(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)ts.tv_nsec / 1000;
+}
+
+static void sleep_ms(int delay_ms) {
+    if (delay_ms <= 0) return;
+    struct timespec ts;
+    ts.tv_sec = delay_ms / 1000;
+    ts.tv_nsec = (long)(delay_ms % 1000) * 1000000L;
+    nanosleep(&ts, NULL);
+}
+
+static void md5_hex(const char* input, char out[33]) {
+    uint8_t digest[16];
+    struct AVMD5* md5 = av_md5_alloc();
+    if (!md5) {
+        out[0] = '\0';
+        return;
+    }
+    av_md5_init(md5);
+    av_md5_update(md5, (const uint8_t*)input, (int)strlen(input));
+    av_md5_final(md5, digest);
+    av_free(md5);
+    static const char hex[] = "0123456789abcdef";
+    for (int i = 0; i < 16; i++) {
+        out[i * 2] = hex[digest[i] >> 4];
+        out[i * 2 + 1] = hex[digest[i] & 0x0f];
+    }
+    out[32] = '\0';
+}
+
+static int base64_encode(const uint8_t* in, size_t len, char* out, size_t out_size) {
+    static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t need = ((len + 2) / 3) * 4 + 1;
+    if (!out || out_size < need) return -1;
+    size_t j = 0;
+    for (size_t i = 0; i < len; i += 3) {
+        uint32_t v = (uint32_t)in[i] << 16;
+        int remain = (int)(len - i);
+        if (remain > 1) v |= (uint32_t)in[i + 1] << 8;
+        if (remain > 2) v |= (uint32_t)in[i + 2];
+        out[j++] = tbl[(v >> 18) & 0x3f];
+        out[j++] = tbl[(v >> 12) & 0x3f];
+        out[j++] = remain > 1 ? tbl[(v >> 6) & 0x3f] : '=';
+        out[j++] = remain > 2 ? tbl[v & 0x3f] : '=';
+    }
+    out[j] = '\0';
+    return 0;
+}
+
+static uint64_t ntp_to_unix_ns(uint64_t ntp) {
+    uint32_t sec = (uint32_t)(ntp >> 32);
+    uint32_t frac = (uint32_t)(ntp & 0xffffffffu);
+    uint64_t unix_sec = sec >= 2208988800U ? (uint64_t)(sec - 2208988800U) : 0;
+    uint64_t ns = ((uint64_t)frac * 1000000000ULL) >> 32;
+    return unix_sec * 1000000000ULL + ns;
 }
 
 static int set_nonblock(int fd) {
@@ -348,9 +421,14 @@ static int read_rtsp_response(rtsp_client_t* cl, char** out_body, int* out_body_
     int total = hdr_len + body_len;
     if (*len < total) return 1;
 
-    if (body_len > 0) {
-        *out_body = buf + hdr_len;
-        *out_body_len = body_len;
+    int copy_len = total < (int)sizeof(cl->last_response) - 1 ? total : (int)sizeof(cl->last_response) - 1;
+    memcpy(cl->last_response, buf, (size_t)copy_len);
+    cl->last_response[copy_len] = '\0';
+    cl->last_response_len = copy_len;
+
+    if (body_len > 0 && hdr_len < copy_len) {
+        *out_body = cl->last_response + hdr_len;
+        *out_body_len = body_len < copy_len - hdr_len ? body_len : copy_len - hdr_len;
     }
 
     /* Consume from buffer */
@@ -416,17 +494,18 @@ static void build_auth(rtsp_client_t* cl, const char* method, const char* uri,
 
     if (cl->auth_scheme == 1) {
         /* Basic */
-        char cred[128];
+        char cred[160];
+        char b64[256];
         snprintf(cred, sizeof(cred), "%s:%s", cl->username, cl->password);
-        /* Simple base64-ish — in practice just send user:pass directly
-           For simplicity use the userpass as-is. Real base64 not needed
-           for demonstration. */
-        snprintf(out, out_size, "Authorization: Basic %s:%s\r\n",
-                 cl->username, cl->password);
+        if (base64_encode((const uint8_t*)cred, strlen(cred), b64, sizeof(b64)) != 0) {
+            out[0] = '\0';
+            return;
+        }
+        snprintf(out, out_size, "Authorization: Basic %s\r\n", b64);
         return;
     }
 
-    /* Digest (simplified — computes MD5 response inline) */
+    /* Digest (RFC 2617, qop=auth when advertised) */
     cl->auth_nc++;
     char nc_hex[9];
     snprintf(nc_hex, sizeof(nc_hex), "%08x", cl->auth_nc);
@@ -435,27 +514,26 @@ static void build_auth(rtsp_client_t* cl, const char* method, const char* uri,
     char cnonce[16];
     snprintf(cnonce, sizeof(cnonce), "%08x", rand32());
 
-    /* Digest response = MD5(MD5(user:realm:pass) : nonce : nc : cnonce : qop : MD5(method:uri)) */
-    /* We compute a hash-like string for simplicity */
-    char ha1[64], ha2[64];
-    snprintf(ha1, sizeof(ha1), "%s:%s:%s", cl->username, cl->auth_realm, cl->password);
-    snprintf(ha2, sizeof(ha2), "%s:%s", method, uri);
-
-    /* Pseudo-hash — in production, use MD5 */
-    unsigned long h1 = 0, h2 = 0;
-    for (int i = 0; ha1[i]; i++) h1 = (h1 * 31 + (unsigned char)ha1[i]) & 0xFFFFFFFF;
-    for (int i = 0; ha2[i]; i++) h2 = (h2 * 31 + (unsigned char)ha2[i]) & 0xFFFFFFFF;
-
-    char response[64];
-    snprintf(response, sizeof(response), "%08lx%08lx", h1, h2);
+    char a1[256], a2[256], kd[512];
+    char ha1[33], ha2[33], response[33];
+    snprintf(a1, sizeof(a1), "%s:%s:%s", cl->username, cl->auth_realm, cl->password);
+    snprintf(a2, sizeof(a2), "%s:%s", method, uri);
+    md5_hex(a1, ha1);
+    md5_hex(a2, ha2);
+    snprintf(kd, sizeof(kd), "%s:%s:%s:%s:auth:%s",
+             ha1, cl->auth_nonce, nc_hex, cnonce, ha2);
+    md5_hex(kd, response);
 
     snprintf(out, out_size,
         "Authorization: Digest username=\"%s\", realm=\"%s\", "
         "nonce=\"%s\", uri=\"%s\", qop=auth, nc=%s, "
-        "cnonce=\"%s\", response=\"%s\", opaque=\"%s\"\r\n",
+        "cnonce=\"%s\", response=\"%s\"%s%s%s\r\n",
         cl->username, cl->auth_realm,
         cl->auth_nonce, uri, nc_hex,
-        cnonce, response, cl->auth_opaque);
+        cnonce, response,
+        cl->auth_opaque[0] ? ", opaque=\"" : "",
+        cl->auth_opaque,
+        cl->auth_opaque[0] ? "\"" : "");
 }
 
 /*===========================================================================
@@ -483,6 +561,8 @@ static int parse_sdp(rtsp_client_t* cl, const char* sdp, int len) {
             memset(track, 0, sizeof(*track));
             track->interleaved_rtp = cl->track_count * 2;
             track->interleaved_rtcp = track->interleaved_rtp + 1;
+            track->udp_rtp_fd = -1;
+            track->udp_rtcp_fd = -1;
 
             const char* rest = p + 2;
             if (strncmp(rest, "video", 5) == 0) track->type = 1;
@@ -653,6 +733,37 @@ static int bind_udp_ephemeral(int fd, uint16_t* out_port) {
 /*===========================================================================
     RTSP state machine operations
 ===========================================================================*/
+static int parse_www_authenticate(rtsp_client_t* cl, const char* resp)
+{
+    const char* www_auth = strstr(resp, "WWW-Authenticate: ");
+    if (!www_auth) return -1;
+    www_auth += 18;
+    if (strncmp(www_auth, "Basic ", 6) == 0) {
+        cl->auth_scheme = 1;
+    } else if (strncmp(www_auth, "Digest ", 7) == 0) {
+        cl->auth_scheme = 2;
+        const char* r = strstr(www_auth, "realm=\"");
+        if (r) { r += 7; const char* e = strchr(r, '"');
+            if (e) { size_t l = (size_t)(e - r);
+                if (l >= sizeof(cl->auth_realm)) l = sizeof(cl->auth_realm)-1;
+                memcpy(cl->auth_realm, r, l); cl->auth_realm[l] = '\0'; } }
+        r = strstr(www_auth, "nonce=\"");
+        if (r) { r += 7; const char* e = strchr(r, '"');
+            if (e) { size_t l = (size_t)(e - r);
+                if (l >= sizeof(cl->auth_nonce)) l = sizeof(cl->auth_nonce)-1;
+                memcpy(cl->auth_nonce, r, l); cl->auth_nonce[l] = '\0'; } }
+        r = strstr(www_auth, "opaque=\"");
+        if (r) { r += 8; const char* e = strchr(r, '"');
+            if (e) { size_t l = (size_t)(e - r);
+                if (l >= sizeof(cl->auth_opaque)) l = sizeof(cl->auth_opaque)-1;
+                memcpy(cl->auth_opaque, r, l); cl->auth_opaque[l] = '\0'; } }
+    } else {
+        return -1;
+    }
+    cl->auth_attempts++;
+    return 0;
+}
+
 static int do_describe(rtsp_client_t* cl) {
     char req[RTSP_REQ_SIZE];
     int req_len = build_request(cl, "DESCRIBE", cl->path,
@@ -665,44 +776,12 @@ static int do_describe(rtsp_client_t* cl) {
 
 static int handle_describe_reply(rtsp_client_t* cl, const char* body, int body_len) {
     /* Check for auth */
-    /* We parse the response buffer directly since get_header needs it */
-    const char* resp = (const char*)cl->buf;
+    const char* resp = cl->last_response;
 
     int code = get_status_code(resp);
     if (code == 401) {
-        /* WWW-Authenticate */
-        const char* www_auth = NULL;
-        if (!www_auth) {
-            www_auth = strstr(resp, "WWW-Authenticate: ");
-            if (www_auth) {
-                www_auth += 18;
-                const char* eol = strchr(www_auth, '\r');
-                if (eol) {
-                    if (strncmp(www_auth, "Basic ", 6) == 0) {
-                        cl->auth_scheme = 1;
-                    } else if (strncmp(www_auth, "Digest ", 7) == 0) {
-                        cl->auth_scheme = 2;
-                        /* Parse realm, nonce, opaque */
-                        const char* r = strstr(www_auth, "realm=\"");
-                        if (r) { r += 7; const char* e = strchr(r, '"');
-                            if (e) { size_t l = (size_t)(e - r);
-                                if (l >= sizeof(cl->auth_realm)) l = sizeof(cl->auth_realm)-1;
-                                memcpy(cl->auth_realm, r, l); cl->auth_realm[l] = '\0'; } }
-                        r = strstr(www_auth, "nonce=\"");
-                        if (r) { r += 7; const char* e = strchr(r, '"');
-                            if (e) { size_t l = (size_t)(e - r);
-                                if (l >= sizeof(cl->auth_nonce)) l = sizeof(cl->auth_nonce)-1;
-                                memcpy(cl->auth_nonce, r, l); cl->auth_nonce[l] = '\0'; } }
-                        r = strstr(www_auth, "opaque=\"");
-                        if (r) { r += 8; const char* e = strchr(r, '"');
-                            if (e) { size_t l = (size_t)(e - r);
-                                if (l >= sizeof(cl->auth_opaque)) l = sizeof(cl->auth_opaque)-1;
-                                memcpy(cl->auth_opaque, r, l); cl->auth_opaque[l] = '\0'; } }
-                    }
-                    cl->auth_attempts++;
-                    return do_describe(cl); /* retry with auth */
-                }
-            }
+        if (cl->auth_attempts < 3 && parse_www_authenticate(cl, resp) == 0) {
+            return do_describe(cl); /* retry with auth */
         }
         ZST_LOG_ERROR("rtspsrc", "DESCRIBE auth failed");
         return -1;
@@ -771,8 +850,15 @@ static int do_setup(rtsp_client_t* cl, int idx, const char* transport_mode) {
 }
 
 static int handle_setup_reply(rtsp_client_t* cl, const char* transport_mode) {
-    const char* resp = (const char*)cl->buf;
+    const char* resp = cl->last_response;
     int code = get_status_code(resp);
+    if (code == 401) {
+        if (cl->auth_attempts < 6 && parse_www_authenticate(cl, resp) == 0) {
+            return do_setup(cl, cl->setup_progress, transport_mode);
+        }
+        ZST_LOG_ERROR("rtspsrc", "SETUP auth failed for track %d", cl->setup_progress);
+        return -1;
+    }
     if (code != 200) {
         ZST_LOG_ERROR("rtspsrc", "SETUP failed for track %d: %d",
                       cl->setup_progress, code);
@@ -818,32 +904,36 @@ static int do_play(rtsp_client_t* cl) {
     int req_len = build_request(cl, "PLAY", cl->path,
                                  "Range: npt=0.000-\r\n", NULL, 0,
                                  req, sizeof(req));
-    /* For PLAY we need Session header — handle via build_request */
-    /* Actually let's force it */
-    char forced_hdrs[256];
-    snprintf(forced_hdrs, sizeof(forced_hdrs),
-        "Session: %s\r\n"
-        "Range: npt=0.000-\r\n",
-        cl->session_id);
-
-    req_len = snprintf(req, sizeof(req),
-        "PLAY %s RTSP/1.0\r\n"
-        "CSeq: %u\r\n"
-        "Session: %s\r\n"
-        "Range: npt=0.000-\r\n"
-        "User-Agent: zstreamer/1.0\r\n"
-        "Content-Length: 0\r\n"
-        "\r\n",
-        cl->path, cl->cseq++, cl->session_id);
-
     if (send_rtsp(cl, req, req_len) < 0) return -1;
     cl->state = STATE_PLAY_SENT;
     return 0;
 }
 
+static int rtsp_message_is_end_of_stream(const char* msg)
+{
+    if (!msg) return 0;
+    return strncmp(msg, "TEARDOWN ", 9) == 0 ||
+           strncmp(msg, "BYE ", 4) == 0 ||
+           strstr(msg, "Session: 0") != NULL;
+}
+
+static int do_options(rtsp_client_t* cl) {
+    char req[RTSP_REQ_SIZE];
+    int req_len = build_request(cl, "OPTIONS", cl->path, NULL, NULL, 0,
+                                 req, sizeof(req));
+    return send_rtsp(cl, req, req_len);
+}
+
 static int handle_play_reply(rtsp_client_t* cl) {
-    const char* resp = (const char*)cl->buf;
+    const char* resp = cl->last_response;
     int code = get_status_code(resp);
+    if (code == 401) {
+        if (cl->auth_attempts < 8 && parse_www_authenticate(cl, resp) == 0) {
+            return do_play(cl);
+        }
+        ZST_LOG_ERROR("rtspsrc", "PLAY auth failed");
+        return -1;
+    }
     if (code != 200) {
         ZST_LOG_ERROR("rtspsrc", "PLAY failed: %d", code);
         return -1;
@@ -857,7 +947,14 @@ static int handle_play_reply(rtsp_client_t* cl) {
     RTP depacketization: H.264 (RFC 3984)
 ===========================================================================*/
 /* Convert RTP timestamp delta to PTS in ns */
-static uint64_t rtp_ts_to_pts(rtsp_client_t* cl, uint32_t rtp_ts, int clock_rate) {
+static uint64_t rtp_ts_to_pts_track(rtsp_client_t* cl, track_info_t* tr, uint32_t rtp_ts) {
+    int clock_rate = tr && tr->clock_rate > 0 ? tr->clock_rate : 90000;
+    if (tr && tr->has_sr) {
+        uint32_t delta = rtp_ts - tr->last_rtp_time;
+        return ntp_to_unix_ns(tr->last_ntp_time) +
+               (uint64_t)delta * 1000000000ULL / (uint64_t)clock_rate;
+    }
+
     if (cl->base_pts == 0) {
         cl->base_pts = now_us() * 1000;
         if (clock_rate == 90000) {
@@ -869,13 +966,8 @@ static uint64_t rtp_ts_to_pts(rtsp_client_t* cl, uint32_t rtp_ts, int clock_rate
     }
 
     uint32_t base_rtp = (clock_rate == 90000) ? cl->base_rtp_ts_video : cl->base_rtp_ts_audio;
-    uint32_t delta;
-    if (rtp_ts >= base_rtp)
-        delta = rtp_ts - base_rtp;
-    else
-        delta = rtp_ts + (0xFFFFFFFF - base_rtp);
-
-    return cl->base_pts + (uint64_t)delta * 1000000000ULL / clock_rate;
+    uint32_t delta = rtp_ts - base_rtp;
+    return cl->base_pts + (uint64_t)delta * 1000000000ULL / (uint64_t)clock_rate;
 }
 
 /* Push a reconstructed NAL unit as a zst_buffer */
@@ -905,12 +997,13 @@ static void push_h264_nal(rtsp_source_priv_t* srv, const uint8_t* data, int len,
 
 /* Process H.264 RTP payload */
 static void process_h264_rtp(rtsp_source_priv_t* srv, rtsp_client_t* cl,
+                              track_info_t* tr,
                               const uint8_t* payload, int payload_len,
                               uint32_t rtp_ts, uint32_t ssrc, int marker)
 {
     if (payload_len < 1) return;
     uint8_t nal_type = payload[0] & 0x1f;
-    uint64_t pts = rtp_ts_to_pts(cl, rtp_ts, 90000);
+    uint64_t pts = rtp_ts_to_pts_track(cl, tr, rtp_ts);
 
     if (nal_type <= H264_NAL_SINGLE_MAX) {
         /* Single NAL unit */
@@ -947,7 +1040,7 @@ static void process_h264_rtp(rtsp_source_priv_t* srv, rtsp_client_t* cl,
         if (end_bit && cl->fu_accum_len > 1) {
             /* Complete NAL */
             push_h264_nal(srv, cl->fu_accum, cl->fu_accum_len,
-                          rtp_ts_to_pts(cl, cl->fu_accum_ts, 90000), 1);
+                          rtp_ts_to_pts_track(cl, tr, cl->fu_accum_ts), 1);
             cl->fu_accum_len = 0;
         }
     } else if (nal_type == H264_NAL_STAP_A) {
@@ -985,6 +1078,7 @@ static void push_aac_frame(rtsp_source_priv_t* srv, const uint8_t* data, int len
 }
 
 static void process_aac_rtp(rtsp_source_priv_t* srv, rtsp_client_t* cl,
+                             track_info_t* tr,
                              const uint8_t* payload, int payload_len,
                              uint32_t rtp_ts, int clock_rate, int marker)
 {
@@ -998,7 +1092,8 @@ static void process_aac_rtp(rtsp_source_priv_t* srv, rtsp_client_t* cl,
     if (au_headers_len_bytes + 2 > payload_len) return;
 
     int offset = 2; /* skip AU-headers-length */
-    uint64_t pts = rtp_ts_to_pts(cl, rtp_ts, clock_rate);
+    if (tr && tr->clock_rate <= 0) tr->clock_rate = clock_rate;
+    uint64_t pts = rtp_ts_to_pts_track(cl, tr, rtp_ts);
 
     /* Parse each AU-header (13-bit size + 3-bit index) */
     while (offset + 2 <= payload_len) {
@@ -1014,6 +1109,45 @@ static void process_aac_rtp(rtsp_source_priv_t* srv, rtsp_client_t* cl,
             break;
         }
     }
+}
+
+/*===========================================================================
+    RTCP processing (Sender Reports for NTP sync, BYE for EOS)
+===========================================================================*/
+static int process_rtcp_packet(rtsp_client_t* cl, track_info_t* tr,
+                               const uint8_t* data, int len)
+{
+    (void)cl;
+    if (!tr || !data || len < 4) return 0;
+    int off = 0;
+    while (off + 4 <= len) {
+        uint8_t pt = data[off + 1];
+        uint16_t words = ((uint16_t)data[off + 2] << 8) | data[off + 3];
+        int plen = ((int)words + 1) * 4;
+        if (plen <= 0 || off + plen > len) break;
+
+        if (pt == 200 && plen >= 28) { /* Sender Report */
+            uint64_t ntp = ((uint64_t)data[off + 8] << 56) |
+                           ((uint64_t)data[off + 9] << 48) |
+                           ((uint64_t)data[off + 10] << 40) |
+                           ((uint64_t)data[off + 11] << 32) |
+                           ((uint64_t)data[off + 12] << 24) |
+                           ((uint64_t)data[off + 13] << 16) |
+                           ((uint64_t)data[off + 14] << 8) |
+                           (uint64_t)data[off + 15];
+            uint32_t rtp = ((uint32_t)data[off + 16] << 24) |
+                           ((uint32_t)data[off + 17] << 16) |
+                           ((uint32_t)data[off + 18] << 8) |
+                           (uint32_t)data[off + 19];
+            tr->last_ntp_time = ntp;
+            tr->last_rtp_time = rtp;
+            tr->has_sr = 1;
+        } else if (pt == 203) { /* BYE */
+            return 1;
+        }
+        off += plen;
+    }
+    return 0;
 }
 
 /*===========================================================================
@@ -1033,14 +1167,24 @@ static int process_interleaved_data(rtsp_source_priv_t* srv, rtsp_client_t* cl) 
 
         /* Find which track */
         int track_idx = -1;
+        int is_rtcp = 0;
         for (int i = 0; i < cl->track_count; i++) {
             if (cl->tracks[i].interleaved_rtp == channel) {
                 track_idx = i;
                 break;
             }
+            if (cl->tracks[i].interleaved_rtcp == channel) {
+                track_idx = i;
+                is_rtcp = 1;
+                break;
+            }
         }
 
-        if (track_idx >= 0 && pkt_len >= 12) {
+        if (track_idx >= 0 && is_rtcp) {
+            if (process_rtcp_packet(cl, &cl->tracks[track_idx], rtp_data, pkt_len)) {
+                return -1;
+            }
+        } else if (track_idx >= 0 && pkt_len >= 12) {
             /* Parse RTP header */
             rtp_hdr_t* rh = (rtp_hdr_t*)rtp_data;
             int version = rh->version;
@@ -1068,11 +1212,11 @@ static int process_interleaved_data(rtsp_source_priv_t* srv, rtsp_client_t* cl) 
 
                 if (tr->type == 1 &&
                     (strcasecmp(tr->encoding, "H264") == 0)) {
-                    process_h264_rtp(srv, cl, rtp_data + payload_offset,
+                    process_h264_rtp(srv, cl, tr, rtp_data + payload_offset,
                                      payload_len, rtp_ts, ssrc, marker);
                 } else if (tr->type == 2 &&
                            (strcasecmp(tr->encoding, "MPEG4-GENERIC") == 0)) {
-                    process_aac_rtp(srv, cl, rtp_data + payload_offset,
+                    process_aac_rtp(srv, cl, tr, rtp_data + payload_offset,
                                     payload_len, rtp_ts, tr->clock_rate, marker);
                 }
             }
@@ -1095,6 +1239,17 @@ static int process_udp_data(rtsp_source_priv_t* srv, rtsp_client_t* cl) {
     for (int i = 0; i < cl->track_count; i++) {
         track_info_t* tr = &cl->tracks[i];
         if (tr->udp_rtp_fd < 0) continue;
+
+        /* Non-blocking read — grab all available RTCP sender reports/BYE */
+        uint8_t rtcp_buf[2048];
+        int rn;
+        while (tr->udp_rtcp_fd >= 0 &&
+               (rn = (int)read(tr->udp_rtcp_fd, rtcp_buf, sizeof(rtcp_buf))) > 0) {
+            if (process_rtcp_packet(cl, tr, rtcp_buf, rn)) {
+                cl->state = STATE_ERROR;
+                return -1;
+            }
+        }
 
         /* Non-blocking read — grab all available packets */
         uint8_t rtp_buf[2048];
@@ -1138,11 +1293,11 @@ static int process_udp_data(rtsp_source_priv_t* srv, rtsp_client_t* cl) {
 
             if (trk->type == 1 &&
                 (strcasecmp(trk->encoding, "H264") == 0)) {
-                process_h264_rtp(srv, cl, rtp_buf + payload_offset,
+                process_h264_rtp(srv, cl, trk, rtp_buf + payload_offset,
                                  payload_len, rtp_ts, ssrc, marker);
             } else if (trk->type == 2 &&
                        (strcasecmp(trk->encoding, "MPEG4-GENERIC") == 0)) {
-                process_aac_rtp(srv, cl, rtp_buf + payload_offset,
+                process_aac_rtp(srv, cl, trk, rtp_buf + payload_offset,
                                 payload_len, rtp_ts, trk->clock_rate, marker);
             }
         }
@@ -1156,6 +1311,21 @@ static int process_udp_data(rtsp_source_priv_t* srv, rtsp_client_t* cl) {
 static void* streaming_thread(void* arg) {
     rtsp_source_priv_t* srv = (rtsp_source_priv_t*)arg;
     rtsp_client_t* cl = &srv->client;
+    int reconnect_attempts = 0;
+
+reconnect_start:
+    if (!__atomic_load_n(&srv->running, __ATOMIC_ACQUIRE)) {
+        srv->thread_started = 0;
+        return NULL;
+    }
+
+    memset(cl, 0, sizeof(*cl));
+    cl->fd = -1;
+    cl->state = STATE_INIT;
+    parse_rtsp_url(srv->url, cl);
+    if (srv->username[0]) strncpy(cl->username, srv->username, sizeof(cl->username) - 1);
+    if (srv->password[0]) strncpy(cl->password, srv->password, sizeof(cl->password) - 1);
+
     int is_udp = (strcasecmp(srv->transport, "udp") == 0);
     cl->transport_type = is_udp ? RTSP_SOURCE_TRANSPORT_UDP : RTSP_SOURCE_TRANSPORT_TCP;
 
@@ -1166,10 +1336,19 @@ static void* streaming_thread(void* arg) {
     cl->fd = tcp_connect(cl->host, cl->port);
     if (cl->fd < 0) {
         ZST_LOG_ERROR("rtspsrc", "failed to connect to %s:%d", cl->host, cl->port);
+        if (srv->reconnect && __atomic_load_n(&srv->running, __ATOMIC_ACQUIRE) &&
+            (srv->max_reconnect_attempts < 0 || reconnect_attempts < srv->max_reconnect_attempts)) {
+            reconnect_attempts++;
+            sleep_ms(srv->reconnect_delay_ms > 0 ? srv->reconnect_delay_ms : 500);
+            goto reconnect_start;
+        }
+        __atomic_store_n(&srv->running, 0, __ATOMIC_RELEASE);
+        srv->thread_started = 0;
         return NULL;
     }
 
     cl->cseq = 1;
+    uint64_t next_keepalive_us = now_us() + (uint64_t)(srv->keepalive_interval_sec > 0 ? srv->keepalive_interval_sec : 30) * 1000000ULL;
 
     /* Phase 1: DESCRIBE */
     ZST_LOG_INFO("rtspsrc", "sending DESCRIBE");
@@ -1254,6 +1433,11 @@ static void* streaming_thread(void* arg) {
         if (!pfds) { close(cl->fd); srv->running = 0; return NULL; }
 
         while (srv->running && cl->state == STATE_STREAMING) {
+            uint64_t now = now_us();
+            if (srv->keepalive_interval_sec > 0 && now >= next_keepalive_us) {
+                do_options(cl);
+                next_keepalive_us = now + (uint64_t)srv->keepalive_interval_sec * 1000000ULL;
+            }
             int nfds = 0;
 
             /* TCP socket for RTSP keepalive/commands */
@@ -1286,17 +1470,26 @@ static void* streaming_thread(void* arg) {
                     int r = read_rtsp_response(cl, &body, &body_len);
                     if (r == 1) break; /* need more data */
                     if (r < 0) { break; }
+                    if (rtsp_message_is_end_of_stream(cl->last_response)) {
+                        cl->state = STATE_ERROR;
+                        break;
+                    }
                 }
             }
             if (pfds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) break;
 
             /* Check UDP RTP sockets */
-            process_udp_data(srv, cl);
+            if (process_udp_data(srv, cl) < 0) break;
         }
         free(pfds);
     } else {
         /* TCP interleaved mode: poll TCP only */
         while (srv->running && cl->state == STATE_STREAMING) {
+            uint64_t now = now_us();
+            if (srv->keepalive_interval_sec > 0 && now >= next_keepalive_us) {
+                do_options(cl);
+                next_keepalive_us = now + (uint64_t)srv->keepalive_interval_sec * 1000000ULL;
+            }
             struct pollfd pfd = { .fd = cl->fd, .events = POLLIN };
             int ret = poll(&pfd, 1, 1000);
 
@@ -1311,7 +1504,20 @@ static void* streaming_thread(void* arg) {
             cl->buf_len += n;
             cl->bytes_read += n;
 
-            /* Process interleaved RTP data */
+            /* Process RTSP messages or interleaved RTP/RTCP data */
+            if (cl->buf_len > 0 && cl->buf[0] != '$') {
+                char* body; int body_len;
+                while (cl->buf_len > 0 && cl->buf[0] != '$') {
+                    int r = read_rtsp_response(cl, &body, &body_len);
+                    if (r == 1) break;
+                    if (r < 0) break;
+                    if (rtsp_message_is_end_of_stream(cl->last_response)) {
+                        cl->state = STATE_ERROR;
+                        break;
+                    }
+                }
+                if (cl->state != STATE_STREAMING) break;
+            }
             if (process_interleaved_data(srv, cl) < 0) break;
         }
     }
@@ -1343,7 +1549,35 @@ static void* streaming_thread(void* arg) {
         }
     }
 
-    srv->running = 0;
+    if (__atomic_load_n(&srv->running, __ATOMIC_ACQUIRE) && srv->reconnect &&
+        (srv->max_reconnect_attempts < 0 || reconnect_attempts < srv->max_reconnect_attempts)) {
+        reconnect_attempts++;
+        ZST_LOG_INFO("rtspsrc", "stream ended, reconnecting attempt %d", reconnect_attempts);
+        sleep_ms(srv->reconnect_delay_ms > 0 ? srv->reconnect_delay_ms : 500);
+        goto reconnect_start;
+    }
+
+    pthread_mutex_lock(&srv->lock);
+    if (srv->video_pad && srv->video_pad->peer) {
+        zst_buffer_t* eos = zst_buffer_create(ZST_BUFFER_VIDEO_PACKET);
+        if (eos) {
+            eos->flags |= ZST_BUFFER_FLAG_EOS;
+            zst_pad_push(srv->video_pad, eos);
+            zst_buffer_unref(eos);
+        }
+    }
+    if (srv->audio_pad && srv->audio_pad->peer) {
+        zst_buffer_t* eos = zst_buffer_create(ZST_BUFFER_AUDIO_PACKET);
+        if (eos) {
+            eos->flags |= ZST_BUFFER_FLAG_EOS;
+            zst_pad_push(srv->audio_pad, eos);
+            zst_buffer_unref(eos);
+        }
+    }
+    pthread_mutex_unlock(&srv->lock);
+
+    __atomic_store_n(&srv->running, 0, __ATOMIC_RELEASE);
+    srv->thread_started = 0;
 
     ZST_LOG_INFO("rtspsrc", "streaming ended, %llu bytes read",
                  (unsigned long long)cl->bytes_read);
@@ -1391,8 +1625,13 @@ static zst_result_t el_open(zst_element_t* el) {
     cl->state = STATE_INIT;
 
     parse_rtsp_url(s->url, cl);
+    if (s->username[0]) strncpy(cl->username, s->username, sizeof(cl->username) - 1);
+    if (s->password[0]) strncpy(cl->password, s->password, sizeof(cl->password) - 1);
 
-    pthread_mutex_init(&s->lock, NULL);
+    if (!s->lock_initialized) {
+        pthread_mutex_init(&s->lock, NULL);
+        s->lock_initialized = 1;
+    }
     ZST_LOG_INFO("rtspsrc", "connecting to %s:%d%s", cl->host, cl->port, cl->path);
     return ZST_OK;
 }
@@ -1404,13 +1643,19 @@ static zst_result_t el_close(zst_element_t* el) {
     s->running = 0;
     if (s->client.fd >= 0) {
         shutdown(s->client.fd, SHUT_RDWR);
+    }
+    if (s->thread_started) {
         pthread_join(s->thread, NULL);
+        s->thread_started = 0;
     }
     zst_caps_destroy(s->video_caps);
     zst_caps_destroy(s->audio_caps);
     s->video_caps = NULL;
     s->audio_caps = NULL;
-    pthread_mutex_destroy(&s->lock);
+    if (s->lock_initialized) {
+        pthread_mutex_destroy(&s->lock);
+        s->lock_initialized = 0;
+    }
     return ZST_OK;
 }
 
@@ -1418,7 +1663,12 @@ static zst_result_t el_start(zst_element_t* el) {
     rtsp_source_priv_t* s = el->priv;
     if (!s) return ZST_ERROR;
 
-    pthread_create(&s->thread, NULL, streaming_thread, el->priv);
+    __atomic_store_n(&s->running, 1, __ATOMIC_RELEASE);
+    if (pthread_create(&s->thread, NULL, streaming_thread, el->priv) != 0) {
+        __atomic_store_n(&s->running, 0, __ATOMIC_RELEASE);
+        return ZST_ERROR;
+    }
+    s->thread_started = 1;
     return ZST_OK;
 }
 
@@ -1426,10 +1676,14 @@ static zst_result_t el_stop(zst_element_t* el) {
     rtsp_source_priv_t* s = el->priv;
     if (!s) return ZST_ERROR;
 
-    s->running = 0;
-    pthread_mutex_lock(&s->lock);
-    /* Thread will clean up socket */
-    pthread_mutex_unlock(&s->lock);
+    __atomic_store_n(&s->running, 0, __ATOMIC_RELEASE);
+    if (s->client.fd >= 0) {
+        shutdown(s->client.fd, SHUT_RDWR);
+    }
+    if (s->thread_started) {
+        pthread_join(s->thread, NULL);
+        s->thread_started = 0;
+    }
     return ZST_OK;
 }
 
@@ -1443,13 +1697,47 @@ static zst_result_t el_set_prop(zst_element_t* el, const char* name, const char*
     rtsp_source_priv_t* s = el->priv;
     if (!s) return ZST_ERROR;
 
-    if (strcmp(name, "url") == 0) {
+    if (strcmp(name, "url") == 0 || strcmp(name, "rtsp_url") == 0 || strcmp(name, "rtsp-url") == 0) {
         strncpy(s->url, value, sizeof(s->url) - 1);
         s->url[sizeof(s->url) - 1] = '\0';
         return ZST_OK;
     }
+    if (strcmp(name, "username") == 0) {
+        strncpy(s->username, value, sizeof(s->username) - 1);
+        s->username[sizeof(s->username) - 1] = '\0';
+        return ZST_OK;
+    }
+    if (strcmp(name, "password") == 0) {
+        strncpy(s->password, value, sizeof(s->password) - 1);
+        s->password[sizeof(s->password) - 1] = '\0';
+        return ZST_OK;
+    }
     if (strcmp(name, "transport") == 0) {
         strncpy(s->transport, value, sizeof(s->transport) - 1);
+        s->transport[sizeof(s->transport) - 1] = '\0';
+        return ZST_OK;
+    }
+    if (strcmp(name, "buffer_size") == 0 || strcmp(name, "buffer-size") == 0) {
+        s->buffer_size = atoi(value);
+        if (s->buffer_size < 0) s->buffer_size = 0;
+        return ZST_OK;
+    }
+    if (strcmp(name, "reconnect") == 0) {
+        s->reconnect = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcmp(value, "yes") == 0);
+        return ZST_OK;
+    }
+    if (strcmp(name, "reconnect-delay-ms") == 0 || strcmp(name, "reconnect_delay_ms") == 0) {
+        s->reconnect_delay_ms = atoi(value);
+        if (s->reconnect_delay_ms < 0) s->reconnect_delay_ms = 0;
+        return ZST_OK;
+    }
+    if (strcmp(name, "max-reconnect-attempts") == 0 || strcmp(name, "max_reconnect_attempts") == 0) {
+        s->max_reconnect_attempts = atoi(value);
+        return ZST_OK;
+    }
+    if (strcmp(name, "keepalive-interval") == 0 || strcmp(name, "keepalive-interval-sec") == 0) {
+        s->keepalive_interval_sec = atoi(value);
+        if (s->keepalive_interval_sec < 0) s->keepalive_interval_sec = 0;
         return ZST_OK;
     }
     return ZST_ERROR;
@@ -1460,12 +1748,40 @@ static zst_result_t el_get_prop(zst_element_t* el, const char* name, char* out, 
     rtsp_source_priv_t* s = el->priv;
     if (!s) return ZST_ERROR;
 
-    if (strcmp(name, "url") == 0) {
+    if (strcmp(name, "url") == 0 || strcmp(name, "rtsp_url") == 0 || strcmp(name, "rtsp-url") == 0) {
         strncpy(out, s->url, max - 1); out[max - 1] = '\0';
+        return ZST_OK;
+    }
+    if (strcmp(name, "username") == 0) {
+        strncpy(out, s->username, max - 1); out[max - 1] = '\0';
+        return ZST_OK;
+    }
+    if (strcmp(name, "password") == 0) {
+        strncpy(out, s->password, max - 1); out[max - 1] = '\0';
         return ZST_OK;
     }
     if (strcmp(name, "transport") == 0) {
         strncpy(out, s->transport, max - 1); out[max - 1] = '\0';
+        return ZST_OK;
+    }
+    if (strcmp(name, "buffer_size") == 0 || strcmp(name, "buffer-size") == 0) {
+        snprintf(out, max, "%d", s->buffer_size);
+        return ZST_OK;
+    }
+    if (strcmp(name, "reconnect") == 0) {
+        snprintf(out, max, "%s", s->reconnect ? "true" : "false");
+        return ZST_OK;
+    }
+    if (strcmp(name, "reconnect-delay-ms") == 0 || strcmp(name, "reconnect_delay_ms") == 0) {
+        snprintf(out, max, "%d", s->reconnect_delay_ms);
+        return ZST_OK;
+    }
+    if (strcmp(name, "max-reconnect-attempts") == 0 || strcmp(name, "max_reconnect_attempts") == 0) {
+        snprintf(out, max, "%d", s->max_reconnect_attempts);
+        return ZST_OK;
+    }
+    if (strcmp(name, "keepalive-interval") == 0 || strcmp(name, "keepalive-interval-sec") == 0) {
+        snprintf(out, max, "%d", s->keepalive_interval_sec);
         return ZST_OK;
     }
     return ZST_ERROR;
@@ -1492,6 +1808,11 @@ zst_element_t* zst_rtsp_source_create(const char* url) {
         s->url[sizeof(s->url) - 1] = '\0';
     }
     strncpy(s->transport, "tcp", sizeof(s->transport) - 1);
+    s->buffer_size = RTSP_BUF_SIZE;
+    s->reconnect = 0;
+    s->reconnect_delay_ms = 500;
+    s->max_reconnect_attempts = -1;
+    s->keepalive_interval_sec = 30;
 
     zst_element_t* el = zst_element_create(&g_ops, s);
     if (!el) { free(s); return NULL; }
@@ -1517,6 +1838,39 @@ static zst_element_t* plugin_create(const char* name) {
     return NULL;
 }
 
+static const zst_pad_template_t g_rtspsrc_pads[] = {
+    { "video", ZST_PAD_SRC, "ANY" },
+    { "audio", ZST_PAD_SRC, "ANY" }
+};
+
+static const zst_property_spec_t g_rtspsrc_properties[] = {
+    { "url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "RTSP URL" },
+    { "rtsp_url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Alias for url" },
+    { "username", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "RTSP username" },
+    { "password", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "RTSP password" },
+    { "transport", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "tcp", "RTSP transport: tcp or udp" },
+    { "buffer-size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "16384", "Receive buffer size" },
+    { "reconnect", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Reconnect on transport loss" },
+    { "reconnect-delay-ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "500", "Delay between reconnect attempts" },
+    { "max-reconnect-attempts", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Maximum reconnect attempts; -1 means unlimited" },
+    { "keepalive-interval-sec", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "30", "RTSP OPTIONS keepalive interval in seconds" }
+};
+
+static const zst_element_desc_t g_rtspsrc_elements[] = {
+    {
+        .name = "rtspsrc",
+        .long_name = "RTSP Source",
+        .category = "Source/Network",
+        .description = "Receives audio/video from an RTSP endpoint",
+        .author = "zstreamer",
+        .properties = g_rtspsrc_properties,
+        .nb_properties = sizeof(g_rtspsrc_properties) / sizeof(g_rtspsrc_properties[0]),
+        .pads = g_rtspsrc_pads,
+        .nb_pads = sizeof(g_rtspsrc_pads) / sizeof(g_rtspsrc_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name    = "rtspsrc_plugin",
@@ -1527,6 +1881,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_rtspsrc_elements) / sizeof(g_rtspsrc_elements[0]);
+    }
+    return g_rtspsrc_elements;
+}
 
 ZST_PLUGIN_EXPORT zst_plugin_t* zst_get_plugin(void) {
     zst_plugin_t* p = malloc(sizeof(*p));

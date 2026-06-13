@@ -310,6 +310,14 @@ v4l2_buf_free(zst_buffer_t* buf)
     }
 }
 
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    v4l2_source_t* s = el->priv;
+    return s->pool;
+}
+
 static zst_element_ops_t g_ops = {
     .name    = "v4l2src",
     .open    = v4l2_open,
@@ -317,6 +325,7 @@ static zst_element_ops_t g_ops = {
     .start   = v4l2_start,
     .stop    = v4l2_stop,
     .process = v4l2_process,
+    .get_pool = element_get_pool
 };
 
 zst_element_t*
@@ -349,6 +358,25 @@ plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_pad_template_t g_v4l2src_pads[] = {
+    { "src", ZST_PAD_SRC, "video/x-raw" }
+};
+
+static const zst_element_desc_t g_v4l2src_elements[] = {
+    {
+        .name = "v4l2src",
+        .long_name = "V4L2 Source",
+        .category = "Source/Video",
+        .description = "Captures video from a V4L2 device",
+        .author = "zstreamer",
+        .properties = NULL,
+        .nb_properties = 0,
+        .pads = g_v4l2src_pads,
+        .nb_pads = sizeof(g_v4l2src_pads) / sizeof(g_v4l2src_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "v4l2source_plugin",
@@ -359,6 +387,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create_element
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_v4l2src_elements) / sizeof(g_v4l2src_elements[0]);
+    }
+    return g_v4l2src_elements;
+}
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t*

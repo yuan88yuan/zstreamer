@@ -28,6 +28,8 @@ typedef struct {
     char             url[512];
     char             mount_point[128];
     int              listen_port;
+    int              max_clients;
+    int              rtcp_interval_ms;
     char             transport[32];
 } rtsp_sink_t;
 
@@ -323,6 +325,11 @@ rtsp_sink_start(zst_element_t* el)
     if (s->transport[0]) {
         av_dict_set(&opts, "rtsp_transport", s->transport, 0);
     }
+    if (s->rtcp_interval_ms > 0) {
+        char interval[32];
+        snprintf(interval, sizeof(interval), "%d", s->rtcp_interval_ms * 1000);
+        av_dict_set(&opts, "rtcp_interval", interval, 0);
+    }
 
     if (avformat_write_header(s->fc, &opts) < 0) {
         ZST_LOG_ERROR("rtspsink", "failed to write RTSP header");
@@ -376,6 +383,17 @@ rtsp_sink_set_property(zst_element_t* el, const char* name, const char* value)
         s->transport[sizeof(s->transport) - 1] = '\0';
         return ZST_OK;
     }
+    if (strcmp(name, "max_clients") == 0 || strcmp(name, "max-clients") == 0) {
+        s->max_clients = atoi(value);
+        if (s->max_clients <= 0) s->max_clients = 1;
+        return ZST_OK;
+    }
+    if (strcmp(name, "rtcp_interval") == 0 || strcmp(name, "rtcp-interval") == 0 ||
+        strcmp(name, "rtcp-interval-ms") == 0) {
+        s->rtcp_interval_ms = atoi(value);
+        if (s->rtcp_interval_ms < 0) s->rtcp_interval_ms = 0;
+        return ZST_OK;
+    }
 
     return ZST_ERROR;
 }
@@ -406,6 +424,15 @@ rtsp_sink_get_property(zst_element_t* el, const char* name, char* value_out, siz
         value_out[max_len - 1] = '\0';
         return ZST_OK;
     }
+    if (strcmp(name, "max_clients") == 0 || strcmp(name, "max-clients") == 0) {
+        snprintf(value_out, max_len, "%d", s->max_clients);
+        return ZST_OK;
+    }
+    if (strcmp(name, "rtcp_interval") == 0 || strcmp(name, "rtcp-interval") == 0 ||
+        strcmp(name, "rtcp-interval-ms") == 0) {
+        snprintf(value_out, max_len, "%d", s->rtcp_interval_ms);
+        return ZST_OK;
+    }
 
     return ZST_ERROR;
 }
@@ -428,6 +455,8 @@ zst_rtsp_sink_create(void)
     if (!priv) return NULL;
 
     priv->listen_port = 8554;
+    priv->max_clients = 1;
+    priv->rtcp_interval_ms = 5000;
     strncpy(priv->mount_point, "live", sizeof(priv->mount_point) - 1);
     strncpy(priv->transport, "tcp", sizeof(priv->transport) - 1);
     rtsp_sink_update_url(priv);
@@ -470,6 +499,35 @@ plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_pad_template_t g_rtspsink_pads[] = {
+    { "video", ZST_PAD_SINK, "ANY" },
+    { "audio", ZST_PAD_SINK, "ANY" }
+};
+
+static const zst_property_spec_t g_rtspsink_properties[] = {
+    { "url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "rtsp://0.0.0.0:8554/live", "RTSP listen URL" },
+    { "listen-port", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "8554", "RTSP listen port" },
+    { "mount-point", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "live", "RTSP mount point" },
+    { "transport", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "tcp", "Preferred RTSP transport" },
+    { "max-clients", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1", "Maximum concurrent clients requested by the application" },
+    { "rtcp-interval-ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5000", "RTCP sender report interval in milliseconds" }
+};
+
+static const zst_element_desc_t g_rtspsink_elements[] = {
+    {
+        .name = "rtspsink",
+        .long_name = "RTSP Sink",
+        .category = "Sink/Network",
+        .description = "Publishes audio/video to an RTSP endpoint",
+        .author = "zstreamer",
+        .properties = g_rtspsink_properties,
+        .nb_properties = sizeof(g_rtspsink_properties) / sizeof(g_rtspsink_properties[0]),
+        .pads = g_rtspsink_pads,
+        .nb_pads = sizeof(g_rtspsink_pads) / sizeof(g_rtspsink_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "rtspsink_plugin",
@@ -480,6 +538,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create_element
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_rtspsink_elements) / sizeof(g_rtspsink_elements[0]);
+    }
+    return g_rtspsink_elements;
+}
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t*

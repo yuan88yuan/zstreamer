@@ -1,0 +1,45 @@
+/*=============================================================================
+    zst_mp4_muxer.h — Mp4 Muxer convenience API
+=============================================================================*/
+#pragma once
+
+#include "zst_element.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define ZST_MP4_MUXER_FACTORY "mp4mux"
+
+#define ZST_MP4_MUX_PROP_WIDTH                   "width"
+#define ZST_MP4_MUX_PROP_HEIGHT                  "height"
+#define ZST_MP4_MUX_PROP_FPS                     "fps"
+#define ZST_MP4_MUX_PROP_FRAMERATE               "framerate"
+#define ZST_MP4_MUX_PROP_SAMPLE_RATE             "sample-rate"
+#define ZST_MP4_MUX_PROP_RATE                    "rate"
+#define ZST_MP4_MUX_PROP_CHANNELS                "channels"
+#define ZST_MP4_MUX_PROP_LOCATION                "location"
+#define ZST_MP4_MUX_PROP_PATH                    "path"
+#define ZST_MP4_MUXER_PROP_WIDTH        "width"
+#define ZST_MP4_MUXER_PROP_HEIGHT       "height"
+#define ZST_MP4_MUXER_PROP_FPS          "fps"
+#define ZST_MP4_MUXER_PROP_SAMPLE_RATE  "sample-rate"
+#define ZST_MP4_MUXER_PROP_CHANNELS     "channels"
+#define ZST_MP4_MUXER_PROP_LOCATION     "location"
+
+typedef struct {
+    size_t struct_size;
+    uint32_t width;
+    uint32_t height;
+    uint32_t fps;
+    uint32_t sample_rate;
+    uint32_t channels;
+    const char* location;
+} zst_mp4_muxer_config_t;
+
+zst_element_t* zst_mp4_muxer_create(void);
+zst_element_t* zst_mp4_muxer_create_with_config(const zst_mp4_muxer_config_t* config);
+
+#ifdef __cplusplus
+}
+#endif

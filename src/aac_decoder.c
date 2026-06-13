@@ -399,12 +399,21 @@ aacdec_get_caps(zst_element_t* el, zst_pad_t* pad, const zst_caps_t* filter)
     return caps;
 }
 
+
+static zst_buffer_pool_t*
+element_get_pool(zst_element_t* el)
+{
+    aac_decoder_t* s = el->priv;
+    return s->pool;
+}
+
 static zst_element_ops_t g_ops = {
     .name     = "aacdec",
     .open     = aacdec_open,
     .close    = aacdec_close,
     .process  = aacdec_process,
     .get_caps = aacdec_get_caps,
+    .get_pool = element_get_pool
 };
 
 zst_element_t*
@@ -447,6 +456,26 @@ plugin_create_element(const char* name)
     return NULL;
 }
 
+static const zst_pad_template_t g_aacdec_pads[] = {
+    { "sink", ZST_PAD_SINK, "audio/x-aac" },
+    { "src", ZST_PAD_SRC, "audio/x-raw" }
+};
+
+static const zst_element_desc_t g_aacdec_elements[] = {
+    {
+        .name = "aacdec",
+        .long_name = "AAC Decoder",
+        .category = "Codec/Decoder",
+        .description = "Decodes AAC audio frames",
+        .author = "zstreamer",
+        .properties = NULL,
+        .nb_properties = 0,
+        .pads = g_aacdec_pads,
+        .nb_pads = sizeof(g_aacdec_pads) / sizeof(g_aacdec_pads[0]),
+        .create = NULL
+    }
+};
+
 static zst_plugin_t g_plugin = {
     .desc = {
         .name = "aacdecoder_plugin",
@@ -457,6 +486,16 @@ static zst_plugin_t g_plugin = {
     },
     .create_element = plugin_create_element
 };
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t*
+zst_get_plugin_elements(uint32_t* nb_elements_out)
+{
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_aacdec_elements) / sizeof(g_aacdec_elements[0]);
+    }
+    return g_aacdec_elements;
+}
 
 ZST_PLUGIN_EXPORT
 zst_plugin_t*
