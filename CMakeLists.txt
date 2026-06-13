@@ -310,6 +310,30 @@ if(BUILD_TESTS)
     add_test(NAME test_core
         COMMAND test_core
     )
+
+    # -- codec correctness tests --
+    add_executable(test_codec
+        tests/test_codec.c
+        src/h264_encoder.c
+        src/aac_encoder.c
+        src/video_test_src.c
+        src/audio_test_src.c
+        src/mp4_muxer.c
+    )
+    target_include_directories(test_codec
+        PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+        PRIVATE ${ELEMENT_INCLUDE_DIRS}
+    )
+    target_link_libraries(test_codec
+        PRIVATE zstreamer
+        PRIVATE ${AVCODEC_LIBRARIES} ${AVUTIL_LIBRARIES} ${X264_LIBRARIES}
+        PRIVATE ${AVFORMAT_LIBRARIES}
+        PRIVATE m
+    )
+    add_test(NAME test_codec
+        COMMAND test_codec
+    )
+
 endif()
 
 # ── Installation ─────────────────────────────────────────────────────────
