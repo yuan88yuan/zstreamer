@@ -4444,6 +4444,43 @@ test_fakesink(void)
     PASS();
 }
 
+static void
+test_v4l2sink_mock(void)
+{
+    TEST("v4l2sink (mock fallback)");
+    zst_plugin_registry_init();
+    zst_plugin_registry_scan(test_plugin_path());
+
+    zst_element_t* sink = zst_element_factory_make("v4l2sink");
+    assert(sink != NULL);
+
+    /* Use a non-existent device to force mock fallback */
+    zst_element_set_property(sink, "device", "/dev/nonexistent_video");
+
+    zst_pad_t* sink_pad = zst_element_get_pad(sink, "sink");
+    assert(sink_pad != NULL);
+
+    assert(zst_element_set_state(sink, ZST_STATE_READY) == ZST_OK);
+    assert(zst_element_set_state(sink, ZST_STATE_PLAYING) == ZST_OK);
+
+    /* Push a dummy buffer */
+    zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
+    buf->memory.size = 640 * 480 * 3 / 2;
+    buf->memory.data = calloc(1, buf->memory.size);
+    buf->memory.release = free;
+
+    assert(sink_pad->push != NULL);
+    zst_result_t res = sink_pad->push(sink_pad, buf);
+    assert(res == ZST_OK);
+    zst_buffer_unref(buf);
+
+    assert(zst_element_set_state(sink, ZST_STATE_NULL) == ZST_OK);
+    zst_element_destroy(sink);
+
+    /* zst_plugin_registry_deinit() removes all plugins, causing subsequent tests to fail if they try to use factory */
+    PASS();
+}
+
 /* ═══════════════════════════════════════════════════════════════
    Video Test Source
    ═══════════════════════════════════════════════════════════════ */
@@ -5972,6 +6009,9 @@ int main(void)
 
     printf("[fakesink]\n");
     test_fakesink();
+
+    printf("[v4l2sink]\n");
+    test_v4l2sink_mock();
 
     printf("[video test source]\n");
     test_video_test_src();

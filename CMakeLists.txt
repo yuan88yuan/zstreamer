@@ -135,6 +135,7 @@ target_compile_definitions(zstreamer PRIVATE
 set(ELEMENT_LIBRARY_SOURCES
     src/zst_builtins.c
     src/v4l2_source.c
+    src/v4l2_sink.c
     src/alsa_source.c
     src/h264_encoder.c
     src/h264_decoder.c
@@ -196,6 +197,7 @@ target_link_libraries(zstreamer-elements
 # compiled as separate .so files and loaded via zst_plugin.
 set(ELEMENT_SOURCES
     src/v4l2_source.c
+    src/v4l2_sink.c
     src/h264_encoder.c
     src/mp4_muxer.c
     src/file_sink.c
@@ -232,6 +234,10 @@ target_link_libraries(zst_fakesink PRIVATE zstreamer)
 add_library(zst_v4l2source SHARED src/v4l2_source.c)
 target_compile_definitions(zst_v4l2source PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_v4l2source PRIVATE zstreamer ${V4L2_LIBRARIES})
+
+add_library(zst_v4l2sink SHARED src/v4l2_sink.c)
+target_compile_definitions(zst_v4l2sink PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_v4l2sink PRIVATE zstreamer ${V4L2_LIBRARIES})
 
 add_library(zst_rtspsource SHARED src/rtsp_source.c)
 target_compile_definitions(zst_rtspsource PRIVATE BUILDING_PLUGIN)
@@ -349,7 +355,7 @@ add_library(zst_httpsource SHARED src/http_source.c)
 target_compile_definitions(zst_httpsource PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_httpsource PRIVATE zstreamer ${AVFORMAT_LIBRARIES} ${AVUTIL_LIBRARIES})
 
-set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_rtspsource zst_rtspsink zst_rtsp_server zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_textsource zst_netsrc zst_netsink zst_h264decoder zst_h265encoder zst_h265decoder zst_aacdecoder zst_rtmpsource zst_rtmpsink zst_srtsource zst_srtsink zst_mpegtsmux zst_mpegtsdemux zst_mp4demux zst_httpsource)
+set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_v4l2sink zst_rtspsource zst_rtspsink zst_rtsp_server zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_textsource zst_netsrc zst_netsink zst_h264decoder zst_h265encoder zst_h265decoder zst_aacdecoder zst_rtmpsource zst_rtmpsink zst_srtsource zst_srtsink zst_mpegtsmux zst_mpegtsdemux zst_mp4demux zst_httpsource)
 foreach(plugin ${PLUGIN_TARGETS})
     target_include_directories(${plugin} PRIVATE ${ZSTREAMER_INCLUDE_DIR} PRIVATE ${ELEMENT_INCLUDE_DIRS})
     set_target_properties(${plugin} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
