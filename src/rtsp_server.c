@@ -142,6 +142,16 @@ typedef struct {
     int      octet_count;
     int      sps_pps_sent;       /* SPS/PPS have been sent to this client */
     int      interleaved_ch;     /* TCP interleaved channel for this stream */
+
+    /* UDP transport state per stream */
+    int                     udp_rtp_fd;     /* server UDP socket for RTP */
+    int                     udp_rtcp_fd;    /* server UDP socket for RTCP */
+    uint16_t                server_rtp_port;
+    uint16_t                server_rtcp_port;
+    struct sockaddr_in      client_rtp_addr;
+    struct sockaddr_in      client_rtcp_addr;
+    uint16_t                client_rtp_port;
+    uint16_t                client_rtcp_port;
 } rtp_stream_state_t;
 
 /*===========================================================================
@@ -169,16 +179,6 @@ typedef struct rtsp_client_s {
     /* RTP interleaved channels (TCP mode) */
     int                     interleaved_rtp;
     int                     interleaved_rtcp;
-
-    /* UDP transport state */
-    int                     udp_rtp_fd;     /* server UDP socket for RTP */
-    int                     udp_rtcp_fd;    /* server UDP socket for RTCP */
-    uint16_t                server_rtp_port;
-    uint16_t                server_rtcp_port;
-    struct sockaddr_in      client_rtp_addr;
-    struct sockaddr_in      client_rtcp_addr;
-    uint16_t                client_rtp_port;
-    uint16_t                client_rtcp_port;
 
     /* Track setup mask: bit 0=video set up, bit 1=audio set up */
     int                     track_setup_mask;
@@ -396,18 +396,18 @@ static int send_rtcp_sr(rtsp_client_t* cl, int is_video) {
 
     int slen = (int)sizeof(buf); /* 28 bytes */
 
-    if (cl->transport_type == RTSP_TRANSPORT_UDP && cl->udp_rtcp_fd >= 0) {
+    if (cl->transport_type == RTSP_TRANSPORT_UDP && st->udp_rtcp_fd >= 0) {
         /* Send RTCP SR via UDP */
-        int n = sendto(cl->udp_rtcp_fd, buf, slen, 0,
-                       (struct sockaddr*)&cl->client_rtcp_addr,
-                       sizeof(cl->client_rtcp_addr));
+        int n = sendto(st->udp_rtcp_fd, buf, slen, 0,
+                       (struct sockaddr*)&st->client_rtcp_addr,
+                       sizeof(st->client_rtcp_addr));
         return (n == slen) ? 0 : -1;
     }
 
     /* TCP interleaved framing */
     uint8_t frame[4 + 28];
     frame[0] = '$';
-    frame[1] = (uint8_t)cl->interleaved_rtcp;
+    frame[1] = (uint8_t)(st->interleaved_ch + 1);
     frame[2] = (uint8_t)((slen >> 8) & 0xff);
     frame[3] = (uint8_t)(slen & 0xff);
     memcpy(frame + 4, buf, slen);
@@ -509,7 +509,7 @@ static int make_sdp(rtsp_server_session_t* sess, char* out, int cap) {
         "s=%s\r\n"
         "c=IN IP4 0.0.0.0\r\n"
         "t=0 0\r\n"
-        "a=range:npt=now-\r\n"
+        "a=range:npt=0-\r\n"
         "a=recvonly\r\n"
         "a=control:*\r\n",
         (unsigned long long)now, (unsigned long long)now, sess->name);
@@ -592,7 +592,7 @@ static int send_reply(rtsp_client_t* cl, int code,
         "RTSP/1.0 %d %s\r\n"
         "CSeq: %u\r\n"
         "Date: %s\r\n"
-        "User-Agent: zstreamer/1.0\r\n",
+        "Server: zstreamer/1.0\r\n",
         code, reason_phrase(code), cl->cseq, date);
 
     if (cl->session_id[0])
@@ -791,19 +791,49 @@ static int create_udp_socket(void) {
     return fd;
 }
 
-/* Bind UDP socket to ephemeral port and return the assigned port */
-static int bind_udp_ephemeral(int fd, uint16_t* out_port) {
+static int bind_udp_port(int fd, uint16_t port) {
     struct sockaddr_in a;
     memset(&a, 0, sizeof(a));
     a.sin_family = AF_INET;
     a.sin_addr.s_addr = INADDR_ANY;
-    a.sin_port = 0; /* ephemeral */
+    a.sin_port = htons(port);
     if (bind(fd, (struct sockaddr*)&a, sizeof(a)) < 0) return -1;
-
-    socklen_t alen = sizeof(a);
-    if (getsockname(fd, (struct sockaddr*)&a, &alen) < 0) return -1;
-    *out_port = ntohs(a.sin_port);
     return 0;
+}
+
+static int bind_udp_pair(int* rtp_fd, int* rtcp_fd, uint16_t* out_rtp_port, uint16_t* out_rtcp_port) {
+    static uint16_t next_port = 30000;
+    
+    for (int i = 0; i < 500; i++) {
+        uint16_t rtp_port = next_port;
+        next_port += 2;
+        if (next_port >= 40000 || next_port < 30000) {
+            next_port = 30000;
+        }
+        
+        if (bind_udp_port(*rtp_fd, rtp_port) < 0) {
+            close(*rtp_fd);
+            *rtp_fd = create_udp_socket();
+            if (*rtp_fd < 0) return -1;
+            continue;
+        }
+        
+        if (bind_udp_port(*rtcp_fd, rtp_port + 1) < 0) {
+            close(*rtp_fd);
+            *rtp_fd = create_udp_socket();
+            if (*rtp_fd < 0) return -1;
+            
+            close(*rtcp_fd);
+            *rtcp_fd = create_udp_socket();
+            if (*rtcp_fd < 0) return -1;
+            continue;
+        }
+        
+        *out_rtp_port = rtp_port;
+        *out_rtcp_port = rtp_port + 1;
+        return 0;
+    }
+    return -1;
 }
 
 /*===========================================================================
@@ -862,11 +892,33 @@ static int on_describe(rtsp_client_t* cl) {
     char sdp[RTSP_SDP_SIZE];
     int  sdp_len = make_sdp(sess, sdp, sizeof(sdp));
 
-    char extras[256];
+    char base_url[1024];
+    if (strstr(cl->uri, "://")) {
+        int uri_len = strlen(cl->uri);
+        if (uri_len > 0 && cl->uri[uri_len - 1] == '/') {
+            snprintf(base_url, sizeof(base_url), "%s", cl->uri);
+        } else {
+            snprintf(base_url, sizeof(base_url), "%s/", cl->uri);
+        }
+    } else {
+        struct sockaddr_in local_addr;
+        socklen_t local_addr_len = sizeof(local_addr);
+        char local_ip[64] = "127.0.0.1";
+        uint16_t local_port = srv->listen_port;
+        if (getsockname(cl->fd, (struct sockaddr*)&local_addr, &local_addr_len) == 0) {
+            inet_ntop(AF_INET, &local_addr.sin_addr, local_ip, sizeof(local_ip));
+            local_port = ntohs(local_addr.sin_port);
+        }
+        const char* path = cl->uri;
+        while (*path == '/') path++;
+        snprintf(base_url, sizeof(base_url), "rtsp://%s:%d/%s/", local_ip, local_port, path);
+    }
+
+    char extras[1024];
     snprintf(extras, sizeof(extras),
         "Content-Type: application/sdp\r\n"
-        "Content-Base: rtsp://%s:%d/%s/\r\n",
-        cl->peer_ip, srv->listen_port, sess->name);
+        "Content-Base: %s\r\n",
+        base_url);
 
     return send_reply(cl, 200, extras, sdp, sdp_len);
 }
@@ -929,42 +981,6 @@ static int on_setup(rtsp_client_t* cl) {
         } else if (transport_type_parsed == RTSP_TRANSPORT_UDP && cport1 > 0) {
             /* Client requested UDP unicast with client_port */
             cl->transport_type = RTSP_TRANSPORT_UDP;
-
-            /* Create server UDP sockets */
-            cl->udp_rtp_fd = create_udp_socket();
-            cl->udp_rtcp_fd = create_udp_socket();
-            if (cl->udp_rtp_fd < 0 || cl->udp_rtcp_fd < 0) {
-                if (cl->udp_rtp_fd >= 0) close(cl->udp_rtp_fd);
-                if (cl->udp_rtcp_fd >= 0) close(cl->udp_rtcp_fd);
-                cl->udp_rtp_fd = cl->udp_rtcp_fd = -1;
-                return reply_simple(cl, 500);
-            }
-
-            /* Bind to ephemeral ports */
-            if (bind_udp_ephemeral(cl->udp_rtp_fd, &cl->server_rtp_port) < 0 ||
-                bind_udp_ephemeral(cl->udp_rtcp_fd, &cl->server_rtcp_port) < 0) {
-                close(cl->udp_rtp_fd); close(cl->udp_rtcp_fd);
-                cl->udp_rtp_fd = cl->udp_rtcp_fd = -1;
-                return reply_simple(cl, 500);
-            }
-
-            /* Store client address and ports */
-            memset(&cl->client_rtp_addr, 0, sizeof(cl->client_rtp_addr));
-            cl->client_rtp_addr.sin_family = AF_INET;
-            cl->client_rtp_addr.sin_addr.s_addr = inet_addr(cl->peer_ip);
-            cl->client_rtp_addr.sin_port = htons(cport1);
-
-            memset(&cl->client_rtcp_addr, 0, sizeof(cl->client_rtcp_addr));
-            cl->client_rtcp_addr.sin_family = AF_INET;
-            cl->client_rtcp_addr.sin_addr.s_addr = inet_addr(cl->peer_ip);
-            cl->client_rtcp_addr.sin_port = htons(cport2);
-
-            cl->client_rtp_port   = cport1;
-            cl->client_rtcp_port  = cport2;
-
-            ZST_LOG_INFO("rtsp_server", "UDP transport: client %s:%hu-%hu, server :%hu-%hu",
-                         cl->peer_ip, cport1, cport2,
-                         cl->server_rtp_port, cl->server_rtcp_port);
         } else {
             /* No transport header — default to TCP */
             cl->transport_type = RTSP_TRANSPORT_TCP;
@@ -976,6 +992,8 @@ static int on_setup(rtsp_client_t* cl) {
     /* Initialize RTP stream state(s) for this track */
     if (is_video_track && sess->has_video && !(cl->track_setup_mask & 1)) {
         memset(&cl->vstream, 0, sizeof(cl->vstream));
+        cl->vstream.udp_rtp_fd   = -1;
+        cl->vstream.udp_rtcp_fd  = -1;
         cl->vstream.ssrc         = rand32();
         cl->vstream.seq          = (uint16_t)rand32();
         cl->vstream.timestamp    = rand32();
@@ -988,6 +1006,8 @@ static int on_setup(rtsp_client_t* cl) {
 
     if (is_audio_track && sess->has_audio && !(cl->track_setup_mask & 2)) {
         memset(&cl->astream, 0, sizeof(cl->astream));
+        cl->astream.udp_rtp_fd   = -1;
+        cl->astream.udp_rtcp_fd  = -1;
         cl->astream.ssrc         = rand32();
         cl->astream.seq          = (uint16_t)rand32();
         cl->astream.timestamp    = rand32();
@@ -999,15 +1019,62 @@ static int on_setup(rtsp_client_t* cl) {
         cl->track_setup_mask |= 2;
     }
 
+    /* Set up UDP sockets specifically for this track if using UDP transport */
+    if (cl->transport_type == RTSP_TRANSPORT_UDP && cport1 > 0) {
+        rtp_stream_state_t* st = is_audio_track ? &cl->astream : &cl->vstream;
+
+        /* Create server UDP sockets */
+        st->udp_rtp_fd = create_udp_socket();
+        st->udp_rtcp_fd = create_udp_socket();
+        if (st->udp_rtp_fd < 0 || st->udp_rtcp_fd < 0) {
+            if (st->udp_rtp_fd >= 0) close(st->udp_rtp_fd);
+            if (st->udp_rtcp_fd >= 0) close(st->udp_rtcp_fd);
+            st->udp_rtp_fd = st->udp_rtcp_fd = -1;
+            return reply_simple(cl, 500);
+        }
+
+        /* Bind to ephemeral ports */
+        pthread_mutex_lock(&cl->server->lock);
+        int bind_res = bind_udp_pair(&st->udp_rtp_fd, &st->udp_rtcp_fd, &st->server_rtp_port, &st->server_rtcp_port);
+        pthread_mutex_unlock(&cl->server->lock);
+
+        if (bind_res < 0) {
+            if (st->udp_rtp_fd >= 0) close(st->udp_rtp_fd);
+            if (st->udp_rtcp_fd >= 0) close(st->udp_rtcp_fd);
+            st->udp_rtp_fd = st->udp_rtcp_fd = -1;
+            return reply_simple(cl, 500);
+        }
+
+        /* Store client address and ports */
+        memset(&st->client_rtp_addr, 0, sizeof(st->client_rtp_addr));
+        st->client_rtp_addr.sin_family = AF_INET;
+        st->client_rtp_addr.sin_addr.s_addr = inet_addr(cl->peer_ip);
+        st->client_rtp_addr.sin_port = htons(cport1);
+
+        memset(&st->client_rtcp_addr, 0, sizeof(st->client_rtcp_addr));
+        st->client_rtcp_addr.sin_family = AF_INET;
+        st->client_rtcp_addr.sin_addr.s_addr = inet_addr(cl->peer_ip);
+        st->client_rtcp_addr.sin_port = htons(cport2);
+
+        st->client_rtp_port   = cport1;
+        st->client_rtcp_port  = cport2;
+
+        ZST_LOG_INFO("rtsp_server", "UDP transport: client %s:%hu-%hu, server :%hu-%hu (track=%s)",
+                     cl->peer_ip, cport1, cport2,
+                     st->server_rtp_port, st->server_rtcp_port,
+                     is_audio_track ? "audio" : "video");
+    }
+
     /* Build Transport response header */
     char extra[256];
     if (cl->transport_type == RTSP_TRANSPORT_UDP) {
+        rtp_stream_state_t* st = is_audio_track ? &cl->astream : &cl->vstream;
         snprintf(extra, sizeof(extra),
             "Transport: RTP/AVP/UDP;unicast;"
             "client_port=%hu-%hu;"
             "server_port=%hu-%hu\r\n",
-            cl->client_rtp_port, cl->client_rtcp_port,
-            cl->server_rtp_port, cl->server_rtcp_port);
+            st->client_rtp_port, st->client_rtcp_port,
+            st->server_rtp_port, st->server_rtcp_port);
     } else {
         /* Use per-track interleaved channels */
         int rtp_ch  = is_audio_track ? ((il1 >= 0) ? il1 : cl->interleaved_rtp + 2)
@@ -1037,19 +1104,22 @@ static int on_play(rtsp_client_t* cl) {
         "RTP-Info: ");
 
     int first = 1;
+    int uri_len = strlen(cl->uri);
+    const char* slash = (uri_len > 0 && cl->uri[uri_len - 1] == '/') ? "" : "/";
+
     if (cl->track_setup_mask & 1) {
         if (!first) n += snprintf(extra + n, sizeof(extra) - n, ",");
         n += snprintf(extra + n, sizeof(extra) - n,
-            "url=%s/trackID=0;seq=%u;rtptime=%u",
-            cl->uri, (unsigned)cl->vstream.seq,
+            "url=%s%strackID=0;seq=%u;rtptime=%u",
+            cl->uri, slash, (unsigned)cl->vstream.seq,
             (unsigned)cl->vstream.timestamp);
         first = 0;
     }
     if (cl->track_setup_mask & 2) {
         if (!first) n += snprintf(extra + n, sizeof(extra) - n, ",");
         n += snprintf(extra + n, sizeof(extra) - n,
-            "url=%s/trackID=1;seq=%u;rtptime=%u",
-            cl->uri, (unsigned)cl->astream.seq,
+            "url=%s%strackID=1;seq=%u;rtptime=%u",
+            cl->uri, slash, (unsigned)cl->astream.seq,
             (unsigned)cl->astream.timestamp);
     }
     /* Terminate RTP-Info header line so that Content-Length doesn't get concatenated */
@@ -1091,17 +1161,17 @@ static int dispatch_rtsp(rtsp_client_t* cl) {
 /*===========================================================================
     RTP packet send — TCP interleaved or UDP unicast
 ===========================================================================*/
-static void write_rtp_packet(rtsp_client_t* cl, const uint8_t* data, int len, int channel) {
-    if (cl->transport_type == RTSP_TRANSPORT_UDP && cl->udp_rtp_fd >= 0) {
+static void write_rtp_packet(rtsp_client_t* cl, rtp_stream_state_t* st, const uint8_t* data, int len) {
+    if (cl->transport_type == RTSP_TRANSPORT_UDP && st->udp_rtp_fd >= 0) {
         /* Send raw RTP packet via UDP */
-        sendto(cl->udp_rtp_fd, data, len, 0,
-               (struct sockaddr*)&cl->client_rtp_addr,
-               sizeof(cl->client_rtp_addr));
+        sendto(st->udp_rtp_fd, data, len, 0,
+               (struct sockaddr*)&st->client_rtp_addr,
+               sizeof(st->client_rtp_addr));
     } else {
         /* TCP interleaved framing ($ + channel + 2-byte length + data) */
         uint8_t frame[4];
         frame[0] = '$';
-        frame[1] = (uint8_t)channel;
+        frame[1] = (uint8_t)st->interleaved_ch;
         frame[2] = (uint8_t)((len >> 8) & 0xff);
         frame[3] = (uint8_t)(len & 0xff);
 
@@ -1122,7 +1192,7 @@ typedef struct {
 
 static int packet_send_cb(void* ctx, const uint8_t* data, int len) {
     send_ctx_t* sc = (send_ctx_t*)ctx;
-    write_rtp_packet(sc->cl, data, len, sc->stream->interleaved_ch);
+    write_rtp_packet(sc->cl, sc->stream, data, len);
     sc->stream->packet_count++;
     sc->stream->octet_count += len - 12;
     return 0;
@@ -1135,9 +1205,18 @@ static void session_deliver(rtsp_server_priv_t* srv,
                              rtsp_server_session_t* sess,
                              zst_buffer_t* buf)
 {
-    int is_video = (buf->type == ZST_BUFFER_VIDEO_PACKET);
-    int is_audio = (buf->type == ZST_BUFFER_AUDIO_PACKET);
-    if (!is_video && !is_audio) return;
+    if (is_video) {
+        static int v_cnt = 0;
+        if (v_cnt++ % 30 == 0) {
+            ZST_LOG_INFO("rtsp_server", "session_deliver: received video packet, size=%d, pts=%lld", (int)buf->memory.size, (long long)buf->pts);
+        }
+    }
+    if (is_audio) {
+        static int a_cnt = 0;
+        if (a_cnt++ % 100 == 0) {
+            ZST_LOG_INFO("rtsp_server", "session_deliver: received audio packet, size=%d, pts=%lld", (int)buf->memory.size, (long long)buf->pts);
+        }
+    }
 
     if (buf->flags & ZST_BUFFER_FLAG_EOS) return;
 
@@ -1463,13 +1542,21 @@ static void* client_thread(void* arg) {
     close(cl->fd);
 
     /* Close UDP sockets if allocated */
-    if (cl->udp_rtp_fd >= 0) {
-        close(cl->udp_rtp_fd);
-        cl->udp_rtp_fd = -1;
+    if (cl->vstream.udp_rtp_fd >= 0) {
+        close(cl->vstream.udp_rtp_fd);
+        cl->vstream.udp_rtp_fd = -1;
     }
-    if (cl->udp_rtcp_fd >= 0) {
-        close(cl->udp_rtcp_fd);
-        cl->udp_rtcp_fd = -1;
+    if (cl->vstream.udp_rtcp_fd >= 0) {
+        close(cl->vstream.udp_rtcp_fd);
+        cl->vstream.udp_rtcp_fd = -1;
+    }
+    if (cl->astream.udp_rtp_fd >= 0) {
+        close(cl->astream.udp_rtp_fd);
+        cl->astream.udp_rtp_fd = -1;
+    }
+    if (cl->astream.udp_rtcp_fd >= 0) {
+        close(cl->astream.udp_rtcp_fd);
+        cl->astream.udp_rtcp_fd = -1;
     }
 
     free(cl);
@@ -1507,8 +1594,10 @@ static void* listen_thread(void* arg) {
         cl->transport_type   = RTSP_TRANSPORT_TCP;
         cl->interleaved_rtp  = 0;
         cl->interleaved_rtcp = 1;
-        cl->udp_rtp_fd   = -1;
-        cl->udp_rtcp_fd  = -1;
+        cl->vstream.udp_rtp_fd   = -1;
+        cl->vstream.udp_rtcp_fd  = -1;
+        cl->astream.udp_rtp_fd   = -1;
+        cl->astream.udp_rtcp_fd  = -1;
         cl->track_setup_mask = 0;
 
         pthread_mutex_lock(&srv->lock);
@@ -1761,6 +1850,27 @@ zst_result_t zst_rtsp_server_remove_session(zst_element_t* el, const char* name)
     if (!srv) return ZST_ERROR;
 
     pthread_mutex_lock(&srv->lock);
+
+    /* Find session and disconnect all clients attached to it */
+    rtsp_server_session_t* target_sess = NULL;
+    for (int i = 0; i < srv->session_count; i++) {
+        if (strcmp(srv->sessions[i].name, name) == 0) {
+            target_sess = &srv->sessions[i];
+            break;
+        }
+    }
+
+    if (target_sess) {
+        for (rtsp_client_t* cl = srv->clients; cl; cl = cl->next) {
+            if (cl->session == target_sess) {
+                cl->session = NULL;
+                cl->play_state = 0;
+                cl->running = 0;
+                shutdown(cl->fd, SHUT_RDWR);
+            }
+        }
+    }
+
     for (int i = 0; i < srv->session_count; i++) {
         if (strcmp(srv->sessions[i].name, name) != 0) continue;
         zst_pad_destroy(srv->sessions[i].video_pad);
@@ -1835,6 +1945,22 @@ zst_result_t zst_rtsp_server_session_set_extradata(
     pthread_mutex_unlock(&srv->lock);
     ZST_LOG_ERROR("rtsp_server", "session /%s not found for set_extradata", name);
     return ZST_ERROR;
+}
+
+int zst_rtsp_server_session_client_count(zst_element_t* el, const char* name) {
+    if (!el || !name) return 0;
+    rtsp_server_priv_t* srv = el->priv;
+    if (!srv) return 0;
+
+    int count = 0;
+    pthread_mutex_lock(&srv->lock);
+    for (rtsp_client_t* cl = srv->clients; cl; cl = cl->next) {
+        if (cl->session && strcmp(cl->session->name, name) == 0) {
+            count++;
+        }
+    }
+    pthread_mutex_unlock(&srv->lock);
+    return count;
 }
 
 

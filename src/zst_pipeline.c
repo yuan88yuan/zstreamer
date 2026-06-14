@@ -2,6 +2,8 @@
     zst_pipeline.c — Element container with state propagation
 =============================================================================*/
 
+#define _POSIX_C_SOURCE 200809L  /* clock_gettime */
+
 #include "zst_pipeline.h"
 #include "zst_bus.h"
 #include "zst_clock.h"
@@ -9,6 +11,7 @@
 #include "zst_element_factory.h"
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 zst_pipeline_t*
 zst_pipeline_create(void)
@@ -279,6 +282,14 @@ zst_pipeline_set_state(zst_pipeline_t* pipe, zst_state_t state)
 
         if (master_clock) zst_clock_unref(master_clock);
         if (sys_clock) zst_clock_unref(sys_clock);
+
+        /* Record pipeline base_time: wall-clock snapshot at PLAYING entry.
+         * The scheduler uses (now - base_time) as pipeline running-time and
+         * compares it against each buffer's PTS for real-time pacing. */
+        struct timespec _ts;
+        clock_gettime(CLOCK_MONOTONIC, &_ts);
+        pipe->base_time = (zst_time_t)_ts.tv_sec * 1000000000ULL
+                        + (zst_time_t)_ts.tv_nsec;
     }
 
     /* Propagate state to all elements */

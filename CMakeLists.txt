@@ -379,6 +379,19 @@ if(BUILD_TESTS)
         COMMAND test_videotestsrc_timing
     )
 
+    add_executable(test_custom_paced_video_source
+        tests/test_custom_paced_video_source.c
+    )
+    target_include_directories(test_custom_paced_video_source
+        PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+    )
+    target_link_libraries(test_custom_paced_video_source
+        PRIVATE zstreamer-elements m
+    )
+    add_test(NAME test_custom_paced_video_source
+        COMMAND test_custom_paced_video_source
+    )
+
     add_executable(test_net_source
         tests/test_net_source.c
     )

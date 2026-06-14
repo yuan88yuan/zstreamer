@@ -714,19 +714,53 @@ static int create_udp_socket(void) {
     return fd;
 }
 
-/* Bind UDP socket to ephemeral port and return the assigned port */
-static int bind_udp_ephemeral(int fd, uint16_t* out_port) {
+static int bind_udp_port(int fd, uint16_t port) {
     struct sockaddr_in a;
     memset(&a, 0, sizeof(a));
     a.sin_family = AF_INET;
     a.sin_addr.s_addr = INADDR_ANY;
-    a.sin_port = 0; /* ephemeral */
+    a.sin_port = htons(port);
     if (bind(fd, (struct sockaddr*)&a, sizeof(a)) < 0) return -1;
-
-    socklen_t alen = sizeof(a);
-    if (getsockname(fd, (struct sockaddr*)&a, &alen) < 0) return -1;
-    *out_port = ntohs(a.sin_port);
     return 0;
+}
+
+static int bind_udp_pair(int* rtp_fd, int* rtcp_fd, uint16_t* out_rtp_port, uint16_t* out_rtcp_port) {
+    static pthread_mutex_t port_mutex = PTHREAD_MUTEX_INITIALIZER;
+    static uint16_t next_port = 30000;
+    
+    pthread_mutex_lock(&port_mutex);
+    for (int i = 0; i < 500; i++) {
+        uint16_t rtp_port = next_port;
+        next_port += 2;
+        if (next_port >= 40000 || next_port < 30000) {
+            next_port = 30000;
+        }
+        
+        if (bind_udp_port(*rtp_fd, rtp_port) < 0) {
+            close(*rtp_fd);
+            *rtp_fd = create_udp_socket();
+            if (*rtp_fd < 0) { pthread_mutex_unlock(&port_mutex); return -1; }
+            continue;
+        }
+        
+        if (bind_udp_port(*rtcp_fd, rtp_port + 1) < 0) {
+            close(*rtp_fd);
+            *rtp_fd = create_udp_socket();
+            if (*rtp_fd < 0) { pthread_mutex_unlock(&port_mutex); return -1; }
+            
+            close(*rtcp_fd);
+            *rtcp_fd = create_udp_socket();
+            if (*rtcp_fd < 0) { pthread_mutex_unlock(&port_mutex); return -1; }
+            continue;
+        }
+        
+        *out_rtp_port = rtp_port;
+        *out_rtcp_port = rtp_port + 1;
+        pthread_mutex_unlock(&port_mutex);
+        return 0;
+    }
+    pthread_mutex_unlock(&port_mutex);
+    return -1;
 }
 
 /*===========================================================================
@@ -815,8 +849,7 @@ static int do_setup(rtsp_client_t* cl, int idx, const char* transport_mode) {
         tr->udp_rtcp_fd = create_udp_socket();
 
         if (tr->udp_rtp_fd < 0 || tr->udp_rtcp_fd < 0 ||
-            bind_udp_ephemeral(tr->udp_rtp_fd, &tr->client_rtp_port) < 0 ||
-            bind_udp_ephemeral(tr->udp_rtcp_fd, &tr->client_rtcp_port) < 0)
+            bind_udp_pair(&tr->udp_rtp_fd, &tr->udp_rtcp_fd, &tr->client_rtp_port, &tr->client_rtcp_port) < 0)
         {
             if (tr->udp_rtp_fd >= 0) close(tr->udp_rtp_fd);
             if (tr->udp_rtcp_fd >= 0) close(tr->udp_rtcp_fd);

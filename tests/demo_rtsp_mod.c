@@ -13,6 +13,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <signal.h>
+#include <time.h>
 
 #include "zst_pipeline.h"
 #include "zst_scheduler.h"
@@ -22,6 +23,81 @@
 #include "zst_bus.h"
 #include "zst_rtsp_server.h"
 #include "zstreamer/elements/zst_mp4_demuxer.h"
+
+typedef struct {
+    zst_element_t* demux;
+    zst_element_t* vdec;
+    zst_element_t* venc;
+    zst_element_t* vq;
+    zst_element_t* adec;
+    zst_element_t* aenc;
+    zst_element_t* aq;
+    int active;
+    time_t last_active_time;
+} bunny_pipeline_t;
+
+static bunny_pipeline_t g_bunny = {0};
+
+static void cleanup_bunny_pipeline(zst_pipeline_t* pipe, zst_element_t* server) {
+    if (!g_bunny.active) return;
+    printf("[Demo App] Cleaning up bunny pipeline...\n");
+    fflush(stdout);
+
+    // 1. Stop the elements first to abort any pending processing / threads
+    zst_element_set_state(g_bunny.demux, ZST_STATE_NULL);
+    zst_element_set_state(g_bunny.vdec, ZST_STATE_NULL);
+    zst_element_set_state(g_bunny.venc, ZST_STATE_NULL);
+    zst_element_set_state(g_bunny.vq, ZST_STATE_NULL);
+    zst_element_set_state(g_bunny.adec, ZST_STATE_NULL);
+    zst_element_set_state(g_bunny.aenc, ZST_STATE_NULL);
+    zst_element_set_state(g_bunny.aq, ZST_STATE_NULL);
+
+    // 2. Unlink all pads
+    zst_pad_unlink(zst_element_get_pad(g_bunny.demux, "video"));
+    zst_pad_unlink(zst_element_get_pad(g_bunny.vdec, "sink"));
+    zst_pad_unlink(zst_element_get_pad(g_bunny.vdec, "src"));
+    zst_pad_unlink(zst_element_get_pad(g_bunny.venc, "sink"));
+    zst_pad_unlink(zst_element_get_pad(g_bunny.venc, "src"));
+    zst_pad_unlink(zst_element_get_pad(g_bunny.vq, "sink"));
+    zst_pad_unlink(zst_element_get_pad(g_bunny.vq, "src"));
+
+    zst_pad_unlink(zst_element_get_pad(g_bunny.demux, "audio"));
+    zst_pad_unlink(zst_element_get_pad(g_bunny.adec, "sink"));
+    zst_pad_unlink(zst_element_get_pad(g_bunny.adec, "src"));
+    zst_pad_unlink(zst_element_get_pad(g_bunny.aenc, "sink"));
+    zst_pad_unlink(zst_element_get_pad(g_bunny.aenc, "src"));
+    zst_pad_unlink(zst_element_get_pad(g_bunny.aq, "sink"));
+    zst_pad_unlink(zst_element_get_pad(g_bunny.aq, "src"));
+
+    // 3. Remove from pipeline
+    zst_pipeline_remove(pipe, g_bunny.demux);
+    zst_pipeline_remove(pipe, g_bunny.vdec);
+    zst_pipeline_remove(pipe, g_bunny.venc);
+    zst_pipeline_remove(pipe, g_bunny.vq);
+    zst_pipeline_remove(pipe, g_bunny.adec);
+    zst_pipeline_remove(pipe, g_bunny.aenc);
+    zst_pipeline_remove(pipe, g_bunny.aq);
+
+    // 4. Destroy elements
+    zst_element_destroy(g_bunny.demux);
+    zst_element_destroy(g_bunny.vdec);
+    zst_element_destroy(g_bunny.venc);
+    zst_element_destroy(g_bunny.vq);
+    zst_element_destroy(g_bunny.adec);
+    zst_element_destroy(g_bunny.aenc);
+    zst_element_destroy(g_bunny.aq);
+
+    // 5. Remove session from server
+    zst_rtsp_server_remove_session(server, "bunny");
+
+    // 6. Recalculate topological sort in pipeline
+    zst_pipeline_topological_sort(pipe);
+
+    // Reset structure
+    memset(&g_bunny, 0, sizeof(g_bunny));
+    printf("[Demo App] Bunny pipeline cleaned up successfully.\n");
+    fflush(stdout);
+}
 
 static volatile int g_running = 1;
 static void sigint_handler(int sig) {
@@ -60,6 +136,8 @@ static zst_result_t on_demand_mount(zst_element_t* server, const char* name, voi
         zst_element_set_property_int(video_src, "fps", 30);
         zst_element_set_property_string(video_src, "pattern", "bars");
         zst_element_set_property_bool(video_src, "use-clock", false);
+
+        zst_element_set_property_int(h264, "gop-size", 30);
 
         zst_element_set_property_bool(overlay, "timecode", true);
         zst_element_set_property_int(overlay, "font-size", 24);
@@ -115,7 +193,7 @@ static zst_result_t on_demand_mount(zst_element_t* server, const char* name, voi
         return ZST_OK;
     }
     else if (strcmp(name, "bunny") == 0) {
-        printf("[Demo App] Creating HTTP video source pipeline...\n");
+        printf("[Demo App] Creating HTTP video source pipeline (transcoded & paced)...\n");
 
         // 1. Add session to server
         if (zst_rtsp_server_add_session(server, name) != ZST_OK) {
@@ -125,49 +203,90 @@ static zst_result_t on_demand_mount(zst_element_t* server, const char* name, voi
 
         // 2. Create elements
         zst_element_t* demux = zst_element_factory_make("mp4demux");
+        zst_element_t* vdec  = zst_element_factory_make("h264dec");
+        zst_element_t* venc  = zst_element_factory_make("h264enc");
+        zst_element_t* vq    = zst_element_factory_make("queue");
 
-        if (!demux) {
-            fprintf(stderr, "[Demo App] Failed to create demux element\n");
+        zst_element_t* adec  = zst_element_factory_make("aacdec");
+        zst_element_t* aenc  = zst_element_factory_make("aacenc");
+        zst_element_t* aq    = zst_element_factory_make("queue");
+
+        if (!demux || !vdec || !venc || !vq || !adec || !aenc || !aq) {
+            fprintf(stderr, "[Demo App] Failed to create elements for bunny transcoding\n");
             return ZST_ERROR;
         }
+
+        g_bunny.demux = demux;
+        g_bunny.vdec  = vdec;
+        g_bunny.venc  = venc;
+        g_bunny.vq    = vq;
+        g_bunny.adec  = adec;
+        g_bunny.aenc  = aenc;
+        g_bunny.aq    = aq;
+        g_bunny.active = 1;
+        g_bunny.last_active_time = time(NULL);
 
         // Configure demux location directly to the HTTPS URL
         const char* url = "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_1MB.mp4";
         zst_element_set_property(demux, "location", url);
 
+        // Configure venc properties
+        zst_element_set_property_int(venc, "gop-size", 30);
+
         // 3. Add to pipeline
         zst_pipeline_add(pipe, demux);
+        zst_pipeline_add(pipe, vdec);
+        zst_pipeline_add(pipe, venc);
+        zst_pipeline_add(pipe, vq);
+        zst_pipeline_add(pipe, adec);
+        zst_pipeline_add(pipe, aenc);
+        zst_pipeline_add(pipe, aq);
+
+        // Disable clock sync and QoS on the queue elements to prevent them from dropping packages
+        // due to initial decoding/encoding startup latency. Pacing is already done by demux.
+        zst_element_set_clock(vq, NULL);
+        zst_element_set_clock(aq, NULL);
 
         // 4. Link pads
-        // demux -> server (bunny_video, bunny_audio)
+        // Video: demux(video) -> vdec -> venc -> vq -> server(bunny_video)
+        zst_pad_link(zst_element_get_pad(demux, "video"), zst_element_get_pad(vdec, "sink"));
+        zst_pad_link(zst_element_get_pad(vdec, "src"), zst_element_get_pad(venc, "sink"));
+        zst_pad_link(zst_element_get_pad(venc, "src"), zst_element_get_pad(vq, "sink"));
+        
         char pad_name[128];
         snprintf(pad_name, sizeof(pad_name), "%s_video", name);
-        zst_pad_link(zst_element_get_pad(demux, "video"), zst_element_get_pad(server, pad_name));
+        zst_pad_link(zst_element_get_pad(vq, "src"), zst_element_get_pad(server, pad_name));
+
+        // Audio: demux(audio) -> adec -> aenc -> aq -> server(bunny_audio)
+        zst_pad_link(zst_element_get_pad(demux, "audio"), zst_element_get_pad(adec, "sink"));
+        zst_pad_link(zst_element_get_pad(adec, "src"), zst_element_get_pad(aenc, "sink"));
+        zst_pad_link(zst_element_get_pad(aenc, "src"), zst_element_get_pad(aq, "sink"));
 
         snprintf(pad_name, sizeof(pad_name), "%s_audio", name);
-        zst_pad_link(zst_element_get_pad(demux, "audio"), zst_element_get_pad(server, pad_name));
+        zst_pad_link(zst_element_get_pad(aq, "src"), zst_element_get_pad(server, pad_name));
 
         // 5. Update pipeline execution sorting
         zst_pipeline_topological_sort(pipe);
 
-        // 6. Set states — READY triggers avformat_open_input + find_stream_info
+        // 6. Set states
         zst_element_set_state(demux, ZST_STATE_READY);
+        zst_element_set_state(vdec, ZST_STATE_READY);
+        zst_element_set_state(venc, ZST_STATE_READY);
+        zst_element_set_state(vq, ZST_STATE_READY);
+        zst_element_set_state(adec, ZST_STATE_READY);
+        zst_element_set_state(aenc, ZST_STATE_READY);
+        zst_element_set_state(aq, ZST_STATE_READY);
+
         zst_element_set_state(demux, ZST_STATE_PLAYING);
+        zst_element_set_state(vdec, ZST_STATE_PLAYING);
+        zst_element_set_state(venc, ZST_STATE_PLAYING);
+        zst_element_set_state(vq, ZST_STATE_PLAYING);
+        zst_element_set_state(adec, ZST_STATE_PLAYING);
+        zst_element_set_state(aenc, ZST_STATE_PLAYING);
+        zst_element_set_state(aq, ZST_STATE_PLAYING);
 
-        // 7. Pass avcC extradata to RTSP server for proper SDP generation
-        //    (available immediately after READY because the file was probed).
-        int extra_size = 0;
-        const uint8_t* extra = zst_mp4_demuxer_get_video_extradata(demux, &extra_size);
-        if (extra && extra_size > 0) {
-            zst_rtsp_server_session_set_extradata(server, name, extra, extra_size);
-            printf("[Demo App] Passed %d bytes of extradata to RTSP server for /%s\n",
-                   extra_size, name);
-        } else {
-            fprintf(stderr, "[Demo App] Warning: no video extradata found for /%s — "
-                            "SDP will use generic profile-level-id\n", name);
-        }
-
-        printf("[Demo App] Successfully mounted /%s HTTP source pipeline\n", name);
+        printf("[Demo App] Successfully mounted /%s HTTP transcode pipeline\n", name);
+        fflush(stdout);
         return ZST_OK;
     }
 
@@ -252,8 +371,21 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "[Pipeline Error] %s (%d)\n",
                         ev->as.error.message ? ev->as.error.message : "unknown",
                         (int)ev->as.error.result);
+            } else if (ev->type == ZST_EVENT_EOS && g_bunny.active && ev->src == g_bunny.demux) {
+                printf("[Demo App] EOS received from bunny demuxer. Triggering pipeline cleanup...\n");
+                fflush(stdout);
+                cleanup_bunny_pipeline(pipe, server);
             }
             zst_event_destroy(ev);
+        }
+
+        if (g_bunny.active) {
+            int clients = zst_rtsp_server_session_client_count(server, "bunny");
+            if (clients > 0) {
+                g_bunny.last_active_time = time(NULL);
+            } else if (time(NULL) - g_bunny.last_active_time >= 2) {
+                cleanup_bunny_pipeline(pipe, server);
+            }
         }
     }
 

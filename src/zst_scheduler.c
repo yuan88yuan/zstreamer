@@ -118,12 +118,21 @@ worker_loop(void* arg)
                     if (ret == ZST_OK && out_buf) {
                         activity = 1;
                         if (el->nb_src_pads > 0) {
-                            /* Clock-sync mode: wait until PTS is reached before delivering */
-                            if (pipe->clock_sync && el->clock && out_buf->pts > 0
+                            /* Clock-sync mode: pace delivery so that buffers are
+                             * pushed only when the pipeline's running-time reaches
+                             * the buffer PTS.  Running-time = (now - base_time),
+                             * where base_time is the wall-clock snapshot taken
+                             * when the pipeline entered PLAYING.  This works for
+                             * both count-based PTS (0, 33ms, 66ms, …) and
+                             * absolute-clock PTS because we always compare against
+                             * elapsed time since pipeline start, not system uptime. */
+                            if (pipe->clock_sync && el->clock && pipe->base_time > 0
                                 && !(out_buf->flags & (ZST_BUFFER_FLAG_EOS | ZST_BUFFER_FLAG_DROP))) {
-                                zst_time_t current = zst_clock_get_time(el->clock);
-                                if (out_buf->pts > current + 5000000ULL) {
-                                    zst_clock_wait(el->clock, out_buf->pts - current);
+                                zst_time_t now      = zst_clock_get_time(el->clock);
+                                zst_time_t run_time = (now > pipe->base_time)
+                                                    ? (now - pipe->base_time) : 0;
+                                if (out_buf->pts > run_time + 5000000ULL) {
+                                    zst_clock_wait(el->clock, out_buf->pts - run_time);
                                 }
                             }
                             zst_pad_push(el->src_pads[0], out_buf);

@@ -29,6 +29,13 @@ struct zst_pipeline {
      * Default: 0 (off) — buffers are delivered as fast as possible. */
     int clock_sync;
 
+    /* Wall-clock time (ns, CLOCK_MONOTONIC) captured when the pipeline first
+     * transitions to PLAYING.  The scheduler computes pipeline running-time as
+     * (now - base_time) and compares it against each buffer's PTS so that
+     * count-based PTS (0, 33ms, 66ms, …) works correctly regardless of how
+     * long the system has been up. */
+    zst_time_t base_time;
+
     pthread_rwlock_t elements_lock; /* Protects elements array */
 };
 

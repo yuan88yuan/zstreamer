@@ -96,6 +96,14 @@ zst_result_t zst_rtsp_server_session_set_extradata(
     int size
 );
 
+/**
+ * Get the number of clients currently connected to a specific session.
+ */
+int zst_rtsp_server_session_client_count(
+    zst_element_t* el,
+    const char* name
+);
+
 #ifdef __cplusplus
 }
 #endif

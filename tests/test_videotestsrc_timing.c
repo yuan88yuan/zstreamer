@@ -259,18 +259,15 @@ test_videotestsrc_timing(void)
     /* Verify we got all 60 frames (or close to it within scheduler timing) */
     assert(frame_count >= 55 && frame_count <= 65);
 
-    /* Clock sync behaviour note: the current scheduler compares PTS against
-     * the pipeline clock (CLOCK_MONOTONIC uptime in ns). Count-based PTS
-     * (0, 33ms, 66ms, …) is in a different time base and never exceeds the
-     * clock, so no waiting occurs. Use the log file to verify the actual
-     * delivery intervals vs PTS values. If clock sync is enhanced to use
-     * frame-to-frame delta comparison, this test's intervals should shift
-     * from ~1.4 ms (max-speed) to ~33.3 ms (paced). */
-    printf("  [timing] NOTE: clock_sync is currently comparing PTS against the\n");
-    printf("  [timing] system clock (CLOCK_MONOTONIC uptime). Since count-based\n");
-    printf("  [timing] PTS (0, 33ms, …) is in a different time base, no pacing\n");
-    printf("  [timing] is applied. Frames are delivered at max scheduler speed\n");
-    printf("  [timing] (~%.1f fps). See log for details.\n", 1e9 / avg_delta);
+    /* Clock sync behaviour: the scheduler now computes pipeline running-time as
+     * (CLOCK_MONOTONIC_now - base_time) where base_time is captured when the
+     * pipeline enters PLAYING.  This correctly paces count-based PTS (0, 33ms,
+     * 66ms, …) regardless of system uptime, delivering frames at ~33.3 ms
+     * intervals (~30 fps). */
+    printf("  [timing] NOTE: clock_sync paces frames using pipeline running-time\n");
+    printf("  [timing] (now - base_time). Expected avg interval: ~33333333 ns\n");
+    printf("  [timing] Actual avg interval: %.0f ns (%.1f fps)\n",
+           avg_delta, 1e9 / avg_delta);
 
     zst_pipeline_destroy(pipe);
     zst_plugin_registry_deinit();

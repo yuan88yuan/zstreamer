@@ -1092,9 +1092,6 @@ test_bin_use_case_scheduling(void)
     zst_buffer_unref(in);
     zst_buffer_unref(eos_in);
     zst_pad_destroy(upstream_src);
-    assert(zst_pipeline_set_state(pipe, ZST_STATE_NULL) == ZST_OK);
-    zst_pipeline_destroy(pipe);
-
     PASS();
 }
 

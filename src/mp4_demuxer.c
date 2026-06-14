@@ -557,7 +557,6 @@ mp4_demux_process(zst_element_t* el)
     while (1) {
         int ret = av_read_frame(s->fc, pkt);
         if (ret == AVERROR(EAGAIN)) {
-            ZST_LOG_DEBUG("mp4demux", "av_read_frame returned EAGAIN");
             process_result = ZST_AGAIN;
             break;
         }
@@ -596,8 +595,6 @@ mp4_demux_process(zst_element_t* el)
                                                               codecpar->extradata, codecpar->extradata_size,
                                                               &annexb_size, is_keyframe);
                     if (annexb_data) {
-                        ZST_LOG_DEBUG("mp4demux", "AVCC->AnnexB: %d bytes -> %d bytes (keyframe=%d)",
-                                     pkt->size, annexb_size, is_keyframe);
                         out->memory.data = annexb_data;
                         out->memory.size = annexb_size;
                         out->memory.priv = annexb_data;
@@ -636,19 +633,16 @@ mp4_demux_process(zst_element_t* el)
                 }
 
                 /* Clock sync if enabled in direct-file mode */
-                if (s->direct_file && el->pipeline && el->pipeline->clock_sync && el->clock && out->dts > 0) {
+                if (s->direct_file && el->pipeline && el->pipeline->clock_sync && el->clock && out->pts > 0) {
                     zst_time_t current = zst_clock_get_time(el->clock);
-                    if (out->dts > current + 5000000ULL) {
-                        zst_clock_wait(el->clock, out->dts - current);
+                    if (out->pts > current + 5000000ULL) {
+                        zst_clock_wait(el->clock, out->pts - current);
                     }
                 }
 
-                ZST_LOG_DEBUG("mp4demux", "Pushing packet on stream %d, size %d, pts %lld", pkt->stream_index, pkt->size, (long long)out->pts);
                 zst_pad_push(dest_pad, out);
                 zst_buffer_unref(out);
             }
-        } else {
-            ZST_LOG_DEBUG("mp4demux", "Pushed packet skipped: pad %s has no peer", dest_pad ? dest_pad->name : "NULL");
         }
 
         av_packet_unref(pkt);
