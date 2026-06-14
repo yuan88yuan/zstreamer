@@ -32,7 +32,10 @@ pkg_check_modules(V4L2 REQUIRED libv4l2)
 pkg_check_modules(SWSCALE REQUIRED libswscale)
 pkg_check_modules(SWRESAMPLE REQUIRED libswresample)
 pkg_check_modules(FREETYPE REQUIRED freetype2)
-pkg_check_modules(SRT REQUIRED srt)
+pkg_check_modules(SRT srt-gnutls)
+if(NOT SRT_FOUND)
+    pkg_check_modules(SRT REQUIRED srt)
+endif()
 find_package(CUDAToolkit QUIET)
 if(CUDAToolkit_FOUND)
     add_compile_definitions(HAS_CUDA=1)
@@ -157,8 +160,8 @@ set(ELEMENT_LIBRARY_SOURCES
     src/rtsp_server.c
     src/rtmp_source.c
     src/rtmp_sink.c
-    src/srt_source.c
-    src/srt_sink.c
+    src/srt_source.c src/srt_common.c
+    src/srt_sink.c src/srt_common.c
     src/mpegts_muxer.c
     src/mpegts_demuxer.c
     src/mp4_demuxer.c
@@ -322,11 +325,11 @@ add_library(zst_rtmpsink SHARED src/rtmp_sink.c)
 target_compile_definitions(zst_rtmpsink PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_rtmpsink PRIVATE zstreamer ${AVFORMAT_LIBRARIES} ${AVCODEC_LIBRARIES} ${AVUTIL_LIBRARIES})
 
-add_library(zst_srtsource SHARED src/srt_source.c)
+add_library(zst_srtsource SHARED src/srt_source.c src/srt_common.c)
 target_compile_definitions(zst_srtsource PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_srtsource PRIVATE zstreamer ${SRT_LIBRARIES})
 
-add_library(zst_srtsink SHARED src/srt_sink.c)
+add_library(zst_srtsink SHARED src/srt_sink.c src/srt_common.c)
 target_compile_definitions(zst_srtsink PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_srtsink PRIVATE zstreamer ${SRT_LIBRARIES})
 
@@ -557,3 +560,5 @@ install(FILES
     "${CMAKE_CURRENT_BINARY_DIR}/zstreamerConfigVersion.cmake"
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/zstreamer
 )
+
+# Append srt_common.c to the srt element targets

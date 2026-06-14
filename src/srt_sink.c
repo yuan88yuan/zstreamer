@@ -18,6 +18,7 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <srt/srt.h>
+#include "srt_common.h"
 
 #include "zst_element.h"
 #include "zst_buffer.h"
@@ -63,97 +64,7 @@ srt_sink_time_now_us(void)
     return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)(ts.tv_nsec / 1000ULL);
 }
 
-// Global SRT initialization tracker
-extern pthread_mutex_t s_srt_init_mutex;
-extern int s_srt_init_count;
 
-// Forward declarations or helper wrappers
-static void srt_global_init(void) {
-    pthread_mutex_lock(&s_srt_init_mutex);
-    if (s_srt_init_count == 0) {
-        srt_startup();
-    }
-    s_srt_init_count++;
-    pthread_mutex_unlock(&s_srt_init_mutex);
-}
-
-static void srt_global_cleanup(void) {
-    pthread_mutex_lock(&s_srt_init_mutex);
-    s_srt_init_count--;
-    if (s_srt_init_count == 0) {
-        srt_cleanup();
-    }
-    pthread_mutex_unlock(&s_srt_init_mutex);
-}
-
-static void srt_parse_uri(const char* uri, char* host, size_t host_len, int* port,
-                          char* mode, size_t mode_len, int* latency,
-                          char* passphrase, size_t passphrase_len, int* pbkeylen,
-                          char* streamid, size_t streamid_len, int* payload_size) {
-    if (!uri || strncmp(uri, "srt://", 6) != 0) return;
-    const char* p = uri + 6;
-    const char* col = strchr(p, ':');
-    const char* q = strchr(p, '?');
-
-    if (col && (!q || col < q)) {
-        size_t len = col - p;
-        if (len >= host_len) len = host_len - 1;
-        strncpy(host, p, len);
-        host[len] = '\0';
-        p = col + 1;
-        q = strchr(p, '?');
-        if (q) {
-            *port = atoi(p);
-            p = q + 1;
-        } else {
-            *port = atoi(p);
-            return;
-        }
-    } else if (q) {
-        size_t len = q - p;
-        if (len >= host_len) len = host_len - 1;
-        strncpy(host, p, len);
-        host[len] = '\0';
-        p = q + 1;
-    } else {
-        strncpy(host, p, host_len - 1);
-        host[host_len - 1] = '\0';
-        return;
-    }
-
-    while (p && *p) {
-        const char* next = strchr(p, '&');
-        size_t len = next ? (size_t)(next - p) : strlen(p);
-        char pair[256];
-        if (len >= sizeof(pair)) len = sizeof(pair) - 1;
-        strncpy(pair, p, len);
-        pair[len] = '\0';
-
-        char* eq = strchr(pair, '=');
-        if (eq) {
-            *eq = '\0';
-            char* key = pair;
-            char* val = eq + 1;
-            if (strcmp(key, "mode") == 0) {
-                strncpy(mode, val, mode_len - 1);
-                mode[mode_len - 1] = '\0';
-            } else if (strcmp(key, "latency") == 0) {
-                *latency = atoi(val);
-            } else if (strcmp(key, "passphrase") == 0) {
-                strncpy(passphrase, val, passphrase_len - 1);
-                passphrase[passphrase_len - 1] = '\0';
-            } else if (strcmp(key, "pbkeylen") == 0) {
-                *pbkeylen = atoi(val);
-            } else if (strcmp(key, "streamid") == 0) {
-                strncpy(streamid, val, streamid_len - 1);
-                streamid[streamid_len - 1] = '\0';
-            } else if (strcmp(key, "payload-size") == 0) {
-                *payload_size = atoi(val);
-            }
-        }
-        p = next ? next + 1 : NULL;
-    }
-}
 
 static zst_result_t
 srt_sink_open(zst_element_t* el)

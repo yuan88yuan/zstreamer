@@ -1202,6 +1202,8 @@ static int packet_send_cb(void* ctx, const uint8_t* data, int len) {
     Send codec data to all clients subscribed to a session
 ===========================================================================*/
 static void session_deliver(rtsp_server_priv_t* srv,
+                             int is_video,
+                             int is_audio,
                              rtsp_server_session_t* sess,
                              zst_buffer_t* buf)
 {
@@ -1454,7 +1456,7 @@ static zst_result_t video_push_cb(zst_pad_t* pad, zst_buffer_t* buf) {
     rtsp_server_priv_t* srv = pad->parent->priv;
     for (int i = 0; i < srv->session_count; i++) {
         if (srv->sessions[i].video_pad == pad) {
-            session_deliver(srv, &srv->sessions[i], buf);
+            session_deliver(srv, 1, 0, &srv->sessions[i], buf);
             return ZST_OK;
         }
     }
@@ -1465,7 +1467,7 @@ static zst_result_t audio_push_cb(zst_pad_t* pad, zst_buffer_t* buf) {
     rtsp_server_priv_t* srv = pad->parent->priv;
     for (int i = 0; i < srv->session_count; i++) {
         if (srv->sessions[i].audio_pad == pad) {
-            session_deliver(srv, &srv->sessions[i], buf);
+            session_deliver(srv, 0, 1, &srv->sessions[i], buf);
             return ZST_OK;
         }
     }
