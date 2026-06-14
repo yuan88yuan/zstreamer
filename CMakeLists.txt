@@ -366,6 +366,19 @@ if(BUILD_TESTS)
         PRIVATE zstreamer-elements
     )
 
+    add_executable(test_videotestsrc_timing
+        tests/test_videotestsrc_timing.c
+    )
+    target_include_directories(test_videotestsrc_timing
+        PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+    )
+    target_link_libraries(test_videotestsrc_timing
+        PRIVATE zstreamer-elements m
+    )
+    add_test(NAME test_videotestsrc_timing
+        COMMAND test_videotestsrc_timing
+    )
+
     add_executable(test_net_source
         tests/test_net_source.c
     )

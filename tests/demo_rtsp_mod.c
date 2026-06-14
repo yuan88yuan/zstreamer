@@ -59,7 +59,7 @@ static zst_result_t on_demand_mount(zst_element_t* server, const char* name, voi
         zst_element_set_property_int(video_src, "height", 240);
         zst_element_set_property_int(video_src, "fps", 30);
         zst_element_set_property_string(video_src, "pattern", "bars");
-        zst_element_set_property_bool(video_src, "use-clock", true);
+        zst_element_set_property_bool(video_src, "use-clock", false);
 
         zst_element_set_property_bool(overlay, "timecode", true);
         zst_element_set_property_int(overlay, "font-size", 24);
@@ -72,7 +72,7 @@ static zst_result_t on_demand_mount(zst_element_t* server, const char* name, voi
         zst_element_set_property_string(audio_src, "wave", "sine");
         zst_element_set_property_int(audio_src, "frequency", 1000);
         zst_element_set_property_int(audio_src, "samples-per-buffer", 1024);
-        zst_element_set_property_bool(audio_src, "use-clock", true);
+        zst_element_set_property_bool(audio_src, "use-clock", false);
 
         // 3. Add to pipeline
         zst_pipeline_add(pipe, video_src);

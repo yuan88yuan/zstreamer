@@ -213,6 +213,7 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | SRT Transport Protocols     | ✅ Done                          |
 | MPEG-TS mux/demux           | ✅ Done                          |
 | MP4 Demuxer                 | ✅ Done                        |
+| Clock Sync Bugfix           | ✅ Fixed (frame-to-frame delta comparison in scheduler — see [wiki/clock-sync-debug.md](wiki/clock-sync-debug.md)) |
 | CI Pipeline                 | 📝 Future                        |
 
 ---

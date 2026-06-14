@@ -140,6 +140,8 @@ typedef struct {
     int      codec;           /* 1=H264, 2=H265, 3=AAC */
     int      packet_count;
     int      octet_count;
+    int      sps_pps_sent;       /* SPS/PPS have been sent to this client */
+    int      interleaved_ch;     /* TCP interleaved channel for this stream */
 } rtp_stream_state_t;
 
 /*===========================================================================
@@ -217,6 +219,9 @@ typedef struct rtsp_server_session_s {
     /* SPS/PPS for H.264 SDP fmtp */
     uint8_t*    extra_data;
     int         extra_size;
+    /* Cached H.264 SPS/PPS NAL units in Annex-B format (with 0x00000001 start codes) */
+    uint8_t*    sps_pps_cache;
+    int         sps_pps_cache_size;
 } rtsp_server_session_t;
 
 /*===========================================================================
@@ -306,6 +311,7 @@ typedef int (*packet_sink_t)(void* ctx, const uint8_t* data, int len);
 
 static int h264_packetize(rtp_stream_state_t* st,
                            const uint8_t* nal, int nal_len,
+                           int is_last,
                            packet_sink_t sink, void* ctx)
 {
     if (nal_len < 1) return 0;
@@ -316,7 +322,8 @@ static int h264_packetize(rtp_stream_state_t* st,
 
     if (nal_len <= RTP_MTU - 12) {
         uint8_t pkt[RTP_MTU];
-        build_rtp_hdr(pkt, st, 1);
+        /* M=1 only for the last NAL of the access unit (RFC 3984) */
+        build_rtp_hdr(pkt, st, is_last ? 1 : 0);
         memcpy(pkt + 12, nal, nal_len);
         if (sink(ctx, pkt, 12 + nal_len) < 0) return -1;
         return 1;
@@ -328,7 +335,8 @@ static int h264_packetize(rtp_stream_state_t* st,
         int chunk = rem;
         if (chunk > RTP_MTU - 14) chunk = RTP_MTU - 14;
         uint8_t pkt[RTP_MTU];
-        build_rtp_hdr(pkt, st, (rem == chunk) ? 1 : 0);
+        /* M=1 only on last fragment AND last NAL of access unit */
+        build_rtp_hdr(pkt, st, (rem == chunk && is_last) ? 1 : 0);
         pkt[12] = (uint8_t)((nri << 5) | 28);              /* FU-A indicator */
         pkt[13] = (uint8_t)((first ? 0x80 : 0) |           /* FU-A header  */
                            ((rem == chunk) ? 0x40 : 0) |
@@ -973,7 +981,8 @@ static int on_setup(rtsp_client_t* cl) {
         cl->vstream.timestamp    = rand32();
         cl->vstream.payload_type = (sess->video_codec == 1) ? RTP_PT_H264 : RTP_PT_H265;
         cl->vstream.clock_rate   = RTP_CLOCK_VIDEO;
-        cl->vstream.codec        = sess->video_codec;
+        cl->vstream.interleaved_ch = cl->interleaved_rtp;  /* video on channel from SETUP */
+        cl->vstream.codec        = sess->video_codec;       /* must be LAST — signals delivery ready */
         cl->track_setup_mask |= 1;
     }
 
@@ -984,7 +993,9 @@ static int on_setup(rtsp_client_t* cl) {
         cl->astream.timestamp    = rand32();
         cl->astream.payload_type = RTP_PT_AAC;
         cl->astream.clock_rate   = sess->sample_rate > 0 ? sess->sample_rate : 44100;
-        cl->astream.codec        = 3;
+        /* Audio uses the interleaved channel from the audio SETUP, or video+2 as default */
+        cl->astream.interleaved_ch = (il1 >= 0) ? il1 : cl->interleaved_rtp + 2;
+        cl->astream.codec        = 3;  /* must be LAST — signals delivery ready */
         cl->track_setup_mask |= 2;
     }
 
@@ -998,9 +1009,14 @@ static int on_setup(rtsp_client_t* cl) {
             cl->client_rtp_port, cl->client_rtcp_port,
             cl->server_rtp_port, cl->server_rtcp_port);
     } else {
+        /* Use per-track interleaved channels */
+        int rtp_ch  = is_audio_track ? ((il1 >= 0) ? il1 : cl->interleaved_rtp + 2)
+                                      : cl->interleaved_rtp;
+        int rtcp_ch = is_audio_track ? ((il2 >= 0) ? il2 : rtp_ch + 1)
+                                      : cl->interleaved_rtcp;
         snprintf(extra, sizeof(extra),
             "Transport: RTP/AVP/TCP;interleaved=%d-%d\r\n",
-            cl->interleaved_rtp, cl->interleaved_rtcp);
+            rtp_ch, rtcp_ch);
     }
 
     return send_reply(cl, 200, extra, NULL, 0);
@@ -1008,8 +1024,12 @@ static int on_setup(rtsp_client_t* cl) {
 
 static int on_play(rtsp_client_t* cl) {
     if (!cl->session_id[0]) return reply_simple(cl, 454);
-    cl->play_state = 1;
 
+    /* Build RTP-Info BEFORE allowing data delivery (play_state=1), so that
+       seq/rtptime values are captured before any pipeline thread can deliver
+       RTP data and increment seq counters. The response MUST be fully sent
+       to the socket before play_state=1 to guarantee that ffmpeg receives
+       RTP-Info before the first RTP data packet. */
     char extra[512];
     int n = 0;
     n += snprintf(extra + n, sizeof(extra) - n,
@@ -1032,8 +1052,16 @@ static int on_play(rtsp_client_t* cl) {
             cl->uri, (unsigned)cl->astream.seq,
             (unsigned)cl->astream.timestamp);
     }
+    /* Terminate RTP-Info header line so that Content-Length doesn't get concatenated */
+    n += snprintf(extra + n, sizeof(extra) - n, "\r\n");
 
-    return send_reply(cl, 200, extra, NULL, 0);
+    /* Send PLAY response before enabling data delivery */
+    int ret = send_reply(cl, 200, extra, NULL, 0);
+
+    /* Now safe to allow pipeline threads to deliver RTP data */
+    cl->play_state = 1;
+
+    return ret;
 }
 
 static int on_pause(rtsp_client_t* cl) {
@@ -1063,7 +1091,7 @@ static int dispatch_rtsp(rtsp_client_t* cl) {
 /*===========================================================================
     RTP packet send — TCP interleaved or UDP unicast
 ===========================================================================*/
-static void write_rtp_packet(rtsp_client_t* cl, const uint8_t* data, int len) {
+static void write_rtp_packet(rtsp_client_t* cl, const uint8_t* data, int len, int channel) {
     if (cl->transport_type == RTSP_TRANSPORT_UDP && cl->udp_rtp_fd >= 0) {
         /* Send raw RTP packet via UDP */
         sendto(cl->udp_rtp_fd, data, len, 0,
@@ -1073,7 +1101,7 @@ static void write_rtp_packet(rtsp_client_t* cl, const uint8_t* data, int len) {
         /* TCP interleaved framing ($ + channel + 2-byte length + data) */
         uint8_t frame[4];
         frame[0] = '$';
-        frame[1] = (uint8_t)cl->interleaved_rtp;
+        frame[1] = (uint8_t)channel;
         frame[2] = (uint8_t)((len >> 8) & 0xff);
         frame[3] = (uint8_t)(len & 0xff);
 
@@ -1094,7 +1122,7 @@ typedef struct {
 
 static int packet_send_cb(void* ctx, const uint8_t* data, int len) {
     send_ctx_t* sc = (send_ctx_t*)ctx;
-    write_rtp_packet(sc->cl, data, len);
+    write_rtp_packet(sc->cl, data, len, sc->stream->interleaved_ch);
     sc->stream->packet_count++;
     sc->stream->octet_count += len - 12;
     return 0;
@@ -1115,6 +1143,62 @@ static void session_deliver(rtsp_server_priv_t* srv,
 
     pthread_mutex_lock(&srv->lock);
 
+    /*=== Phase 1: Cache SPS/PPS from H.264 video data into the session ===*/
+    if (is_video && sess->video_codec == 1) {
+        const uint8_t* d = buf->memory.data;
+        int sz = (int)buf->memory.size;
+        int i = 0;
+        while (i < sz) {
+            /* Locate start code */
+            if (i + 2 < sz && d[i] == 0 && d[i+1] == 0) {
+                int nal_start;
+                int code_len;
+                if (i + 3 < sz && d[i+2] == 1) {
+                    nal_start = i + 3; code_len = 3;
+                } else if (i + 4 < sz && d[i+2] == 0 && d[i+3] == 1) {
+                    nal_start = i + 4; code_len = 4;
+                } else { i++; continue; }
+                i += code_len;
+
+                /* Find next start code */
+                int nal_end = sz;
+                for (int j = i; j + 3 < sz; j++) {
+                    if (d[j] == 0 && d[j+1] == 0 &&
+                        (d[j+2] == 1 ||
+                         (j + 4 < sz && d[j+2] == 0 && d[j+3] == 1))) {
+                        nal_end = j;
+                        break;
+                    }
+                }
+                int nal_len = nal_end - nal_start;
+                if (nal_len > 0) {
+                    uint8_t nal_type = d[nal_start] & 0x1f;
+                    if (nal_type == H264_NAL_SPS || nal_type == H264_NAL_PPS) {
+                        /* Cache with 4-byte start code prefix */
+                        int full_len = 4 + nal_len;
+                        uint8_t* new_cache = (uint8_t*)realloc(
+                            sess->sps_pps_cache,
+                            sess->sps_pps_cache_size + full_len);
+                        if (new_cache) {
+                            sess->sps_pps_cache = new_cache;
+                            new_cache[sess->sps_pps_cache_size + 0] = 0;
+                            new_cache[sess->sps_pps_cache_size + 1] = 0;
+                            new_cache[sess->sps_pps_cache_size + 2] = 0;
+                            new_cache[sess->sps_pps_cache_size + 3] = 1;
+                            memcpy(new_cache + sess->sps_pps_cache_size + 4,
+                                   d + nal_start, nal_len);
+                            sess->sps_pps_cache_size += full_len;
+                        }
+                    }
+                }
+                i = nal_end;
+            } else {
+                i++;
+            }
+        }
+    }
+
+    /*=== Phase 2: Deliver data to clients ===*/
     for (rtsp_client_t* cl = srv->clients; cl; cl = cl->next) {
         if (cl->session != sess || cl->play_state != 1) continue;
 
@@ -1139,6 +1223,104 @@ static void session_deliver(rtsp_server_priv_t* srv,
             /* H.264: walk NAL units separated by 00 00 00 01 or 00 00 01 */
             const uint8_t* d = buf->memory.data;
             int sz = (int)buf->memory.size;
+
+            /* Prepend cached SPS/PPS if this client hasn't received them yet
+               and the current frame doesn't already contain them */
+            int has_sps_pps = 0;
+            {
+                int scan_i = 0;
+                while (scan_i < sz) {
+                    if (scan_i + 2 < sz && d[scan_i] == 0 && d[scan_i+1] == 0) {
+                        int ns, clen;
+                        if (scan_i + 3 < sz && d[scan_i+2] == 1) {
+                            ns = scan_i + 3; clen = 3;
+                        } else if (scan_i + 4 < sz && d[scan_i+2] == 0 && d[scan_i+3] == 1) {
+                            ns = scan_i + 4; clen = 4;
+                        } else { scan_i++; continue; }
+                        scan_i += clen;
+                        if (scan_i <= sz) {
+                            uint8_t nt = d[ns] & 0x1f;
+                            if (nt == H264_NAL_SPS || nt == H264_NAL_PPS) {
+                                has_sps_pps = 1;
+                            }
+                        }
+                        /* Skip rest of this NAL */
+                        int ne = sz;
+                        for (int j = scan_i; j + 3 < sz; j++) {
+                            if (d[j] == 0 && d[j+1] == 0 &&
+                                (d[j+2] == 1 ||
+                                 (j + 4 < sz && d[j+2] == 0 && d[j+3] == 1))) {
+                                ne = j; break;
+                            }
+                        }
+                        scan_i = ne;
+                    } else {
+                        scan_i++;
+                    }
+                }
+            }
+
+            if (!st->sps_pps_sent && !has_sps_pps &&
+                sess->sps_pps_cache && sess->sps_pps_cache_size > 0) {
+                /* Send cached SPS/PPS as RTP packets */
+                const uint8_t* cd = sess->sps_pps_cache;
+                int csz = sess->sps_pps_cache_size;
+                int ci = 0;
+                while (ci < csz) {
+                    if (ci + 4 <= csz &&
+                        cd[ci] == 0 && cd[ci+1] == 0 &&
+                        cd[ci+2] == 0 && cd[ci+3] == 1) {
+                        int nal_start = ci + 4;
+                        int nal_end = csz;
+                        for (int j = nal_start; j + 3 < csz; j++) {
+                            if (cd[j] == 0 && cd[j+1] == 0 &&
+                                (cd[j+2] == 1 ||
+                                 (j + 4 < csz && cd[j+2] == 0 && cd[j+3] == 1))) {
+                                nal_end = j; break;
+                            }
+                        }
+                        int nal_len = nal_end - nal_start;
+                        if (nal_len > 0)
+                            h264_packetize(st, cd + nal_start, nal_len, 0,
+                                           packet_send_cb, &sc);
+                        ci = nal_end;
+                    } else {
+                        ci++;
+                    }
+                }
+                st->sps_pps_sent = 1;
+            }
+
+            /* Send current frame's NAL units */
+            /* Pre-scan to find the last NAL offset for marker bit */
+            int last_nal_off = -1;
+            {
+                int scan_i = 0;
+                while (scan_i < sz) {
+                    if (scan_i + 2 < sz && d[scan_i] == 0 && d[scan_i+1] == 0) {
+                        int ns, clen;
+                        if (scan_i + 3 < sz && d[scan_i+2] == 1) {
+                            ns = scan_i + 3; clen = 3;
+                        } else if (scan_i + 4 < sz && d[scan_i+2] == 0 && d[scan_i+3] == 1) {
+                            ns = scan_i + 4; clen = 4;
+                        } else { scan_i++; continue; }
+                        scan_i += clen;
+                        int ne = sz;
+                        for (int j = scan_i; j + 3 < sz; j++) {
+                            if (d[j] == 0 && d[j+1] == 0 &&
+                                (d[j+2] == 1 ||
+                                 (j + 4 < sz && d[j+2] == 0 && d[j+3] == 1))) {
+                                ne = j; break;
+                            }
+                        }
+                        last_nal_off = ns;
+                        scan_i = ne;
+                    } else {
+                        scan_i++;
+                    }
+                }
+            }
+
             int i = 0;
             while (i < sz) {
                 /* Locate start code */
@@ -1163,9 +1345,15 @@ static void session_deliver(rtsp_server_priv_t* srv,
                         }
                     }
                     int nal_len = nal_end - nal_start;
-                    if (nal_len > 0)
-                        h264_packetize(st, d + nal_start, nal_len,
+                    if (nal_len > 0) {
+                        int is_last = (nal_start == last_nal_off);
+                        h264_packetize(st, d + nal_start, nal_len, is_last,
                                        packet_send_cb, &sc);
+                        /* Mark client as having received SPS/PPS */
+                        uint8_t nt = d[nal_start] & 0x1f;
+                        if (nt == H264_NAL_SPS || nt == H264_NAL_PPS)
+                            st->sps_pps_sent = 1;
+                    }
                     i = nal_end;
                 } else {
                     i++;
@@ -1400,6 +1588,9 @@ static zst_result_t el_close(zst_element_t* el) {
         free(srv->sessions[i].extra_data);
         srv->sessions[i].extra_data = NULL;
         srv->sessions[i].extra_size = 0;
+        free(srv->sessions[i].sps_pps_cache);
+        srv->sessions[i].sps_pps_cache = NULL;
+        srv->sessions[i].sps_pps_cache_size = 0;
     }
 
     return ZST_OK;
@@ -1577,6 +1768,9 @@ zst_result_t zst_rtsp_server_remove_session(zst_element_t* el, const char* name)
         free(srv->sessions[i].extra_data);
         srv->sessions[i].extra_data = NULL;
         srv->sessions[i].extra_size = 0;
+        free(srv->sessions[i].sps_pps_cache);
+        srv->sessions[i].sps_pps_cache = NULL;
+        srv->sessions[i].sps_pps_cache_size = 0;
         for (int j = i; j < srv->session_count - 1; j++)
             srv->sessions[j] = srv->sessions[j + 1];
         srv->session_count--;

@@ -87,6 +87,12 @@ struct zst_element {
     zst_clock_t* clock;
 
     zst_pipeline_t* pipeline;
+
+    /* Clock sync state: last-frame PTS and wall-clock used by the scheduler
+       to pace output to real-time (frame-to-frame delta comparison).
+       Reset to zero when the element transitions to PLAYING. */
+    zst_time_t clock_sync_last_pts;
+    zst_time_t clock_sync_last_clock;
 };
 
 zst_element_t* zst_element_create(

@@ -5978,7 +5978,6 @@ int main(void)
 
     printf("[video test source]\n");
     test_video_test_src();
-
     printf("[audio test source]\n");
     test_audio_test_src();
 

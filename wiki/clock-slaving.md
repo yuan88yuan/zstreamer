@@ -184,6 +184,11 @@ With clock slaving:
 
 ---
 
+## Related
+
+- [Clock Sync Bug](clock-sync-debug.md) — Debugging journey for the broken
+  clock sync comparison that caused ffplay to drop RTP packets.
+
 ## References
 
 - GStreamer clock design: [gstreamer.freedesktop.org/documentation/additional/design/clock.html](https://gstreamer.freedesktop.org/documentation/additional/design/clock.html)
