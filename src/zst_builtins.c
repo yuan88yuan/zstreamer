@@ -37,6 +37,7 @@ zst_element_t* zst_http_source_create(const char* url);
 zst_element_t* zst_file_sink_create(const char* path);
 zst_element_t* zst_fake_sink_create(void);
 zst_element_t* zst_v4l2_source_create(void);
+zst_element_t* zst_v4l2_sink_create(void);
 zst_element_t* zst_alsa_source_create(void);
 zst_element_t* zst_h264_encoder_create(void);
 zst_element_t* zst_h264_decoder_create(void);
@@ -384,6 +385,7 @@ create_builtin_element(const char* name)
     if (strcmp(name, "filesink") == 0)     return zst_file_sink_create("");
     if (strcmp(name, "fakesink") == 0)     return zst_fake_sink_create();
     if (strcmp(name, "v4l2src") == 0)      return zst_v4l2_source_create();
+    if (strcmp(name, "v4l2sink") == 0)     return zst_v4l2_sink_create();
     if (strcmp(name, "alsasrc") == 0)      return zst_alsa_source_create();
     if (strcmp(name, "h264enc") == 0)      return zst_h264_encoder_create();
     if (strcmp(name, "h264dec") == 0)      return zst_h264_decoder_create();
@@ -427,6 +429,7 @@ static const zst_element_desc_t g_builtin_descs[] = {
     DESC("filesink", "File Sink",       "Sink/File",    "Writes incoming buffers to a local file",                                                                              g_builtin_filesink_props,       sizeof(g_builtin_filesink_props) / sizeof(g_builtin_filesink_props[0]), g_pad_sink),
     DESC("fakesink", "Fake Sink",       "Sink/Test",    "Consumes buffers and records simple statistics",                                                                       g_builtin_fakesink_props,       sizeof(g_builtin_fakesink_props) / sizeof(g_builtin_fakesink_props[0]), g_pad_sink),
     DESC("v4l2src", "V4L2 Source",      "Source/Video", "Captures video from a V4L2 device",                                                                                    NULL,                           0, g_pad_video_src),
+    DESC("v4l2sink", "V4L2 Sink",       "Sink/Video",   "Outputs video to a V4L2 device",                                                                                       NULL,                           0, g_pad_sink),
     DESC("alsasrc", "ALSA Source",      "Source/Audio", "Captures audio from ALSA",                                                                                             NULL,                           0, g_pad_audio_src),
     DESC("h264enc", "H.264 Encoder",    "Codec/Encoder","Encodes raw video to H.264",                                                                                           NULL,                           0, g_pad_h264enc),
     DESC("h264dec", "H.264 Decoder",    "Codec/Decoder","Decodes H.264 video frames",                                                                                           NULL,                           0, g_pad_h264dec),
