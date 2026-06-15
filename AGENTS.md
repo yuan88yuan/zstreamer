@@ -73,6 +73,10 @@ It provides a **GStreamer-like** pipeline architecture: elements connected via p
 │   ├── text_overlay.c     ← Text overlay on video frames
 │   ├── text_source.c      ← Timed text subtitle source
 │   ├── srt_parser.c       ← SRT subtitle file parser
+│   ├── srt_source.c       ← SRT source element
+│   ├── srt_sink.c         ← SRT sink element
+│   ├── srt_common.c       ← SRT shared helpers
+│   ├── srt_plugin.c       ← Unified SRT plugin registration
 │   ├── net_source.c       ← TCP/UDP network source (raw bytes)
 │   ├── net_sink.c         ← TCP/UDP network sink (raw bytes)
 │   ├── rtsp_source.c      ← RTSP client source (TCP interleaved + UDP)

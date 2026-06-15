@@ -3188,6 +3188,16 @@ test_element_factory_refcounting(void)
     assert(aacdecoder->plugin != NULL);
     assert(strcmp(aacdecoder->ops->name, "aacdec") == 0);
 
+    zst_element_t* srtsrc = zst_element_factory_make("srtsrc");
+    assert(srtsrc != NULL);
+    assert(srtsrc->plugin != NULL);
+    assert(strcmp(srtsrc->ops->name, "srtsrc") == 0);
+
+    zst_element_t* srtsink = zst_element_factory_make("srtsink");
+    assert(srtsink != NULL);
+    assert(srtsink->plugin != NULL);
+    assert(strcmp(srtsink->ops->name, "srtsink") == 0);
+
     zst_plugin_t* filesink_plugin = filesink->plugin;
     assert(filesink_plugin->refcount == 2);
     
@@ -3211,6 +3221,8 @@ test_element_factory_refcounting(void)
     zst_element_destroy(audiotestsrc);
     zst_element_destroy(h264decoder);
     zst_element_destroy(aacdecoder);
+    zst_element_destroy(srtsrc);
+    zst_element_destroy(srtsink);
     
     zst_plugin_registry_deinit();
     
