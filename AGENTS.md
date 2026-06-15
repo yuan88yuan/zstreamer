@@ -196,7 +196,7 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | Dynamic Plugins             | ✅ Done                          |
 | Logging System              | ✅ Done                          |
 | Unit Tests                  | ✅ 65 core tests + test_net_source + test_net_sink + install test, all passing |
-| Allocator API + Pool        | ✅ Done (allocator interface, pool, elements migrated, topology-aware sizing, comprehensive tests) |
+| Allocator API + Pool        | ✅ Done (allocator interface, pool, CPU/DMABUF/CUDA/Vulkan/oneAPI allocators, elements migrated, topology-aware sizing, comprehensive tests) |
 | Clock                       | ✅ Done (system clock + pipeline integration) |
 | Element Public API (8d)     | ✅ Done (Descriptor ABI, plugin introspection, typed properties, official metadata, convenience headers, library & installation layout) |
 | Text Overlay (4s)           | ✅ Included in Element Implementations |
@@ -219,13 +219,15 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | MPEG-TS mux/demux           | ✅ Done                          |
 | MP4 Demuxer                 | ✅ Done                        |
 | Clock Sync Bugfix           | ✅ Fixed (frame-to-frame delta comparison in scheduler — see [wiki/clock-sync-debug.md](wiki/clock-sync-debug.md)) |
-| CI Pipeline                 | 📝 Future                        |
+| CI Pipeline                 | ✅ Done (GitHub Actions CI with unit and docker-run loopback integration tests) |
 
 ---
 
 ## Coding Conventions
 
 - The project provides a DMABUF allocator fallback using `memfd_create`. Use `zst_allocator_dmabuf_create()` to create it, `zst_allocator_dmabuf_get_fd()` to export the file descriptor, and `zst_allocator_dmabuf_import()` to map an existing fd into the allocator.
+
+- The project provides GPU and accelerator device allocators: `zst_allocator_cuda_create()`, `zst_allocator_vulkan_create()`, and `zst_allocator_oneapi_create()`. In CPU-only or non-supported environments, these constructors safely return `NULL`, which is handled gracefully by element negotiation and unit tests.
 
 - **Language:** C11 (`-std=c11`)
 - **Naming:** `zst_` prefix for all public symbols, `snake_case`
