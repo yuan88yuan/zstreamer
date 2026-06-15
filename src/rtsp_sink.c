@@ -115,10 +115,11 @@ rtsp_sink_create_stream(rtsp_sink_t* s, zst_pad_t* pad, int* out_stream_idx)
             st->codecpar->sample_rate = caps->audio.sample_rate;
         }
         if (caps->audio.channels > 0) {
-            st->codecpar->channels = caps->audio.channels;
 #if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(59, 37, 100)
+            st->codecpar->ch_layout.nb_channels = caps->audio.channels;
             av_channel_layout_default(&st->codecpar->ch_layout, caps->audio.channels);
 #else
+            st->codecpar->channels = caps->audio.channels;
             if (caps->audio.channels == 1) {
                 st->codecpar->channel_layout = AV_CH_LAYOUT_MONO;
             } else if (caps->audio.channels == 2) {
