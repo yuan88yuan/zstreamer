@@ -25,6 +25,38 @@ zst_buffer_ref()    → refcount++
 zst_buffer_unref()  → refcount--; free when 0
 ```
 
+### Memory Descriptor (`zst_memory_t`)
+The raw allocation container wrapped inside a `zst_buffer`. It separates buffer metadata (timestamps, refcounts, types) from the concrete memory backend implementation, enabling a unified interface for zero-copy operations across CPU and accelerators.
+
+| Field | Type | Purpose |
+|---|---|---|
+| `type` | `zst_memory_type_t` | Identifies the physical memory domain (CPU host memory, DMABUF, CUDA device pointer, Vulkan buffer memory, or Intel oneAPI Unified Shared Memory). |
+| `data` | `void*` | Pointer to the mapped buffer. For CPU/DMABUF/Vulkan, this is a host-visible virtual address. For CUDA/oneAPI, this is a GPU device address. |
+| `size` | `size_t` | Capacity of the allocation in bytes. |
+| `priv` | `void*` | Opaque context pointer used by the allocator to manage resource release (e.g. holds file descriptor for DMABUF, allocation metadata, or custom wrapper structures). |
+| `release` | `void (*)(void*)` | Callback invoked when the buffer is destroyed to free the backing memory using the allocator that created it. |
+
+#### Backend Integration Models:
+1. **CPU Host Memory (`ZST_MEMORY_CPU`)**:
+   - `data` is mapped directly to standard `malloc`'d RAM.
+   - `release` is a simple wrapper around `free()`.
+2. **DMA-BUF (`ZST_MEMORY_DMABUF`)**:
+   - Used for zero-copy file sharing between hardware modules (e.g. V4L2 and GPU/CPU).
+   - `priv` stores the file descriptor (`fd`) dynamically duplicated during import.
+   - `data` holds the `mmap`'d user-space virtual address, and `release` performs `munmap` and closes the `fd`.
+3. **Vulkan Device Memory (`ZST_MEMORY_VULKAN`)**:
+   - Backed by Vulkan logical device memory and buffers.
+   - `priv` points to `VkDeviceMemory` and `VkBuffer` metadata.
+   - `data` holds the mapped host-visible memory pointer.
+4. **CUDA Device Memory (`ZST_MEMORY_CUDA`)**:
+   - GPU-only memory allocated via `cudaMalloc`.
+   - `data` holds the device address (not directly dereferenceable on CPU).
+   - `release` triggers `cudaFree()`.
+5. **Intel oneAPI SYCL Memory (`ZST_MEMORY_ONEAPI`)**:
+   - Unified Shared Memory (USM) device-only allocation.
+   - `data` holds the device-only USM pointer allocated via `sycl::malloc_device`.
+   - `release` triggers `sycl::free()`.
+
 ### Pad (`zst_pad`)
 Connection point on an element. Two directions:
 

@@ -21,7 +21,8 @@ typedef enum {
     ZST_MEMORY_CPU,
     ZST_MEMORY_DMABUF,
     ZST_MEMORY_CUDA,
-    ZST_MEMORY_VULKAN
+    ZST_MEMORY_VULKAN,
+    ZST_MEMORY_ONEAPI
 } zst_memory_type_t;
 
 #define ZST_BUFFER_FLAG_EOS (1 << 0)
