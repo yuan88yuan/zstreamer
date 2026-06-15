@@ -35,6 +35,13 @@
   - [x] Implement `free` callback freeing the USM memory via `sycl::free`.
   - [x] Safely return `NULL` if oneAPI SYCL runtime environment, queue, or compatible hardware/driver is unavailable.
 
+  **Jetson NvBuffer Allocator:**
+  - [ ] Context struct: `zst_nvbuffer_allocator_t` tracking the NvBuffer state.
+  - [ ] Implement `zst_allocator_nvbuffer_create(void)` returning an NvBuffer-specific `zst_allocator_t`.
+  - [ ] Implement `alloc` callback that creates an `NvBuffer`, allocates its memory, and maps it for CPU access if necessary.
+  - [ ] Implement `free` callback that unmaps and destroys the `NvBuffer`.
+  - [ ] Safely return `NULL` if the Jetson Multimedia API (NvBuffer) environment is not available.
+
 - [x] Buffer pools to eliminate per-frame allocation ✅
 
   **`zst_buffer_pool_t` — a recyclable pool of pre-allocated buffers**
