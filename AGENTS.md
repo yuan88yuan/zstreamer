@@ -100,14 +100,9 @@ It provides a **GStreamer-like** pipeline architecture: elements connected via p
 ---
 
 ## Build
+All compilation and testing for this project must be performed inside Docker containers to ensure environmental consistency.
 
 ```bash
-# Native
-mkdir build && cd build
-cmake .. -DBUILD_TESTS=ON
-make -j$(nproc)
-ctest --output-on-failure
-
 # Docker — one-shot test (fastest, uses cached build)
 docker build -t zstreamer .
 docker run --rm zstreamer                     # runs ctest --output-on-failure
