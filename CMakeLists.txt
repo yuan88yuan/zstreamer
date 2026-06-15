@@ -32,10 +32,92 @@ pkg_check_modules(V4L2 REQUIRED libv4l2)
 pkg_check_modules(SWSCALE REQUIRED libswscale)
 pkg_check_modules(SWRESAMPLE REQUIRED libswresample)
 pkg_check_modules(FREETYPE REQUIRED freetype2)
-pkg_check_modules(SRT srt-gnutls)
-if(NOT SRT_FOUND)
-    pkg_check_modules(SRT REQUIRED srt)
+
+# SRT packaging is distro-dependent.  FFmpeg's libavformat may be linked
+# against libsrt-gnutls.so while a plain `pkg-config srt` can resolve to a
+# different SRT shared object on other systems.  Loading two SRT variants into
+# one process can crash, so choose the zstreamer SRT library by matching
+# libavformat's actual DT_NEEDED entry instead of assuming from FFmpeg version.
+pkg_check_modules(SRT_PC srt)
+if(NOT SRT_PC_FOUND)
+    pkg_check_modules(SRT_PC REQUIRED srt-gnutls)
 endif()
+set(SRT_INCLUDE_DIRS ${SRT_PC_INCLUDE_DIRS})
+set(SRT_LIBRARY_DIRS ${SRT_PC_LIBRARY_DIRS})
+
+find_library(SRT_GNUTLS_LIBRARY NAMES srt-gnutls HINTS ${SRT_PC_LIBRARY_DIRS})
+find_library(SRT_GENERIC_LIBRARY NAMES srt HINTS ${SRT_PC_LIBRARY_DIRS})
+find_library(AVFORMAT_LIBRARY NAMES avformat HINTS ${AVFORMAT_LIBRARY_DIRS})
+
+set(ZST_FFMPEG_SRT_BACKEND "none")
+set(ZST_AVFORMAT_DYNAMIC_SECTION "")
+if(UNIX AND NOT CMAKE_CROSSCOMPILING AND AVFORMAT_LIBRARY)
+    find_program(READELF_EXECUTABLE NAMES readelf)
+    if(READELF_EXECUTABLE)
+        execute_process(
+            COMMAND ${READELF_EXECUTABLE} -d ${AVFORMAT_LIBRARY}
+            RESULT_VARIABLE ZST_READELF_RESULT
+            OUTPUT_VARIABLE ZST_AVFORMAT_DYNAMIC_SECTION
+            ERROR_QUIET
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+    elseif(CMAKE_OBJDUMP)
+        execute_process(
+            COMMAND ${CMAKE_OBJDUMP} -p ${AVFORMAT_LIBRARY}
+            RESULT_VARIABLE ZST_READELF_RESULT
+            OUTPUT_VARIABLE ZST_AVFORMAT_DYNAMIC_SECTION
+            ERROR_QUIET
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+    endif()
+
+    if(ZST_AVFORMAT_DYNAMIC_SECTION MATCHES "libsrt-gnutls\\.so")
+        set(ZST_FFMPEG_SRT_BACKEND "gnutls")
+    elseif(ZST_AVFORMAT_DYNAMIC_SECTION MATCHES "libsrt[^/\n]*\\.so")
+        set(ZST_FFMPEG_SRT_BACKEND "generic")
+    endif()
+endif()
+
+if(ZST_FFMPEG_SRT_BACKEND STREQUAL "gnutls")
+    if(NOT SRT_GNUTLS_LIBRARY)
+        message(FATAL_ERROR
+            "libavformat is linked against libsrt-gnutls, but libsrt-gnutls "
+            "was not found for zstreamer. Install the matching SRT development "
+            "package or disable one of the conflicting components."
+        )
+    endif()
+    set(SRT_LIBRARIES ${SRT_GNUTLS_LIBRARY})
+    set(ZST_SRT_LINK_BACKEND "libsrt-gnutls (matched libavformat)")
+elseif(ZST_FFMPEG_SRT_BACKEND STREQUAL "generic")
+    if(NOT SRT_GENERIC_LIBRARY)
+        message(FATAL_ERROR
+            "libavformat is linked against libsrt.so, but libsrt.so was not "
+            "found for zstreamer. Install the matching SRT development package "
+            "or disable one of the conflicting components."
+        )
+    endif()
+    set(SRT_LIBRARIES ${SRT_GENERIC_LIBRARY})
+    set(ZST_SRT_LINK_BACKEND "libsrt (matched libavformat)")
+else()
+    # No SRT dependency was detected in libavformat, or this is a cross/static
+    # build where DT_NEEDED cannot be inspected.  Prefer the GnuTLS SRT variant
+    # when present because that is the common FFmpeg packaging choice on Ubuntu,
+    # then fall back to libsrt.so, then finally to pkg-config's library list.
+    if(SRT_GNUTLS_LIBRARY)
+        set(SRT_LIBRARIES ${SRT_GNUTLS_LIBRARY})
+        set(ZST_SRT_LINK_BACKEND "libsrt-gnutls (preferred; libavformat SRT not detected)")
+    elseif(SRT_GENERIC_LIBRARY)
+        set(SRT_LIBRARIES ${SRT_GENERIC_LIBRARY})
+        set(ZST_SRT_LINK_BACKEND "libsrt (fallback; libavformat SRT not detected)")
+    else()
+        set(SRT_LIBRARIES ${SRT_PC_LIBRARIES})
+        set(ZST_SRT_LINK_BACKEND "${SRT_PC_LIBRARIES} (pkg-config fallback)")
+    endif()
+endif()
+
+message(STATUS "libavformat SRT backend: ${ZST_FFMPEG_SRT_BACKEND}")
+message(STATUS "zstreamer SRT link: ${ZST_SRT_LINK_BACKEND}")
+
 find_package(CUDAToolkit QUIET)
 if(CUDAToolkit_FOUND)
     add_compile_definitions(HAS_CUDA=1)
