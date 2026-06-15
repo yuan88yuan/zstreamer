@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  producer:
+    image: zstreamer:latest
+    container_name: zstreamer-producer
+    devices:
+      - "/dev/video10:/dev/video10"
+    cap_add:
+      - SYS_ADMIN
+    command: >
+      bash -c "/workspace/build/test_v4l2_loopback --device /dev/video10 --mode write --frames 50 --duration 5"
+    restart: "no"
+
+  consumer:
+    image: zstreamer:latest
+    container_name: zstreamer-consumer
+    devices:
+      - "/dev/video10:/dev/video10"
+    depends_on:
+      - producer
+    entrypoint: >
+      bash -c "sleep 2 && /workspace/build/test_v4l2_loopback --device /dev/video10 --mode read --frames 50 --duration 5"
+    restart: "no"

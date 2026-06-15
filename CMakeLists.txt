@@ -530,6 +530,15 @@ if(BUILD_TESTS)
     )
     add_test(NAME test_http_source COMMAND test_http_source)
 
+    add_executable(test_v4l2_loopback
+        tests/test_v4l2_loopback.c
+    )
+    target_include_directories(test_v4l2_loopback
+        PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+    )
+    target_link_libraries(test_v4l2_loopback
+        PRIVATE zstreamer-elements
+    )
 
     # -- full pipeline example --
     add_executable(example_record
