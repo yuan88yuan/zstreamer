@@ -2461,6 +2461,183 @@ test_bus_async_dispatch(void)
     PASS();
 }
 
+struct stress_reader_ctx {
+    zst_bus_t* bus;
+    volatile int stop;
+    volatile int total_popped;
+    volatile int error_count;
+    int expected_events;
+};
+
+struct stress_writer_ctx {
+    zst_bus_t* bus;
+    int num_events;
+};
+
+static void*
+stress_writer_thread(void* arg)
+{
+    struct stress_writer_ctx* ctx = arg;
+    for (int i = 0; i < ctx->num_events; i++) {
+        zst_event_t* ev = zst_event_new_warning(NULL, ZST_ERROR, "stress warning");
+        if (zst_bus_post(ctx->bus, ev) != ZST_OK) {
+            zst_event_destroy(ev);
+        }
+    }
+    return NULL;
+}
+
+static void*
+stress_reader_thread(void* arg)
+{
+    struct stress_reader_ctx* ctx = arg;
+    while (!__atomic_load_n(&ctx->stop, __ATOMIC_SEQ_CST)) {
+        zst_event_t* ev = NULL;
+        zst_result_t r = zst_bus_pop(ctx->bus, &ev, 10);
+        if (r == ZST_OK) {
+            if (ev) {
+                __atomic_fetch_add(&ctx->total_popped, 1, __ATOMIC_SEQ_CST);
+                if (ev->type != ZST_EVENT_WARNING || 
+                    ev->as.warning.result != ZST_ERROR || 
+                    strcmp(ev->as.warning.message, "stress warning") != 0) {
+                    __atomic_fetch_add(&ctx->error_count, 1, __ATOMIC_SEQ_CST);
+                }
+                zst_event_destroy(ev);
+            } else {
+                __atomic_fetch_add(&ctx->error_count, 1, __ATOMIC_SEQ_CST);
+            }
+        } else if (r == ZST_TIMEOUT) {
+            if (__atomic_load_n(&ctx->total_popped, __ATOMIC_SEQ_CST) >= ctx->expected_events) {
+                break;
+            }
+        } else {
+            /* ZST_ERROR means bus is flushing/destroyed */
+            break;
+        }
+    }
+    return NULL;
+}
+
+static void
+test_bus_stress_concurrency(void)
+{
+    TEST("bus stress concurrency (multiple writers / readers)");
+    
+    zst_bus_t* bus = zst_bus_create();
+    assert(bus != NULL);
+    
+    const int W = 4;
+    const int R = 4;
+    const int N = 2500;
+    const int total_expected = W * N;
+    
+    struct stress_reader_ctx reader_ctx = {
+        .bus = bus,
+        .stop = 0,
+        .total_popped = 0,
+        .error_count = 0,
+        .expected_events = total_expected
+    };
+    
+    struct stress_writer_ctx writer_ctx = {
+        .bus = bus,
+        .num_events = N
+    };
+    
+    pthread_t writers[W];
+    pthread_t readers[R];
+    
+    for (int i = 0; i < R; i++) {
+        assert(pthread_create(&readers[i], NULL, stress_reader_thread, &reader_ctx) == 0);
+    }
+    
+    for (int i = 0; i < W; i++) {
+        assert(pthread_create(&writers[i], NULL, stress_writer_thread, &writer_ctx) == 0);
+    }
+    
+    for (int i = 0; i < W; i++) {
+        pthread_join(writers[i], NULL);
+    }
+    
+    /* Wait for readers to finish popping all events */
+    for (int i = 0; i < 50; i++) {
+        if (__atomic_load_n(&reader_ctx.total_popped, __ATOMIC_SEQ_CST) >= total_expected) {
+            break;
+        }
+        struct timespec ts = { .tv_sec = 0, .tv_nsec = 10000000 }; /* 10 ms */
+        nanosleep(&ts, NULL);
+    }
+    
+    __atomic_store_n(&reader_ctx.stop, 1, __ATOMIC_SEQ_CST);
+    
+    for (int i = 0; i < R; i++) {
+        pthread_join(readers[i], NULL);
+    }
+    
+    assert(reader_ctx.total_popped == total_expected);
+    assert(reader_ctx.error_count == 0);
+    
+    zst_bus_destroy(bus);
+    
+    PASS();
+}
+
+static volatile int g_stress_handler_calls = 0;
+static void
+stress_handler_cb(zst_bus_t* bus, zst_event_t* event, void* user_data)
+{
+    (void)bus;
+    (void)user_data;
+    if (event) {
+        __atomic_fetch_add(&g_stress_handler_calls, 1, __ATOMIC_SEQ_CST);
+        // Verify event properties
+        assert(event->type == ZST_EVENT_WARNING);
+        assert(strcmp(event->as.warning.message, "stress warning") == 0);
+    }
+}
+
+static void
+test_bus_stress_handler(void)
+{
+    TEST("bus stress handler toggling under load");
+    
+    zst_bus_t* bus = zst_bus_create();
+    assert(bus != NULL);
+    
+    __atomic_store_n(&g_stress_handler_calls, 0, __ATOMIC_SEQ_CST);
+    
+    const int W = 4;
+    const int N = 1000;
+    
+    struct stress_writer_ctx writer_ctx = {
+        .bus = bus,
+        .num_events = N
+    };
+    
+    pthread_t writers[W];
+    
+    for (int i = 0; i < W; i++) {
+        assert(pthread_create(&writers[i], NULL, stress_writer_thread, &writer_ctx) == 0);
+    }
+    
+    // Toggle handler rapidly
+    for (int i = 0; i < 20; i++) {
+        zst_bus_set_handler(bus, stress_handler_cb, NULL);
+        struct timespec ts = { .tv_sec = 0, .tv_nsec = 1000000 }; /* 1 ms */
+        nanosleep(&ts, NULL);
+        zst_bus_set_handler(bus, NULL, NULL);
+    }
+    
+    for (int i = 0; i < W; i++) {
+        pthread_join(writers[i], NULL);
+    }
+    
+    zst_bus_destroy(bus);
+    
+    PASS();
+}
+
+
 static void
 test_pipeline_bus_events(void)
 {
@@ -5953,6 +6130,8 @@ int main(void)
     test_bus_basic();
     test_bus_timeout();
     test_bus_async_dispatch();
+    test_bus_stress_concurrency();
+    test_bus_stress_handler();
     test_pipeline_bus_events();
 
     /* ── Dynamic Plugins (Phase 7) ── */

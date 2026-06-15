@@ -5,7 +5,7 @@
 - [ ] Docker Compose for multi-service testing (e.g. v4l2loopback)
 - [ ] CI pipeline (GitHub Actions): build, unit test, docker build, integration test
 - [ ] Caps negotiation fuzzing
-- [ ] Event bus stress test
+- [x] Event bus stress test
 - [ ] Queue element stress test
 - [x] Clock precision test
 - [ ] Static analysis: `cppcheck`, `clang-tidy`
