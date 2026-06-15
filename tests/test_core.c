@@ -2029,6 +2029,372 @@ test_queue_config_limits(void)
 }
 
 static void
+mock_buf_memory_destroy(zst_buffer_t* b)
+{
+    free(b->memory.data);
+}
+
+typedef struct {
+    zst_pad_t* dummy_src;
+    int producer_id;
+    int count;
+} prod_ctx_t;
+
+static void*
+producer_thread(void* arg)
+{
+    prod_ctx_t* ctx = arg;
+    assert(ctx->dummy_src != NULL);
+
+    for (int i = 0; i < ctx->count; i++) {
+        zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_USER);
+        assert(buf != NULL);
+        
+        uint64_t* val = malloc(sizeof(uint64_t));
+        assert(val != NULL);
+        *val = (uint64_t)(ctx->producer_id * 1000000 + i);
+        buf->payload = val;
+        buf->destroy = mock_buf_destroy;
+
+        zst_result_t r = zst_pad_push(ctx->dummy_src, buf);
+        assert(r == ZST_OK);
+
+        zst_buffer_unref(buf);
+    }
+    return NULL;
+}
+
+static void*
+pool_producer_thread(void* arg)
+{
+    prod_ctx_t* ctx = arg;
+    assert(ctx->dummy_src != NULL);
+
+    for (int i = 0; i < ctx->count; i++) {
+        zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_USER);
+        assert(buf != NULL);
+        
+        buf->memory.data = malloc(128);
+        assert(buf->memory.data != NULL);
+        buf->memory.size = 128;
+        memset(buf->memory.data, 0xAA, 128);
+        buf->destroy = mock_buf_memory_destroy;
+
+        zst_result_t r = zst_pad_push(ctx->dummy_src, buf);
+        assert(r == ZST_OK);
+
+        zst_buffer_unref(buf);
+    }
+    return NULL;
+}
+
+typedef struct {
+    pthread_mutex_t lock;
+    int count;
+    uint64_t sum;
+} test_sink_state_t;
+
+static zst_result_t
+test_sink_push(zst_pad_t* pad, zst_buffer_t* buf)
+{
+    (void)pad;
+    test_sink_state_t* state = pad->parent ? pad->parent->priv : NULL;
+    if (!state) return ZST_ERROR;
+
+    if (buf && (buf->flags & ZST_BUFFER_FLAG_EOS)) {
+        return ZST_OK;
+    }
+    if (buf && buf->payload) {
+        uint64_t val = *(uint64_t*)buf->payload;
+        pthread_mutex_lock(&state->lock);
+        state->count++;
+        state->sum += val;
+        pthread_mutex_unlock(&state->lock);
+    }
+    return ZST_OK;
+}
+
+typedef struct {
+    pthread_mutex_t lock;
+    int count;
+    zst_buffer_pool_t* pool;
+} test_pool_sink_state_t;
+
+static zst_result_t
+test_pool_sink_push(zst_pad_t* pad, zst_buffer_t* buf)
+{
+    (void)pad;
+    test_pool_sink_state_t* state = pad->parent ? pad->parent->priv : NULL;
+    if (!state) return ZST_ERROR;
+
+    if (buf && !(buf->flags & ZST_BUFFER_FLAG_EOS)) {
+        assert(buf->pool == state->pool);
+        pthread_mutex_lock(&state->lock);
+        state->count++;
+        pthread_mutex_unlock(&state->lock);
+    }
+    return ZST_OK;
+}
+
+typedef struct {
+    zst_pad_t* dummy_src;
+    volatile int running;
+} state_stress_ctx_t;
+
+static void*
+state_stress_producer(void* arg)
+{
+    state_stress_ctx_t* ctx = arg;
+    assert(ctx->dummy_src != NULL);
+
+    while (__atomic_load_n(&ctx->running, __ATOMIC_ACQUIRE)) {
+        zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_USER);
+        if (!buf) continue;
+        
+        zst_pad_push(ctx->dummy_src, buf);
+        zst_buffer_unref(buf);
+        
+        struct timespec ts = { .tv_sec = 0, .tv_nsec = 100000 }; /* 0.1ms */
+        nanosleep(&ts, NULL);
+    }
+    return NULL;
+}
+
+static void
+test_queue_element_stress(void)
+{
+    TEST("queue element stress (concurrency, lifecycle, buffer pool)");
+
+    const int NUM_PRODUCERS = 4;
+    const int BUFFERS_PER_PRODUCER = 500;
+    const int TOTAL_BUFFERS = NUM_PRODUCERS * BUFFERS_PER_PRODUCER;
+
+    /* ── Part 1: Sync Mode Concurrency & Order Verification ── */
+    {
+        zst_queue_config_t q_cfg = {
+            .mode = ZST_QUEUE_SYNC,
+            .max_buffers = 20,
+            .max_bytes = 0,
+            .max_duration = 0,
+        };
+
+        zst_element_t* q_el = zst_queue_element_create(&q_cfg);
+        assert(q_el != NULL);
+
+        test_sink_state_t* sink_state = calloc(1, sizeof(test_sink_state_t));
+        assert(sink_state != NULL);
+        pthread_mutex_init(&sink_state->lock, NULL);
+        sink_state->count = 0;
+        sink_state->sum = 0;
+
+        // Create a dummy element to parent our sink pad
+        zst_element_t* dummy_sink = zst_element_create(&g_dummy_ops, sink_state);
+        zst_pad_t* sink_pad = zst_pad_create("sink", ZST_PAD_SINK);
+        sink_pad->push = test_sink_push;
+        zst_element_add_pad(dummy_sink, sink_pad);
+
+        zst_pad_t* q_src = zst_element_get_pad(q_el, "src");
+        assert(q_src != NULL);
+        assert(zst_pad_link(q_src, sink_pad) == ZST_OK);
+
+        // Create dummy src pad to push into queue element's sink
+        zst_pad_t* dummy_src = zst_pad_create("src", ZST_PAD_SRC);
+        zst_pad_t* q_sink = zst_element_get_pad(q_el, "sink");
+        assert(dummy_src != NULL && q_sink != NULL);
+        assert(zst_pad_link(dummy_src, q_sink) == ZST_OK);
+
+        assert(zst_element_set_state(q_el, ZST_STATE_READY) == ZST_OK);
+        assert(zst_element_set_state(q_el, ZST_STATE_PLAYING) == ZST_OK);
+
+        pthread_t producers[NUM_PRODUCERS];
+        prod_ctx_t prod_contexts[NUM_PRODUCERS];
+
+        for (int i = 0; i < NUM_PRODUCERS; i++) {
+            prod_contexts[i].dummy_src = dummy_src;
+            prod_contexts[i].producer_id = i;
+            prod_contexts[i].count = BUFFERS_PER_PRODUCER;
+            assert(pthread_create(&producers[i], NULL, producer_thread, &prod_contexts[i]) == 0);
+        }
+
+        for (int i = 0; i < NUM_PRODUCERS; i++) {
+            pthread_join(producers[i], NULL);
+        }
+
+        int wait_limit = 2000;
+        while (wait_limit > 0) {
+            pthread_mutex_lock(&sink_state->lock);
+            int count = sink_state->count;
+            pthread_mutex_unlock(&sink_state->lock);
+            if (count >= TOTAL_BUFFERS) {
+                break;
+            }
+            struct timespec ts = { .tv_sec = 0, .tv_nsec = 1000000 };
+            nanosleep(&ts, NULL);
+            wait_limit--;
+        }
+
+        assert(zst_element_set_state(q_el, ZST_STATE_NULL) == ZST_OK);
+
+        pthread_mutex_lock(&sink_state->lock);
+        assert(sink_state->count == TOTAL_BUFFERS);
+        uint64_t expected_sum = 0;
+        for (int p = 0; p < NUM_PRODUCERS; p++) {
+            for (int i = 0; i < BUFFERS_PER_PRODUCER; i++) {
+                expected_sum += (uint64_t)(p * 1000000 + i);
+            }
+        }
+        assert(sink_state->sum == expected_sum);
+        pthread_mutex_unlock(&sink_state->lock);
+
+        pthread_mutex_destroy(&sink_state->lock);
+        zst_pad_unlink(q_src);
+        zst_pad_unlink(dummy_src);
+        zst_pad_destroy(dummy_src);
+        zst_element_destroy(q_el);
+        zst_element_destroy(dummy_sink); // this frees sink_state
+    }
+
+    /* ── Part 2: Concurrent State Transitions & Flush Stress ── */
+    {
+        zst_queue_config_t q_cfg = {
+            .mode = ZST_QUEUE_SYNC,
+            .max_buffers = 5,
+            .max_bytes = 0,
+            .max_duration = 0,
+        };
+
+        zst_element_t* q_el = zst_queue_element_create(&q_cfg);
+        assert(q_el != NULL);
+
+        zst_pad_t* dummy_src = zst_pad_create("src", ZST_PAD_SRC);
+        zst_pad_t* q_sink = zst_element_get_pad(q_el, "sink");
+        assert(dummy_src != NULL && q_sink != NULL);
+        assert(zst_pad_link(dummy_src, q_sink) == ZST_OK);
+
+        // Keep it in READY so the queue exists, then start producer
+        assert(zst_element_set_state(q_el, ZST_STATE_READY) == ZST_OK);
+
+        state_stress_ctx_t stress_ctx;
+        stress_ctx.dummy_src = dummy_src;
+        __atomic_store_n(&stress_ctx.running, 1, __ATOMIC_RELEASE);
+
+        pthread_t prod_thread;
+        assert(pthread_create(&prod_thread, NULL, state_stress_producer, &stress_ctx) == 0);
+
+        // Rapid state transitions between PLAYING and READY
+        for (int i = 0; i < 50; i++) {
+            assert(zst_element_set_state(q_el, ZST_STATE_PLAYING) == ZST_OK);
+            struct timespec ts1 = { .tv_sec = 0, .tv_nsec = 500000 }; /* 0.5ms */
+            nanosleep(&ts1, NULL);
+            assert(zst_element_set_state(q_el, ZST_STATE_READY) == ZST_OK);
+            struct timespec ts2 = { .tv_sec = 0, .tv_nsec = 500000 }; /* 0.5ms */
+            nanosleep(&ts2, NULL);
+        }
+
+        // Stop the producer
+        __atomic_store_n(&stress_ctx.running, 0, __ATOMIC_RELEASE);
+        pthread_join(prod_thread, NULL);
+
+        // Finally clean up state
+        assert(zst_element_set_state(q_el, ZST_STATE_NULL) == ZST_OK);
+        zst_pad_unlink(dummy_src);
+        zst_pad_destroy(dummy_src);
+        zst_element_destroy(q_el);
+    }
+
+    /* ── Part 3: Buffer Pool Integration Stress ── */
+    {
+        zst_queue_config_t q_cfg = {
+            .mode = ZST_QUEUE_SYNC,
+            .max_buffers = 50,
+            .max_bytes = 0,
+            .max_duration = 0,
+        };
+        zst_element_t* q_el = zst_queue_element_create(&q_cfg);
+        assert(q_el != NULL);
+
+        zst_buffer_pool_config_t pool_cfg = {
+            .min_buffers = 10,
+            .max_buffers = 30,
+            .buffer_size = 512,
+            .buffer_type = ZST_BUFFER_USER
+        };
+        zst_buffer_pool_t* pool = zst_buffer_pool_create(NULL, &pool_cfg);
+        assert(pool != NULL);
+        zst_buffer_pool_prefill(pool);
+
+        assert(zst_queue_element_set_pool(q_el, pool) == ZST_OK);
+
+        test_pool_sink_state_t* pool_sink_state = calloc(1, sizeof(test_pool_sink_state_t));
+        assert(pool_sink_state != NULL);
+        pthread_mutex_init(&pool_sink_state->lock, NULL);
+        pool_sink_state->count = 0;
+        pool_sink_state->pool = pool;
+
+        zst_element_t* dummy_sink = zst_element_create(&g_dummy_ops, pool_sink_state);
+        zst_pad_t* sink_pad = zst_pad_create("sink", ZST_PAD_SINK);
+        sink_pad->push = test_pool_sink_push;
+        zst_element_add_pad(dummy_sink, sink_pad);
+
+        zst_pad_t* q_src = zst_element_get_pad(q_el, "src");
+        assert(q_src != NULL);
+        assert(zst_pad_link(q_src, sink_pad) == ZST_OK);
+
+        zst_pad_t* dummy_src = zst_pad_create("src", ZST_PAD_SRC);
+        zst_pad_t* q_sink = zst_element_get_pad(q_el, "sink");
+        assert(dummy_src != NULL && q_sink != NULL);
+        assert(zst_pad_link(dummy_src, q_sink) == ZST_OK);
+
+        assert(zst_element_set_state(q_el, ZST_STATE_READY) == ZST_OK);
+        assert(zst_element_set_state(q_el, ZST_STATE_PLAYING) == ZST_OK);
+
+        pthread_t producers[NUM_PRODUCERS];
+        prod_ctx_t prod_contexts[NUM_PRODUCERS];
+
+        for (int i = 0; i < NUM_PRODUCERS; i++) {
+            prod_contexts[i].dummy_src = dummy_src;
+            prod_contexts[i].producer_id = i;
+            prod_contexts[i].count = BUFFERS_PER_PRODUCER;
+            assert(pthread_create(&producers[i], NULL, pool_producer_thread, &prod_contexts[i]) == 0);
+        }
+
+        for (int i = 0; i < NUM_PRODUCERS; i++) {
+            pthread_join(producers[i], NULL);
+        }
+
+        int wait_limit = 2000;
+        while (wait_limit > 0) {
+            pthread_mutex_lock(&pool_sink_state->lock);
+            int count = pool_sink_state->count;
+            pthread_mutex_unlock(&pool_sink_state->lock);
+            if (count >= TOTAL_BUFFERS) {
+                break;
+            }
+            struct timespec ts = { .tv_sec = 0, .tv_nsec = 1000000 };
+            nanosleep(&ts, NULL);
+            wait_limit--;
+        }
+
+        assert(zst_element_set_state(q_el, ZST_STATE_NULL) == ZST_OK);
+
+        pthread_mutex_lock(&pool_sink_state->lock);
+        assert(pool_sink_state->count == TOTAL_BUFFERS);
+        pthread_mutex_unlock(&pool_sink_state->lock);
+
+        pthread_mutex_destroy(&pool_sink_state->lock);
+        zst_pad_unlink(q_src);
+        zst_pad_unlink(dummy_src);
+        zst_pad_destroy(dummy_src);
+        zst_element_destroy(q_el);
+        zst_element_destroy(dummy_sink); // this frees pool_sink_state
+        zst_buffer_pool_destroy(pool);
+    }
+
+    PASS();
+}
+
+static void
+
 test_scheduler_multi_threaded(void)
 {
     TEST("scheduler multi-threaded pipeline with queues");
@@ -6084,6 +6450,7 @@ int main(void)
     test_queue_timeout();
     test_queue_flush();
     test_queue_config_limits();
+    test_queue_element_stress();
 
     /* ── Scheduler (Phase 2) ── */
     printf("[scheduler]\n");
