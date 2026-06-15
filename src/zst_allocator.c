@@ -113,6 +113,14 @@ zst_allocator_cuda_create(void)
 }
 #endif
 
+#ifndef HAS_ONEAPI
+zst_allocator_t*
+zst_allocator_oneapi_create(void)
+{
+    return NULL;
+}
+#endif
+
 zst_allocator_t*
 zst_allocator_cpu_create(void)
 {

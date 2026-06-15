@@ -14,7 +14,7 @@ The fundamental data carrier — a reference-counted blob with:
 | `refcount` | Atomic ref-counting for zero-copy sharing |
 | `pts/dts`  | Presentation / decode timestamps        |
 | `duration` | Duration of the data                    |
-| `memory`   | Typed memory descriptor (CPU, DMABUF, CUDA, Vulkan) |
+| `memory`   | Typed memory descriptor (CPU, DMABUF, CUDA, Vulkan, oneAPI) |
 | `payload`  | Opaque typed payload (video/audio frame structs) |
 | `destroy`  | Optional custom destructor              |
 
@@ -176,7 +176,7 @@ Pads now carry rich caps with dimensions, format, framerate, channels, sample ra
 - [x] Default CPU allocator (malloc/free) with refcounting
 - [x] Integrated with `zst_buffer_create_with_allocator()`
 - [ ] DMABUF (Linux dma-buf for zero-copy between HW blocks) — future
-- [ ] CUDA / Vulkan device memory — future
+- [ ] CUDA / Vulkan / oneAPI (SYCL) device memory — future
 - [ ] Buffer pools to eliminate per-frame allocation — future
 
 ### Clock  (✅ done — Phase 8b)

@@ -28,6 +28,13 @@
   - [x] Implement `free` callback looking up allocation metadata, unmapping, freeing `VkDeviceMemory`, and destroying the `VkBuffer`.
   - [x] Safely return `NULL` if Vulkan loader, physical device, or host-visible/coherent memory is not available, which is handled gracefully by tests.
 
+  **Intel oneAPI (SYCL) Device Memory Allocator:**
+  - [x] Context struct: `zst_oneapi_allocator_t` tracking the SYCL queue (`sycl::queue`), context (`sycl::context`), and selected device metadata.
+  - [x] Implement `zst_allocator_oneapi_create(void)` returning a oneAPI SYCL-specific `zst_allocator_t` automatically targeting the default available Intel GPU device (or CPU fallback).
+  - [x] Implement `alloc` callback utilizing Unified Shared Memory (USM) device allocations via `sycl::malloc_device`.
+  - [x] Implement `free` callback freeing the USM memory via `sycl::free`.
+  - [x] Safely return `NULL` if oneAPI SYCL runtime environment, queue, or compatible hardware/driver is unavailable.
+
 - [x] Buffer pools to eliminate per-frame allocation ✅
 
   **`zst_buffer_pool_t` — a recyclable pool of pre-allocated buffers**

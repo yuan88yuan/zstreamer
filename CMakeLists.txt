@@ -123,6 +123,41 @@ if(CUDAToolkit_FOUND)
     add_compile_definitions(HAS_CUDA=1)
 endif()
 
+# ── Intel oneAPI SYCL Allocator Support ──────────────────────────────
+option(ENABLE_ONEAPI "Enable Intel oneAPI SYCL allocator support" ON)
+if(ENABLE_ONEAPI)
+    enable_language(CXX OPTIONAL)
+    if(CMAKE_CXX_COMPILER_LOADED)
+        include(CheckCXXSourceCompiles)
+        set(CMAKE_REQUIRED_FLAGS "-fsycl")
+        check_cxx_source_compiles("
+            #include <sycl/sycl.hpp>
+            int main() {
+                sycl::queue q;
+                return 0;
+            }
+        " HAS_SYCL_SUPPORT)
+        unset(CMAKE_REQUIRED_FLAGS)
+
+        if(HAS_SYCL_SUPPORT)
+            set(HAS_ONEAPI 1)
+            add_compile_definitions(HAS_ONEAPI=1)
+            message(STATUS "Intel oneAPI SYCL allocator support enabled (-fsycl)")
+        else()
+            find_package(sycl QUIET)
+            if(sycl_FOUND)
+                set(HAS_ONEAPI 1)
+                add_compile_definitions(HAS_ONEAPI=1)
+                message(STATUS "SYCL allocator support enabled via find_package(sycl)")
+            else()
+                message(STATUS "Intel oneAPI SYCL allocator support not found or compiler lacks -fsycl")
+            endif()
+        endif()
+    else()
+        message(STATUS "C++ compiler not loaded, skipping Intel oneAPI SYCL check")
+    endif()
+endif()
+
 set(ELEMENT_INCLUDE_DIRS
     ${AVFORMAT_INCLUDE_DIRS}
     ${AVCODEC_INCLUDE_DIRS}
@@ -176,11 +211,23 @@ if(ENABLE_PLUGINS)
     list(APPEND CORE_SOURCES src/zst_plugin.c)
 endif()
 
+if(HAS_ONEAPI)
+    list(APPEND CORE_SOURCES src/zst_allocator_oneapi.cpp)
+endif()
+
 # ── Build the core library ───────────────────────────────────────────────
 if(BUILD_SHARED)
     add_library(zstreamer SHARED ${CORE_SOURCES})
 else()
     add_library(zstreamer STATIC ${CORE_SOURCES})
+endif()
+
+if(HAS_ONEAPI)
+    if(HAS_SYCL_SUPPORT)
+        set_source_files_properties(src/zst_allocator_oneapi.cpp PROPERTIES COMPILE_OPTIONS "-fsycl")
+        target_link_options(zstreamer PUBLIC "-fsycl")
+        set_target_properties(zstreamer PROPERTIES LINKER_LANGUAGE CXX)
+    endif()
 endif()
 
 include(GNUInstallDirs)

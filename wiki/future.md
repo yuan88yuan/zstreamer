@@ -15,6 +15,7 @@ This document lists features that are still planned across all phases.
 |------|-------------|--------|
 | DMABUF allocator | Linux dma-buf for zero-copy GPU interop | 📝 Planned |
 | CUDA/Vulkan allocators | Device memory allocators for GPU pipelines | 📝 Planned |
+| Intel oneAPI allocator | Device memory allocator for Intel GPU pipelines using SYCL | ✅ Done |
 | Topology-aware pool sizing | Auto-adjust min_buffers based on queue count | 📝 Planned |
 | Pool stress tests | Acquire/recycle loop, timeout, flush tests | 📝 Planned |
 
