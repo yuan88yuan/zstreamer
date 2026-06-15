@@ -35,7 +35,7 @@ jobs:
 
       - name: Run Unit Tests (ctest) in Container
         run: |
-          docker run --rm zstreamer:latest ctest --output-on-failure
+          docker run --rm -w /workspace/build zstreamer:latest ctest --output-on-failure
 
       - name: Run Docker Compose Multi-Service Integration Tests
         run: |
