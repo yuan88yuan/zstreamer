@@ -914,7 +914,7 @@ static int on_describe(rtsp_client_t* cl) {
         snprintf(base_url, sizeof(base_url), "rtsp://%s:%d/%s/", local_ip, local_port, path);
     }
 
-    char extras[1024];
+    char extras[1200];
     snprintf(extras, sizeof(extras),
         "Content-Type: application/sdp\r\n"
         "Content-Base: %s\r\n",

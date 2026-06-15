@@ -837,7 +837,7 @@ static int do_setup(rtsp_client_t* cl, int idx, const char* transport_mode) {
     track_info_t* tr = &cl->tracks[idx];
 
     /* Build track URI */
-    char track_uri[512];
+    char track_uri[1024];
     snprintf(track_uri, sizeof(track_uri), "%s/trackID=%d", cl->path, idx);
 
     char transport_hdr[256];
