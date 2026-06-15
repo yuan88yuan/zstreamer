@@ -283,7 +283,8 @@ static const zst_property_spec_t g_builtin_videotestsrc_props[] = {
     { "pixel-format", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "YUV420P", "Pixel format" },
     { "num-buffers", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Number of buffers to output before EOF" },
     { "loop", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Loop property" },
-    { "use-clock", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Use pipeline clock" }
+    { "use-clock", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Use pipeline clock for generated PTS" },
+    { "real-time-pacing", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Pace generated frames in real time" }
 };
 
 static const zst_property_spec_t g_builtin_audiotestsrc_props[] = {
@@ -297,7 +298,8 @@ static const zst_property_spec_t g_builtin_audiotestsrc_props[] = {
     { "num-samples", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Number of samples to output before EOF" },
     { "num-buffers", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Number of buffers to output before EOF" },
     { "loop", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Loop property" },
-    { "use-clock", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Use pipeline clock" }
+    { "use-clock", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Use pipeline clock for generated PTS" },
+    { "real-time-pacing", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Pace generated audio buffers in real time" }
 };
 
 static const zst_property_spec_t g_builtin_textoverlay_props[] = {

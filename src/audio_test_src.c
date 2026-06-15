@@ -38,6 +38,10 @@ typedef struct {
     int64_t num_buffers;
     bool loop;
     bool use_clock;
+    bool real_time_pacing;
+
+    bool has_base_time;
+    zst_time_t base_time;
 
     uint64_t sample_count;
     uint64_t buffer_count;
@@ -253,6 +257,7 @@ audio_test_src_start(zst_element_t* el)
 {
     audio_test_src_t* s = el->priv;
     s->stopped = false;
+    s->has_base_time = false;
     return ZST_OK;
 }
 
@@ -316,6 +321,7 @@ audio_test_src_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
         if (s->loop) {
             s->sample_count = 0;
             s->buffer_count = 0;
+            s->has_base_time = false;
             audio_test_src_reset_signal_state(s);
         } else {
             return ZST_EOF;
@@ -386,6 +392,19 @@ audio_test_src_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     }
     buf->dts = buf->pts;
     buf->duration = (uint64_t)nb_samples * 1000000000ULL / s->sample_rate;
+
+    if (s->real_time_pacing && el->clock) {
+        zst_time_t current_time = zst_clock_get_time(el->clock);
+        if (!s->has_base_time) {
+            s->base_time = current_time;
+            s->has_base_time = true;
+        }
+        zst_time_t expected_offset = start_sample * 1000000000ULL / s->sample_rate;
+        zst_time_t expected_time = s->base_time + expected_offset;
+        if (expected_time > current_time) {
+            zst_clock_wait(el->clock, expected_time - current_time);
+        }
+    }
 
     *out = buf;
     return ZST_OK;
@@ -461,6 +480,9 @@ audio_test_src_set_property(zst_element_t* el, const char* name, const char* val
     } else if (strcmp(name, "use-clock") == 0 || strcmp(name, "do-timestamp") == 0) {
         s->use_clock = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcmp(value, "yes") == 0);
         return ZST_OK;
+    } else if (strcmp(name, "real-time-pacing") == 0) {
+        s->real_time_pacing = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcmp(value, "yes") == 0);
+        return ZST_OK;
     }
 
     return ZST_ERROR;
@@ -503,6 +525,9 @@ audio_test_src_get_property(zst_element_t* el, const char* name, char* value_out
         return ZST_OK;
     } else if (strcmp(name, "use-clock") == 0 || strcmp(name, "do-timestamp") == 0) {
         snprintf(value_out, max_len, "%s", s->use_clock ? "true" : "false");
+        return ZST_OK;
+    } else if (strcmp(name, "real-time-pacing") == 0) {
+        snprintf(value_out, max_len, "%s", s->real_time_pacing ? "true" : "false");
         return ZST_OK;
     }
 
@@ -584,6 +609,8 @@ zst_audio_test_src_create(void)
     priv->num_buffers = -1;
     priv->loop = false;
     priv->use_clock = false;
+    priv->real_time_pacing = false;
+    priv->has_base_time = false;
     audio_test_src_reset_signal_state(priv);
 
     zst_element_t* el = zst_element_create(&g_ops, priv);
@@ -634,6 +661,7 @@ zst_audio_test_src_create_with_config(const zst_audio_test_src_config_t* config)
     zst_element_set_property_int(el, "num-buffers", config->num_buffers);
     zst_element_set_property_bool(el, "loop", config->loop);
     zst_element_set_property_bool(el, "use-clock", config->use_clock);
+    zst_element_set_property_bool(el, "real-time-pacing", config->real_time_pacing);
 
     return el;
 }

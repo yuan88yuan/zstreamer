@@ -33,7 +33,7 @@ typedef struct {
     int num_buffers;
     bool loop;
     bool use_clock;
-    bool clock_sync;
+    bool real_time_pacing;
 
     bool has_base_time;
     zst_time_t base_time;
@@ -226,7 +226,7 @@ static zst_result_t video_test_src_process(zst_element_t* el, zst_buffer_t* in, 
     buf->dts = buf->pts;
     buf->duration = dur_ns;
 
-    if (s->clock_sync && el->clock) {
+    if (s->real_time_pacing && el->clock) {
         zst_time_t current_time = zst_clock_get_time(el->clock);
         if (!s->has_base_time) {
             s->base_time = current_time;
@@ -286,8 +286,8 @@ static zst_result_t video_test_src_set_property(zst_element_t* el, const char* n
     } else if (strcmp(name, "use-clock") == 0 || strcmp(name, "do-timestamp") == 0) {
         s->use_clock = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcmp(value, "yes") == 0);
         return ZST_OK;
-    } else if (strcmp(name, "clock-sync") == 0) {
-        s->clock_sync = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcmp(value, "yes") == 0);
+    } else if (strcmp(name, "real-time-pacing") == 0) {
+        s->real_time_pacing = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcmp(value, "yes") == 0);
         return ZST_OK;
     }
     return ZST_ERROR;
@@ -326,8 +326,8 @@ static zst_result_t video_test_src_get_property(zst_element_t* el, const char* n
     } else if (strcmp(name, "use-clock") == 0 || strcmp(name, "do-timestamp") == 0) {
         strncpy(value_out, s->use_clock ? "true" : "false", max_len);
         return ZST_OK;
-    } else if (strcmp(name, "clock-sync") == 0) {
-        strncpy(value_out, s->clock_sync ? "true" : "false", max_len);
+    } else if (strcmp(name, "real-time-pacing") == 0) {
+        strncpy(value_out, s->real_time_pacing ? "true" : "false", max_len);
         return ZST_OK;
     }
     return ZST_ERROR;
@@ -368,7 +368,7 @@ zst_element_t* zst_video_test_src_create(void)
     priv->num_buffers = -1;
     priv->loop = false;
     priv->use_clock = false;
-    priv->clock_sync = false;
+    priv->real_time_pacing = false;
     priv->has_base_time = false;
     priv->frame_count = 0;
 
@@ -405,7 +405,7 @@ zst_video_test_src_create_with_config(const zst_video_test_src_config_t* config)
     zst_element_set_property_int(el, "num-buffers", config->num_buffers);
     zst_element_set_property_bool(el, "loop", config->loop);
     zst_element_set_property_bool(el, "use-clock", config->use_clock);
-    zst_element_set_property_bool(el, "clock-sync", config->clock_sync);
+    zst_element_set_property_bool(el, "real-time-pacing", config->real_time_pacing);
 
     return el;
 }

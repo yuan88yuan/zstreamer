@@ -15,6 +15,18 @@ Two implemented elements handle format conversion (scaling, resampling) — esse
 
 **Dependencies:** `libv4l-dev` (in Docker)
 
+### 4ae — V4L2 Sink  (✅ done)
+
+Outputs raw video buffers to a Video4Linux2 (V4L2) loopback or output device. Useful for creating virtual cameras or feeding hardware endpoints.
+
+- [x] `v4l2sink` element with 1 sink pad (`video/x-raw`)
+- [x] Backend: Native V4L2 ioctl API (`VIDIOC_S_FMT`, `VIDIOC_REQBUFS`, `VIDIOC_QBUF`, `VIDIOC_DQBUF`)
+- [x] Support properties: `device` (e.g., `/dev/video1`), `width`, `height`, `pixel-format` (e.g., `YUYV`, `YUV420P`)
+- [x] Memory integration: support `memory-type` selection (`mmap`, `userptr`, `dmabuf`) to accept and pass buffers without copies where supported
+- [x] Frame pacing: blocks in `process` waiting for device readiness or downstream synchronization
+- [x] Fallback logic: mocks output and logs a warning if the device fails to open, preventing pipeline crash during testing
+- [x] Tests: instantiation verification and mock buffer pushing tests in `test_core.c`
+
 ### 4b — H.264 Encoder  (✅ done)
 - [x] x264 integration: `x264_param_default_preset("ultrafast", "zerolatency")`
 - [x] CRF rate control (23)
@@ -149,11 +161,12 @@ Sends raw byte buffers over TCP or Unix sockets. Enables local IPC and custom bi
 Generates synthetic video test patterns without any real hardware input. Useful for pipeline testing, benchmarking, and demo scenarios where no camera is available.
 
 - [x] `video_test_src` element with 1 src pad
-- [x] Configurable resolution (`width` x `height`), framerate, pixel format
+- [x] Configurable resolution (`width` x `height`), framerate, pixel format, and real-time pacing (`real-time-pacing`)
 - [x] Test pattern options: colour bars (SMPTE/EBU), moving gradients, checkerboard, white noise, black/silent
 - [x] Timestamp generation: `pts` set from pipeline clock at capture rate
 - [x] EOS on `stop` state transition or configurable frame limit
 - [x] Caps negotiation: advertise `video/x-raw` with configurable resolution/formats
+- [x] Real-time pacing support (`real-time-pacing`) to mathematically pace generated frames like a webcam
 - [ ] Optional YUV420P → NV12 / RGB conversion in software
 - [x] Loop mode: restart pattern sequence on frame limit or EOS
 
@@ -162,11 +175,12 @@ Generates synthetic video test patterns without any real hardware input. Useful 
 Generates synthetic audio test signals without any real hardware input. Useful for pipeline testing, latency measurement, and audio chain verification.
 
 - [x] `audio_test_src` / `audiotestsrc` element with 1 src pad
-- [x] Configurable sample rate, channels, sample format (S16LE, F32LE)
+- [x] Configurable sample rate, channels, sample format (S16LE, F32LE), and real-time pacing (`real-time-pacing`)
 - [x] Signal options: sine wave (configurable frequency), square wave, pink/white noise, silence
 - [x] Timestamp generation: `pts` set from pipeline clock or sample count based on `nb_samples`
 - [x] EOS on `stop` or configurable sample/buffer limit
 - [x] Caps negotiation: advertise `audio/x-raw` with configurable format/channels/rate
+- [x] Real-time pacing support (`real-time-pacing`) to emit audio buffers at generated audio duration
 - [x] Loop mode: restart signal sequence on limit or EOS
 
 ### 4n — Fake Sink  (✅ done)
