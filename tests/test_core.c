@@ -5024,6 +5024,60 @@ test_v4l2sink_mock(void)
     PASS();
 }
 
+static void
+test_alsasink_mock(void)
+{
+    TEST("alsasink (mock fallback)");
+    zst_plugin_registry_init();
+    zst_plugin_registry_scan(test_plugin_path());
+
+    zst_element_t* sink = zst_element_factory_make("alsasink");
+    assert(sink != NULL);
+
+    /* Use a non-existent device to force mock fallback */
+    zst_element_set_property(sink, "device", "nonexistent_audio_device");
+    zst_element_set_property(sink, "sample-rate", "44100");
+    zst_element_set_property(sink, "channels", "2");
+
+    char val[32];
+    assert(zst_element_get_property(sink, "device", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "nonexistent_audio_device") == 0);
+    assert(zst_element_get_property(sink, "sample-rate", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "44100") == 0);
+    assert(zst_element_get_property(sink, "channels", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "2") == 0);
+
+    zst_pad_t* sink_pad = zst_element_get_pad(sink, "sink");
+    assert(sink_pad != NULL);
+
+    assert(zst_element_set_state(sink, ZST_STATE_READY) == ZST_OK);
+    assert(zst_element_set_state(sink, ZST_STATE_PLAYING) == ZST_OK);
+
+    /* Push an audio frame */
+    zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_AUDIO_FRAME);
+    buf->memory.size = 1024 * 2 * sizeof(int16_t);
+    buf->memory.data = calloc(1, buf->memory.size);
+    buf->memory.release = free;
+
+    zst_audio_frame_t* frame = calloc(1, sizeof(*frame));
+    frame->sample_rate = 44100;
+    frame->channels = 2;
+    frame->nb_samples = 1024;
+    frame->data = buf->memory.data;
+    buf->payload = frame;
+
+    zst_result_t res = sink_pad->push(sink_pad, buf);
+    assert(res == ZST_OK);
+
+    free(frame);
+    zst_buffer_unref(buf);
+
+    assert(zst_element_set_state(sink, ZST_STATE_NULL) == ZST_OK);
+    zst_element_destroy(sink);
+
+    PASS();
+}
+
 /* ═══════════════════════════════════════════════════════════════
    Video Test Source
    ═══════════════════════════════════════════════════════════════ */
@@ -6558,6 +6612,9 @@ int main(void)
 
     printf("[v4l2sink]\n");
     test_v4l2sink_mock();
+
+    printf("[alsasink]\n");
+    test_alsasink_mock();
 
     printf("[video test source]\n");
     test_video_test_src();

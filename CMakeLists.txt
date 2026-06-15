@@ -219,6 +219,7 @@ set(ELEMENT_LIBRARY_SOURCES
     src/v4l2_source.c
     src/v4l2_sink.c
     src/alsa_source.c
+    src/alsa_sink.c
     src/h264_encoder.c
     src/h264_decoder.c
     src/h265_encoder.c
@@ -337,6 +338,10 @@ add_library(zst_alsasource SHARED src/alsa_source.c)
 target_compile_definitions(zst_alsasource PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_alsasource PRIVATE zstreamer ${ALSA_LIBRARIES})
 
+add_library(zst_alsasink SHARED src/alsa_sink.c)
+target_compile_definitions(zst_alsasink PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_alsasink PRIVATE zstreamer ${ALSA_LIBRARIES})
+
 add_library(zst_h264encoder SHARED src/h264_encoder.c)
 target_compile_definitions(zst_h264encoder PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_h264encoder PRIVATE zstreamer ${X264_LIBRARIES})
@@ -437,7 +442,7 @@ add_library(zst_httpsource SHARED src/http_source.c)
 target_compile_definitions(zst_httpsource PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_httpsource PRIVATE zstreamer ${AVFORMAT_LIBRARIES} ${AVUTIL_LIBRARIES})
 
-set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_v4l2sink zst_rtspsource zst_rtspsink zst_rtsp_server zst_alsasource zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_textsource zst_netsrc zst_netsink zst_h264decoder zst_h265encoder zst_h265decoder zst_aacdecoder zst_rtmpsource zst_rtmpsink zst_srtsource zst_srtsink zst_mpegtsmux zst_mpegtsdemux zst_mp4demux zst_httpsource)
+set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_v4l2sink zst_rtspsource zst_rtspsink zst_rtsp_server zst_alsasource zst_alsasink zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_textsource zst_netsrc zst_netsink zst_h264decoder zst_h265encoder zst_h265decoder zst_aacdecoder zst_rtmpsource zst_rtmpsink zst_srtsource zst_srtsink zst_mpegtsmux zst_mpegtsdemux zst_mp4demux zst_httpsource)
 foreach(plugin ${PLUGIN_TARGETS})
     target_include_directories(${plugin} PRIVATE ${ZSTREAMER_INCLUDE_DIR} PRIVATE ${ELEMENT_INCLUDE_DIRS})
     set_target_properties(${plugin} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
