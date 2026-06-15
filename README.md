@@ -359,4 +359,4 @@ gcc my_app.c $(pkg-config --cflags --libs zstreamer-elements) -o my_app
 
 ## License
 
-License information is not included in the repository. Add a `LICENSE` file if needed.
+This project is licensed under the GNU General Public License v2.0 (GPLv2). See the [`LICENSE`](LICENSE) file for details.
