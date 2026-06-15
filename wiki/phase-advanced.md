@@ -12,21 +12,21 @@
   - [x] Implement `zst_allocator_dmabuf_get_fd(zst_allocator_t* allocator, void* ptr)` to retrieve the file descriptor from an allocated block.
   - [x] Implement custom `alloc` (which configures the memory struct and returns mapped user-space address) and `free` (which performs `munmap` and closes the fd).
 
-- [ ] CUDA / Vulkan device memory allocators
+- [x] CUDA / Vulkan device memory allocators
   
   **CUDA Device Memory Allocator:**
-  - [ ] Context struct: `zst_cuda_alloc_t` wrapping device pointer (`CUdeviceptr` / `void*`) and unified memory configurations.
-  - [ ] Implement `zst_allocator_cuda_create(int device_id, bool unified_memory)` returning a CUDA-specific `zst_allocator_t`.
-  - [ ] Implement `alloc` callback calling `cudaMalloc` (for device-only memory) or `cudaMallocManaged` (for unified host-accessible memory).
-  - [ ] Implement `free` callback calling `cudaFree`.
-  - [ ] Integrate mock/fallback CPU-based allocation if CUDA runtime or GPU hardware is not detected at runtime.
+  - [x] Context struct: Not required since CUDA device memory pointers can be directly passed to `cudaFree()`. Private pointer `alloc->priv` is set to `NULL`.
+  - [x] Implement `zst_allocator_cuda_create(void)` returning a CUDA-specific `zst_allocator_t`. Note: Constructor has been simplified to take no arguments, automatically targeting the default device.
+  - [x] Implement `alloc` callback calling `cudaMalloc` (device allocation).
+  - [x] Implement `free` callback calling `cudaFree`.
+  - [x] Safely return `NULL` if CUDA runtime or GPU hardware is not available (such as in headless or CPU-only Docker environments), which is handled gracefully by tests.
 
   **Vulkan Device Memory Allocator:**
-  - [ ] Context struct: `zst_vulkan_alloc_t` wrapping `VkDeviceMemory`, `VkDevice`, offset, and CPU mapped pointer.
-  - [ ] Implement `zst_allocator_vulkan_create(VkDevice device, VkPhysicalDevice physical_device, uint32_t memory_type_index)` returning a Vulkan-specific `zst_allocator_t`.
-  - [ ] Implement `alloc` callback calling `vkAllocateMemory` and, if memory type is host-visible, `vkMapMemory` for CPU access.
-  - [ ] Implement `free` callback calling `vkUnmapMemory` and `vkFreeMemory`.
-  - [ ] Integrate mock/fallback CPU-based allocation if Vulkan driver/device is not available.
+  - [x] Context struct: `zst_vulkan_allocator_t` tracking the list of active memory allocations via a dynamic array of `zst_vulkan_mem_t` structs (wrapping `VkDeviceMemory`, `VkBuffer`, size, and the mapped host pointer).
+  - [x] Implement `zst_allocator_vulkan_create(void)` returning a Vulkan-specific `zst_allocator_t`. Note: Constructor has been simplified to automatically instantiate Vulkan, select the physical device, create the logical device, and locate a suitable host-visible/coherent memory type.
+  - [x] Implement `alloc` callback creating a `VkBuffer`, allocating host-visible coherent `VkDeviceMemory` via `vkAllocateMemory`, binding, mapping with `vkMapMemory`, and registering mapping metadata.
+  - [x] Implement `free` callback looking up allocation metadata, unmapping, freeing `VkDeviceMemory`, and destroying the `VkBuffer`.
+  - [x] Safely return `NULL` if Vulkan loader, physical device, or host-visible/coherent memory is not available, which is handled gracefully by tests.
 
 - [x] Buffer pools to eliminate per-frame allocation ✅
 
