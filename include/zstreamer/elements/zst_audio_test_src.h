@@ -21,6 +21,7 @@ extern "C" {
 #define ZST_AUDIO_TEST_SRC_PROP_NUM_BUFFERS         "num-buffers"
 #define ZST_AUDIO_TEST_SRC_PROP_LOOP                "loop"
 #define ZST_AUDIO_TEST_SRC_PROP_USE_CLOCK           "use-clock"
+#define ZST_AUDIO_TEST_SRC_PROP_REAL_TIME_PACING    "real-time-pacing"
 
 typedef struct {
     size_t struct_size;
@@ -35,6 +36,7 @@ typedef struct {
     int64_t num_buffers;
     bool loop;
     bool use_clock;
+    bool real_time_pacing;
 } zst_audio_test_src_config_t;
 
 zst_element_t* zst_audio_test_src_create(void);

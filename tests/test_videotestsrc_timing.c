@@ -1,5 +1,5 @@
 /*=============================================================================
-    test_videotestsrc_timing.c — Verify videotestsrc clock-sync=true paces
+    test_videotestsrc_timing.c — Verify videotestsrc real-time-pacing=true paces
     frame production in real time.
 
     This intentionally lives outside test_core.c so timing-sensitive checks can
@@ -58,24 +58,24 @@ static zst_time_t run_source_frames(zst_element_t* src,
     return return_times[frames - 1] - start;
 }
 
-static zst_element_t* create_configured_source(bool clock_sync, int fps, int frames)
+static zst_element_t* create_configured_source(bool real_time_pacing, int fps, int frames)
 {
     zst_element_t* src = zst_video_test_src_create();
     assert(src != NULL);
 
     /* Small frames keep CPU/rendering overhead negligible, making the measured
-       wall-clock time attributable to clock-sync pacing. */
+       wall-clock time attributable to real-time-pacing. */
     assert_ok(zst_element_set_property_int(src, "width", 64), "set width");
     assert_ok(zst_element_set_property_int(src, "height", 48), "set height");
     assert_ok(zst_element_set_property_int(src, "fps", fps), "set fps");
     assert_ok(zst_element_set_property_int(src, "num-buffers", frames), "set num-buffers");
     assert_ok(zst_element_set_property(src, "pattern", "black"), "set pattern");
     assert_ok(zst_element_set_property_bool(src, "use-clock", false), "set use-clock");
-    assert_ok(zst_element_set_property_bool(src, "clock-sync", clock_sync), "set clock-sync");
+    assert_ok(zst_element_set_property_bool(src, "real-time-pacing", real_time_pacing), "set real-time-pacing");
 
     bool prop_value = false;
-    assert_ok(zst_element_get_property_bool(src, "clock-sync", &prop_value), "get clock-sync");
-    assert(prop_value == clock_sync);
+    assert_ok(zst_element_get_property_bool(src, "real-time-pacing", &prop_value), "get real-time-pacing");
+    assert(prop_value == real_time_pacing);
 
     zst_clock_t* clock = zst_clock_system_create();
     assert(clock != NULL);
@@ -93,7 +93,19 @@ static void destroy_source(zst_element_t* src)
     zst_element_destroy(src);
 }
 
-static void test_clock_sync_true_is_real_time_paced(void)
+static void test_clock_sync_property_removed(void)
+{
+    zst_element_t* src = zst_video_test_src_create();
+    assert(src != NULL);
+
+    bool prop_value = false;
+    assert(zst_element_set_property_bool(src, "clock-sync", true) == ZST_ERROR);
+    assert(zst_element_get_property_bool(src, "clock-sync", &prop_value) == ZST_ERROR);
+
+    zst_element_destroy(src);
+}
+
+static void test_real_time_pacing_true_is_real_time_paced(void)
 {
     const int fps = 20;
     const int frames = 16;
@@ -128,7 +140,7 @@ static void test_clock_sync_true_is_real_time_paced(void)
 
     double avg_delta = (double)sum_delta / (double)(frames - 1);
 
-    printf("clock-sync=true timing:\n");
+    printf("real-time-pacing=true timing:\n");
     printf("  fps:              %d\n", fps);
     printf("  frames:           %d\n", frames);
     printf("  expected elapsed: %" PRIu64 " ns\n", expected_elapsed);
@@ -138,7 +150,7 @@ static void test_clock_sync_true_is_real_time_paced(void)
     printf("  avg interval:     %.0f ns (%.2f fps)\n", avg_delta, 1e9 / avg_delta);
 
     /* The lower bound is the key real-time-pacing assertion: without
-       clock-sync this source produces all frames in a CPU-speed burst.  The
+       real-time-pacing this source produces all frames in a CPU-speed burst.  The
        upper bound is deliberately loose to avoid false negatives under noisy
        Docker hosts while still catching multi-second stalls. */
     assert(sync_elapsed >= expected_elapsed * 80 / 100);
@@ -146,9 +158,9 @@ static void test_clock_sync_true_is_real_time_paced(void)
     assert(avg_delta >= (double)frame_duration * 0.80);
     assert(avg_delta <= (double)frame_duration * 1.80);
 
-    /* Control check: with clock-sync=false, the same source should not be
+    /* Control check: with real-time-pacing=false, the same source should not be
        real-time paced.  This proves the elapsed time above comes from the
-       videotestsrc clock-sync=true property, not rendering overhead. */
+       videotestsrc real-time-pacing=true property, not rendering overhead. */
     zst_time_t burst_times[frames];
     zst_time_t burst_pts[frames];
     zst_time_t burst_durations[frames];
@@ -160,7 +172,7 @@ static void test_clock_sync_true_is_real_time_paced(void)
                                                  burst_durations);
     destroy_source(burst_src);
 
-    printf("clock-sync=false control elapsed: %" PRIu64 " ns\n", burst_elapsed);
+    printf("real-time-pacing=false control elapsed: %" PRIu64 " ns\n", burst_elapsed);
 
     assert(burst_elapsed < expected_elapsed * 25 / 100);
     assert(sync_elapsed > burst_elapsed * 4);
@@ -171,8 +183,9 @@ int main(void)
     setvbuf(stdout, NULL, _IONBF, 0);
 
     printf("\n[test_videotestsrc_timing]\n");
-    test_clock_sync_true_is_real_time_paced();
-    printf("PASS: videotestsrc clock-sync=true is real-time paced\n\n");
+    test_clock_sync_property_removed();
+    test_real_time_pacing_true_is_real_time_paced();
+    printf("PASS: videotestsrc real-time-pacing=true is real-time paced\n\n");
 
     return 0;
 }

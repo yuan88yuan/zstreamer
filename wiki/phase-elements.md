@@ -161,12 +161,12 @@ Sends raw byte buffers over TCP or Unix sockets. Enables local IPC and custom bi
 Generates synthetic video test patterns without any real hardware input. Useful for pipeline testing, benchmarking, and demo scenarios where no camera is available.
 
 - [x] `video_test_src` element with 1 src pad
-- [x] Configurable resolution (`width` x `height`), framerate, pixel format, and real-time pacing (`clock-sync`)
+- [x] Configurable resolution (`width` x `height`), framerate, pixel format, and real-time pacing (`real-time-pacing`)
 - [x] Test pattern options: colour bars (SMPTE/EBU), moving gradients, checkerboard, white noise, black/silent
 - [x] Timestamp generation: `pts` set from pipeline clock at capture rate
 - [x] EOS on `stop` state transition or configurable frame limit
 - [x] Caps negotiation: advertise `video/x-raw` with configurable resolution/formats
-- [x] Real-time pacing support (`clock-sync`) to mathematically pace generated frames like a webcam
+- [x] Real-time pacing support (`real-time-pacing`) to mathematically pace generated frames like a webcam
 - [ ] Optional YUV420P → NV12 / RGB conversion in software
 - [x] Loop mode: restart pattern sequence on frame limit or EOS
 
@@ -175,11 +175,12 @@ Generates synthetic video test patterns without any real hardware input. Useful 
 Generates synthetic audio test signals without any real hardware input. Useful for pipeline testing, latency measurement, and audio chain verification.
 
 - [x] `audio_test_src` / `audiotestsrc` element with 1 src pad
-- [x] Configurable sample rate, channels, sample format (S16LE, F32LE)
+- [x] Configurable sample rate, channels, sample format (S16LE, F32LE), and real-time pacing (`real-time-pacing`)
 - [x] Signal options: sine wave (configurable frequency), square wave, pink/white noise, silence
 - [x] Timestamp generation: `pts` set from pipeline clock or sample count based on `nb_samples`
 - [x] EOS on `stop` or configurable sample/buffer limit
 - [x] Caps negotiation: advertise `audio/x-raw` with configurable format/channels/rate
+- [x] Real-time pacing support (`real-time-pacing`) to emit audio buffers at generated audio duration
 - [x] Loop mode: restart signal sequence on limit or EOS
 
 ### 4n — Fake Sink  (✅ done)
