@@ -1,0 +1,42 @@
+name: zstreamer CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Host Dependencies & Kernel Headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y linux-modules-extra-$(uname -r) v4l2loopback-dkms dkms
+
+      - name: Load v4l2loopback Kernel Module
+        run: |
+          sudo modprobe v4l2loopback devices=1 video_nr=10 card_label="ZStreamer-Loopback" exclusive_caps=1
+          # Verify that the device was created successfully on the host
+          ls -lh /dev/video10
+
+      - name: Set up Docker Buildx
+        uses: actions/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        run: |
+          docker build -t zstreamer:latest --target dev .
+
+      - name: Run Unit Tests (ctest) in Container
+        run: |
+          docker run --rm zstreamer:latest ctest --output-on-failure
+
+      - name: Run Docker Compose Multi-Service Integration Tests
+        run: |
+          ./tests/run_integration_tests.sh
