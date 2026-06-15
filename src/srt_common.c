@@ -21,9 +21,8 @@ void srt_global_init(void) {
 void srt_global_cleanup(void) {
     pthread_mutex_lock(&g_srt_init_mutex);
     g_srt_init_count--;
-    if (g_srt_init_count == 0) {
-        srt_cleanup();
-    }
+    // srt_cleanup() is intentionally omitted to prevent AddressSanitizer/TSD crashes
+    // on thread exit and glibc double-free/corruption crashes.
     pthread_mutex_unlock(&g_srt_init_mutex);
 }
 
