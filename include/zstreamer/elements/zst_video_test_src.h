@@ -19,6 +19,7 @@ extern "C" {
 #define ZST_VIDEO_TEST_SRC_PROP_LOOP          "loop"
 #define ZST_VIDEO_TEST_SRC_PROP_USE_CLOCK     "use-clock"
 #define ZST_VIDEO_TEST_SRC_PROP_DO_TIMESTAMP  "do-timestamp"
+#define ZST_VIDEO_TEST_SRC_PROP_CLOCK_SYNC    "clock-sync"
 
 typedef struct {
     size_t struct_size;
@@ -30,6 +31,7 @@ typedef struct {
     int32_t num_buffers;
     bool loop;
     bool use_clock;
+    bool clock_sync;
 } zst_video_test_src_config_t;
 
 zst_element_t* zst_video_test_src_create(void);

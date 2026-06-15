@@ -33,6 +33,10 @@ typedef struct {
     int num_buffers;
     bool loop;
     bool use_clock;
+    bool clock_sync;
+
+    bool has_base_time;
+    zst_time_t base_time;
 
     uint64_t frame_count;
     zst_buffer_pool_t* pool;
@@ -61,6 +65,13 @@ static zst_result_t video_test_src_open(zst_element_t* el)
     };
     s->pool = zst_buffer_pool_create(NULL, &pool_cfg);
 
+    return ZST_OK;
+}
+
+static zst_result_t video_test_src_start(zst_element_t* el)
+{
+    video_test_src_t* s = el->priv;
+    s->has_base_time = false;
     return ZST_OK;
 }
 
@@ -215,13 +226,21 @@ static zst_result_t video_test_src_process(zst_element_t* el, zst_buffer_t* in, 
     buf->dts = buf->pts;
     buf->duration = dur_ns;
 
+    if (s->clock_sync && el->clock) {
+        zst_time_t current_time = zst_clock_get_time(el->clock);
+        if (!s->has_base_time) {
+            s->base_time = current_time;
+            s->has_base_time = true;
+        }
+        zst_time_t expected_time = s->base_time + s->frame_count * dur_ns;
+        if (expected_time > current_time) {
+            zst_clock_wait(el->clock, expected_time - current_time);
+        }
+    }
+
     s->frame_count++;
     *out = buf;
 
-    /* simulate fps spacing? Not strictly required unless real-time requested, but mock v4l2src did it.
-       we can leave it out or add real time wait */
-    // struct timespec ts = { .tv_sec = 0, .tv_nsec = dur_ns };
-    // nanosleep(&ts, NULL);
     return ZST_OK;
 }
 
@@ -267,6 +286,9 @@ static zst_result_t video_test_src_set_property(zst_element_t* el, const char* n
     } else if (strcmp(name, "use-clock") == 0 || strcmp(name, "do-timestamp") == 0) {
         s->use_clock = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcmp(value, "yes") == 0);
         return ZST_OK;
+    } else if (strcmp(name, "clock-sync") == 0) {
+        s->clock_sync = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcmp(value, "yes") == 0);
+        return ZST_OK;
     }
     return ZST_ERROR;
 }
@@ -304,6 +326,9 @@ static zst_result_t video_test_src_get_property(zst_element_t* el, const char* n
     } else if (strcmp(name, "use-clock") == 0 || strcmp(name, "do-timestamp") == 0) {
         strncpy(value_out, s->use_clock ? "true" : "false", max_len);
         return ZST_OK;
+    } else if (strcmp(name, "clock-sync") == 0) {
+        strncpy(value_out, s->clock_sync ? "true" : "false", max_len);
+        return ZST_OK;
     }
     return ZST_ERROR;
 }
@@ -320,6 +345,7 @@ static zst_element_ops_t g_ops = {
     .name = "videotestsrc",
     .open = video_test_src_open,
     .close = video_test_src_close,
+    .start = video_test_src_start,
     .process = video_test_src_process,
     .get_caps = video_test_src_get_caps,
     .set_property = video_test_src_set_property,
@@ -342,6 +368,8 @@ zst_element_t* zst_video_test_src_create(void)
     priv->num_buffers = -1;
     priv->loop = false;
     priv->use_clock = false;
+    priv->clock_sync = false;
+    priv->has_base_time = false;
     priv->frame_count = 0;
 
     el = zst_element_create(&g_ops, priv);
@@ -377,6 +405,7 @@ zst_video_test_src_create_with_config(const zst_video_test_src_config_t* config)
     zst_element_set_property_int(el, "num-buffers", config->num_buffers);
     zst_element_set_property_bool(el, "loop", config->loop);
     zst_element_set_property_bool(el, "use-clock", config->use_clock);
+    zst_element_set_property_bool(el, "clock-sync", config->clock_sync);
 
     return el;
 }
