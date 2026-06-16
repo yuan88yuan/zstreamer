@@ -68,6 +68,7 @@ zst_element_t* zst_srt_sink_create(void);
 zst_element_t* zst_mpegts_muxer_create(void);
 zst_element_t* zst_mpegts_demuxer_create(void);
 zst_element_t* zst_mp4_demuxer_create(void);
+zst_element_t* zst_nv_video_scaler_create(void);
 
 /*──────────────────────────────────────────────────────────────────────────
   Pad template tables (used by descriptor tables below).
@@ -419,6 +420,7 @@ create_builtin_element(const char* name)
     if (strcmp(name, "tsmux") == 0)        return zst_mpegts_muxer_create();
     if (strcmp(name, "tsdemux") == 0)      return zst_mpegts_demuxer_create();
     if (strcmp(name, "mp4demux") == 0)     return zst_mp4_demuxer_create();
+    if (strcmp(name, "nvvideoscaler") == 0) return zst_nv_video_scaler_create();
     return NULL;
 }
 
@@ -463,7 +465,8 @@ static const zst_element_desc_t g_builtin_descs[] = {
     DESC("srtsink",  "SRT Sink",         "Sink/Network", "Sends buffers over Secure Reliable Transport (SRT)",                                                                   g_builtin_srtsink_props,        sizeof(g_builtin_srtsink_props) / sizeof(g_builtin_srtsink_props[0]), g_pad_sink),
     DESC("tsmux",    "MPEG-TS Muxer",    "Muxer/File",   "Muxes encoded audio/video into MPEG-TS (.ts)",                                                                         g_builtin_tsmux_props,          sizeof(g_builtin_tsmux_props) / sizeof(g_builtin_tsmux_props[0]), g_pad_tsmux),
     DESC("tsdemux",  "MPEG-TS Demuxer",  "Demuxer",      "Demuxes MPEG-TS (.ts) into encoded audio/video",                                                                       g_builtin_tsdemux_props,        sizeof(g_builtin_tsdemux_props) / sizeof(g_builtin_tsdemux_props[0]), g_pad_tsdemux),
-    DESC("mp4demux", "MP4 Demuxer",      "Demuxer/File", "Demuxes MP4 (.mp4/.mov/.m4a/.m4v) into encoded audio/video",                                                             g_builtin_mp4demux_props,       sizeof(g_builtin_mp4demux_props) / sizeof(g_builtin_mp4demux_props[0]), g_pad_mp4demux)
+    DESC("mp4demux", "MP4 Demuxer",      "Demuxer/File", "Demuxes MP4 (.mp4/.mov/.m4a/.m4v) into encoded audio/video",                                                             g_builtin_mp4demux_props,       sizeof(g_builtin_mp4demux_props) / sizeof(g_builtin_mp4demux_props[0]), g_pad_mp4demux),
+    DESC("nvvideoscaler", "NVIDIA V4L2 Video Scaler", "Filter/Video", "Hardware video scaler and format converter using NV V4L2 extensions",                                    NULL,                           0, g_pad_video_filter)
 };
 
 /*──────────────────────────────────────────────────────────────────────────
