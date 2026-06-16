@@ -453,4 +453,19 @@ Fetches static files or progressive streams over HTTP or HTTPS and pushes the re
 
 **Dependencies:** `libcurl4-openssl-dev` or `libavformat-dev`
 
+### 4ae — Xilinx VCU Encoder (📝 Planned)
+
+Hardware-accelerated video encoder leveraging the Xilinx Video Codec Unit (VCU) via the `vcu-ctrl-sw` API.
+
+- [ ] Wrap `lib_encode` from `vcu-ctrl-sw`
+- [ ] Support HEVC and VP9 hardware encoding
+- [ ] Implement rate control and multi-channel configurations
+
+### 4af — Xilinx VCU Decoder (📝 Planned)
+
+Hardware-accelerated video decoder leveraging the Xilinx Video Codec Unit (VCU) via the `vcu-ctrl-sw` API.
+
+- [ ] Wrap `lib_decode` from `vcu-ctrl-sw`
+- [ ] Support HEVC and VP9 hardware decoding
+- [ ] Handle hardware-accelerated picture planes and alignment
 

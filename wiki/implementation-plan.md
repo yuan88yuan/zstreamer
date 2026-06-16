@@ -11,6 +11,7 @@ All phases are now documented in separate files for easier maintenance.
 | 9–10  | [Future Work](phase-future.md) | ~34 | 🔄 In Progress |
 | Post-P0 | [RTMP Hardening](phase-rtmp-hardening.md) | ~60 | ✅ Done |
 | Post-P0 | [RTSP Media-On-Demand](phase-rtsp-mod.md) | ~70 | ✅ Done |
+| Post-P0 | [Xilinx VCU Integration](phase-xilinx-vcu.md) | ~30 | ⬜ Planned |
 | Bugfix  | [Clock Sync Debug](clock-sync-debug.md) | ~200 | ✅ Fixed — scheduler clock sync comparison was broken |
 
 ---
