@@ -745,3 +745,14 @@ install(FILES
 )
 
 # Append srt_common.c to the srt element targets
+
+# ── Documentation ────────────────────────────────────────────────────────
+find_package(Doxygen)
+if(DOXYGEN_FOUND)
+    add_custom_target(docs
+        COMMAND ${DOXYGEN_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/Doxyfile
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Generating API documentation with Doxygen"
+        VERBATIM
+    )
+endif()

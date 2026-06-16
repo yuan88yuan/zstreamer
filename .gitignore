@@ -27,3 +27,5 @@ tests/*.out
 
 # Pi agent artifacts
 .pi/
+html/
+latex/
