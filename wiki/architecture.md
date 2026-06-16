@@ -207,14 +207,14 @@ Pads now carry rich caps with dimensions, format, framerate, channels, sample ra
 `zst_allocator_t` interface for custom memory backends:
 - [x] Default CPU allocator (malloc/free) with refcounting
 - [x] Integrated with `zst_buffer_create_with_allocator()`
-- [ ] DMABUF (Linux dma-buf for zero-copy between HW blocks) — future
-- [ ] CUDA / Vulkan / oneAPI (SYCL) device memory — future
-- [ ] Buffer pools to eliminate per-frame allocation — future
+- [x] DMABUF (Linux dma-buf for zero-copy between HW blocks)
+- [x] CUDA / Vulkan / oneAPI (SYCL) device memory
+- [x] Buffer pools to eliminate per-frame allocation
 
 ### Clock  (✅ done — Phase 8b)
 
 `zst_clock_t` master clock wrapping `CLOCK_MONOTONIC`, with:
 - [x] `zst_clock_get_time()` / `zst_clock_wait()`
 - [x] Pipeline-level clock selection (`zst_pipeline_set_clock`)
-- [ ] Clock slaving for A/V sync — future
+- [x] Clock slaving for A/V sync
 - [ ] Jitter measurement — future
