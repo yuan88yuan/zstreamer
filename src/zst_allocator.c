@@ -113,6 +113,22 @@ zst_allocator_cuda_create(void)
 }
 #endif
 
+#ifndef HAS_JETSON
+zst_allocator_t*
+zst_allocator_jetson_create(void)
+{
+    return NULL;
+}
+
+int
+zst_allocator_jetson_get_fd(zst_allocator_t* allocator, void* ptr)
+{
+    (void)allocator;
+    (void)ptr;
+    return -1;
+}
+#endif
+
 #ifndef HAS_ONEAPI
 zst_allocator_t*
 zst_allocator_oneapi_create(void)
