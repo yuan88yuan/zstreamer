@@ -458,7 +458,7 @@ Fetches static files or progressive streams over HTTP or HTTPS and pushes the re
 Hardware-accelerated video encoder leveraging the Xilinx Video Codec Unit (VCU) via the `vcu-ctrl-sw` API.
 
 - [ ] Wrap `lib_encode` from `vcu-ctrl-sw`
-- [ ] Support HEVC and VP9 hardware encoding
+- [ ] Support H.264 (AVC), HEVC, and VP9 hardware encoding
 - [ ] Implement rate control and multi-channel configurations
 
 ### 4af — Xilinx VCU Decoder (📝 Planned)
@@ -466,6 +466,6 @@ Hardware-accelerated video encoder leveraging the Xilinx Video Codec Unit (VCU) 
 Hardware-accelerated video decoder leveraging the Xilinx Video Codec Unit (VCU) via the `vcu-ctrl-sw` API.
 
 - [ ] Wrap `lib_decode` from `vcu-ctrl-sw`
-- [ ] Support HEVC and VP9 hardware decoding
+- [ ] Support H.264 (AVC), HEVC, and VP9 hardware decoding
 - [ ] Handle hardware-accelerated picture planes and alignment
 
