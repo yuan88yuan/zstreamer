@@ -456,16 +456,22 @@ Fetches static files or progressive streams over HTTP or HTTPS and pushes the re
 ### 4ae — Xilinx VCU Encoder (📝 Planned)
 
 Hardware-accelerated video encoder leveraging the Xilinx Video Codec Unit (VCU) via the `vcu-ctrl-sw` API.
+Reference: https://github.com/Xilinx/vcu-ctrl-sw.git
 
 - [ ] Wrap `lib_encode` from `vcu-ctrl-sw`
 - [ ] Support H.264 (AVC), HEVC, and VP9 hardware encoding
 - [ ] Implement rate control and multi-channel configurations
+- [ ] Map `zst_buffer_t` frames to `AL_TBuffer` using `zst_allocator_dmabuf_create`
+- [ ] Achieve end-to-end zero-copy by importing DMABUF fds via `AL_Allocator_Import`
 
 ### 4af — Xilinx VCU Decoder (📝 Planned)
 
 Hardware-accelerated video decoder leveraging the Xilinx Video Codec Unit (VCU) via the `vcu-ctrl-sw` API.
+Reference: https://github.com/Xilinx/vcu-ctrl-sw.git
 
 - [ ] Wrap `lib_decode` from `vcu-ctrl-sw`
 - [ ] Support H.264 (AVC), HEVC, and VP9 hardware decoding
 - [ ] Handle hardware-accelerated picture planes and alignment
+- [ ] Decode directly into DMABUFs allocated by `zstreamer`'s pool for zero-copy output
+- [ ] Map pixel plane metadata (`AL_TPixMapMetaData`) to `zst_video_frame_t` payloads
 
