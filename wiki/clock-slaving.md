@@ -23,7 +23,7 @@ The worker loop just calls `process()` on elements in a tight loop with a fixed
 Consider a live recording pipeline:
 
 ```
-v4l2src (30fps) → queue → h264enc → queue → mp4mux → queue → filesink
+v4l2src (30fps) → queue → x264enc → queue → mp4mux → queue → filesink
 alsasrc (44100Hz)→ queue → aacenc ────────────────────────┘
 ```
 

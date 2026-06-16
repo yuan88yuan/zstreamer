@@ -27,7 +27,7 @@ Outputs raw video buffers to a Video4Linux2 (V4L2) loopback or output device. Us
 - [x] Fallback logic: mocks output and logs a warning if the device fails to open, preventing pipeline crash during testing
 - [x] Tests: instantiation verification and mock buffer pushing tests in `test_core.c`
 
-### 4b — H.264 Encoder  (✅ done)
+### 4b — H.264 Encoder (x264enc)  (✅ done)
 - [x] x264 integration: `x264_param_default_preset("ultrafast", "zerolatency")`
 - [x] CRF rate control (23)
 - [x] Accept I420 YUV planes from `zst_video_frame_t` payload

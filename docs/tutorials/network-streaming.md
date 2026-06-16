@@ -13,7 +13,7 @@ In this tutorial, we will learn how to use zstreamer to stream a live video sour
 Our streaming pipeline will look like this:
 
 1. **`video_test_src`**: Generates a live colour bar pattern.
-2. **`h264_encoder`**: Compresses the raw video frames into an H.264 bitstream.
+2. **`x264_encoder`**: Compresses the raw video frames into an H.264 bitstream.
 3. **`rtsp_sink`**: Receives the encoded video and pushes it into the RTSP server for distribution.
 4. **`rtsp_server`**: (A special background element) Listens for client connections on port 8554 and serves the stream.
 
@@ -46,7 +46,7 @@ int main() {
     // The RTSP server manages client connections and stream sessions.
     zst_element_t* server = zst_element_factory_make("rtspserver");
     zst_element_t* vsrc   = zst_element_factory_make("videotestsrc");
-    zst_element_t* h264   = zst_element_factory_make("h264enc");
+    zst_element_t* h264   = zst_element_factory_make("x264enc");
     // The RTSP sink connects our pipeline to a specific mount point on the server.
     zst_element_t* rsink  = zst_element_factory_make("rtspsink");
 

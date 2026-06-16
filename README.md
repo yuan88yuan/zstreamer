@@ -162,7 +162,7 @@ ZST_STATE_NULL  ──open──►  ZST_STATE_READY  ──start──►  ZST_
 
 | Element | Description |
 |---------|-------------|
-| `h264_encoder` | H.264 encoder via x264 |
+| `x264_encoder` | H.264 encoder via x264 |
 | `h264_decoder` | H.264 decoder via FFmpeg libavcodec |
 | `h265_encoder` | H.265/HEVC encoder via FFmpeg libavcodec |
 | `h265_decoder` | H.265/HEVC decoder via FFmpeg libavcodec |
@@ -209,7 +209,7 @@ int main(void) {
 
     /* Create elements via factory */
     zst_element_t* vsrc  = zst_element_factory_make("videotestsrc",  "vsrc");
-    zst_element_t* h264  = zst_element_factory_make("h264enc",       "enc");
+    zst_element_t* h264  = zst_element_factory_make("x264enc",       "enc");
     zst_element_t* asrc  = zst_element_factory_make("audiotestsrc",  "asrc");
     zst_element_t* aac   = zst_element_factory_make("aacenc",        "aac");
     zst_element_t* mux   = zst_element_factory_make("mp4mux",        "mux");

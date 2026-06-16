@@ -56,7 +56,7 @@ It provides a **GStreamer-like** pipeline architecture: elements connected via p
 │   ├── v4l2_source.c      ← V4L2 camera capture (real V4L2 + mock fallback)
 │   ├── v4l2_sink.c        ← V4L2 loopback/output sink (real V4L2 + mock fallback)
 │   ├── alsa_source.c      ← ALSA audio capture (real ALSA + mock fallback)
-│   ├── h264_encoder.c     ← x264 H.264 encoder (real x264)
+│   ├── x264_encoder.c     ← x264 H.264 encoder (real x264)
 │   ├── h264_decoder.c     ← FFmpeg libavcodec H.264 decoder
 │   ├── h265_encoder.c     ← FFmpeg libavcodec H.265 encoder
 │   ├── h265_decoder.c     ← FFmpeg libavcodec H.265 decoder
@@ -237,7 +237,7 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | Core Framework              | ✅ All 8 core modules implemented|
 | Scheduler Integration       | ✅ Topological sort, push/pull, EOS, state hardening |
 | Queue Element               | ✅ First-class queue with worker thread |
-| Real Element Implementations| ✅ 34 elements: v4l2_source, v4l2_sink, alsa_source, alsa_sink, h264_encoder, h264_decoder, h265_encoder, h265_decoder, aac_encoder, aac_decoder, mp4_muxer, mp4_demuxer, file_sink, file_source, fake_sink, video_scaler, audio_resampler, video_test_src, audio_test_src, text_overlay, text_source, srt_parser, net_source, net_sink, rtsp_source, rtsp_sink, rtsp_server, rtmp_source, rtmp_sink, srt_source, srt_sink, mpegts_muxer, mpegts_demuxer, http_source |
+| Real Element Implementations| ✅ 34 elements: v4l2_source, v4l2_sink, alsa_source, alsa_sink, x264enc, h264_decoder, h265_encoder, h265_decoder, aac_encoder, aac_decoder, mp4_muxer, mp4_demuxer, file_sink, file_source, fake_sink, video_scaler, audio_resampler, video_test_src, audio_test_src, text_overlay, text_source, srt_parser, net_source, net_sink, rtsp_source, rtsp_sink, rtsp_server, rtmp_source, rtmp_sink, srt_source, srt_sink, mpegts_muxer, mpegts_demuxer, http_source |
 | Planned Element Additions   | 📝 (none remaining) |
 | Caps Negotiation            | ✅ Done                          |
 | Event Bus                   | ✅ Done                          |
@@ -301,4 +301,4 @@ When working on this project, the most important files to read first:
 5. `CMakeLists.txt` — Build targets and dependencies
 6. `src/zst_queue_element.c` — Queue element implementation
 7. `src/v4l2_source.c` — Real V4L2 capture (reference for HW element pattern)
-8. `src/h264_encoder.c` — Real x264 integration (reference for encoder pattern)
+8. `src/x264_encoder.c` — Real x264 integration (reference for encoder pattern)

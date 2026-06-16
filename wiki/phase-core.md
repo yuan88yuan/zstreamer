@@ -46,7 +46,7 @@ The fundamental types and lifecycle management.
 Explicit queue elements as first-class `zst_element` subclasses — like GStreamer's `queue` element. Users insert them at pipeline boundaries to control buffering and threading.
 
 ```
-v4l2src → queue → h264enc → queue → mp4mux → queue → filesink
+v4l2src → queue → x264enc → queue → mp4mux → queue → filesink
           ^^^^^            ^^^^^            ^^^^^
       explicit boundary  explicit boundary  explicit boundary
 ```

@@ -81,7 +81,7 @@
   - [x] `alsa_source`: same pattern for audio frames
   - [x] `video_scaler`: pool for output buffers
   - [x] `audio_resampler`: pool for output buffers
-  - [x] `h264_encoder` / `aac_encoder`: packet pool for encoded output
+  - [x] `x264_encoder` / `aac_encoder`: packet pool for encoded output
   - [x] `queue_element`: optionally attach pool to queue — return consumed buffers
         to the upstream pool automatically
 
@@ -144,7 +144,7 @@ A container element that groups multiple elements into a single logical element 
 - [x] State propagation: `NULL→READY→PAUSED→PLAYING` cascade to all children
 - [x] Error aggregation: child errors bubble up through the bin's bus
 - [x] EOS passthrough: bin converges EOS from all sink-pad branches before signalling src
-- [x] Use case: package `videotestsrc → queue → h264enc` as a reusable "capture" bin
+- [x] Use case: package `videotestsrc → queue → x264enc` as a reusable "capture" bin
 - [x] Use case: create custom muxer bins with internal format conversion
 - [x] Use case: isolate a sub-pipeline for separate threading / scheduling
 
@@ -328,7 +328,7 @@ zst_register_builtin_elements();
 zst_plugin_registry_scan_env();
 
 zst_element_t* src = zst_element_factory_make("filesrc");
-zst_element_t* enc = zst_element_factory_make("h264encoder");
+zst_element_t* enc = zst_element_factory_make("x264enc");
 zst_element_t* sink = zst_element_factory_make("filesink");
 ```
 
@@ -338,7 +338,7 @@ Add `zst_element_desc_t` metadata for every official element:
 
 - [x] `filesrc`, `filesink`, `fakesink`
 - [x] `v4l2source`, `alsasource`
-- [x] `h264encoder`, `h264decoder`
+- [x] `x264enc`, `h264decoder`
 - [x] `h265encoder`, `h265decoder`
 - [x] `aacencoder`, `aacdecoder`
 - [x] `mp4muxer`
@@ -366,7 +366,7 @@ Install optional first-party headers under a stable namespace, for example:
 include/zstreamer/elements/zst_file_source.h
 include/zstreamer/elements/zst_file_sink.h
 include/zstreamer/elements/zst_fake_sink.h
-include/zstreamer/elements/zst_h264_encoder.h
+include/zstreamer/elements/zst_x264_encoder.h
 ...
 ```
 

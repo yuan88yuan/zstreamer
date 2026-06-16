@@ -1,5 +1,5 @@
 /*=============================================================================
-    h264_encoder.c — x264 H.264 video encoder implementation
+    x264_encoder.c — x264 H.264 video encoder implementation
 =============================================================================*/
 
 #include <stdio.h>
@@ -33,12 +33,12 @@ typedef struct {
     int             keyint_min;
     int             fps_num;
     int             fps_den;
-} h264_encoder_t;
+} x264_encoder_t;
 
 static zst_result_t
-h264_open(zst_element_t* el)
+x264_open(zst_element_t* el)
 {
-    h264_encoder_t* s = el->priv;
+    x264_encoder_t* s = el->priv;
     s->initialized = 0;
     s->x264 = NULL;
     s->pool = NULL;
@@ -46,7 +46,7 @@ h264_open(zst_element_t* el)
 }
 
 static int
-h264_is_config_property(const char* name)
+x264_is_config_property(const char* name)
 {
     if (!name) return 0;
     return strcmp(name, "preset") == 0 ||
@@ -64,9 +64,9 @@ h264_is_config_property(const char* name)
 }
 
 static zst_result_t
-h264_close(zst_element_t* el)
+x264_close(zst_element_t* el)
 {
-    h264_encoder_t* s = el->priv;
+    x264_encoder_t* s = el->priv;
     if (s->pool) {
         zst_buffer_pool_destroy(s->pool);
         s->pool = NULL;
@@ -81,7 +81,7 @@ h264_close(zst_element_t* el)
 }
 
 static zst_result_t
-h264_init_encoder(h264_encoder_t* s, uint32_t width, uint32_t height)
+x264_init_encoder(x264_encoder_t* s, uint32_t width, uint32_t height)
 {
     s->width = width;
     s->height = height;
@@ -157,9 +157,9 @@ h264_init_encoder(h264_encoder_t* s, uint32_t width, uint32_t height)
 }
 
 static zst_result_t
-h264_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
+x264_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
 {
-    h264_encoder_t* s = el->priv;
+    x264_encoder_t* s = el->priv;
     if (!in) return ZST_ERROR;
 
     /* If we get EOS, pass it downstream */
@@ -178,7 +178,7 @@ h264_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     if (!frame) return ZST_ERROR;
 
     if (!s->initialized) {
-        if (h264_init_encoder(s, frame->width, frame->height) != ZST_OK) {
+        if (x264_init_encoder(s, frame->width, frame->height) != ZST_OK) {
             return ZST_ERROR;
         }
     }
@@ -246,11 +246,11 @@ h264_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
 
 
 static zst_result_t
-h264_set_property(zst_element_t* el, const char* name, const char* value)
+x264_set_property(zst_element_t* el, const char* name, const char* value)
 {
-    h264_encoder_t* s = el->priv;
+    x264_encoder_t* s = el->priv;
     if (!name || !value) return ZST_ERROR;
-    if (s->initialized && h264_is_config_property(name)) return ZST_ERROR;
+    if (s->initialized && x264_is_config_property(name)) return ZST_ERROR;
 
     if (strcmp(name, "preset") == 0) {
         snprintf(s->preset, sizeof(s->preset), "%s", value);
@@ -297,9 +297,9 @@ h264_set_property(zst_element_t* el, const char* name, const char* value)
 }
 
 static zst_result_t
-h264_get_property(zst_element_t* el, const char* name, char* value_out, size_t max_len)
+x264_get_property(zst_element_t* el, const char* name, char* value_out, size_t max_len)
 {
-    h264_encoder_t* s = el->priv;
+    x264_encoder_t* s = el->priv;
     if (!name || !value_out || max_len == 0) return ZST_ERROR;
 
     if (strcmp(name, "preset") == 0) {
@@ -330,25 +330,25 @@ h264_get_property(zst_element_t* el, const char* name, char* value_out, size_t m
 static zst_buffer_pool_t*
 element_get_pool(zst_element_t* el)
 {
-    h264_encoder_t* s = el->priv;
+    x264_encoder_t* s = el->priv;
     return s->pool;
 }
 
 static zst_element_ops_t g_ops = {
-    .name    = "h264enc",
-    .open    = h264_open,
-    .close   = h264_close,
-    .process = h264_process,
-    .set_property = h264_set_property,
-    .get_property = h264_get_property,
+    .name    = "x264enc",
+    .open    = x264_open,
+    .close   = x264_close,
+    .process = x264_process,
+    .set_property = x264_set_property,
+    .get_property = x264_get_property,
     .get_pool = element_get_pool
 };
 
 zst_element_t*
-zst_h264_encoder_create(void)
+zst_x264_encoder_create(void)
 {
     zst_element_t* el;
-    h264_encoder_t* priv;
+    x264_encoder_t* priv;
     zst_pad_t* sink;
     zst_pad_t* src;
 
@@ -371,35 +371,35 @@ zst_h264_encoder_create(void)
 static zst_element_t*
 plugin_create_element(const char* name)
 {
-    if (strcmp(name, "h264enc") == 0) {
-        return zst_h264_encoder_create();
+    if (strcmp(name, "x264enc") == 0) {
+        return zst_x264_encoder_create();
     }
     return NULL;
 }
 
-static const zst_pad_template_t g_h264enc_pads[] = {
+static const zst_pad_template_t g_x264enc_pads[] = {
     { "sink", ZST_PAD_SINK, "video/x-raw" },
     { "src", ZST_PAD_SRC, "video/x-h264" }
 };
 
-static const zst_element_desc_t g_h264enc_elements[] = {
+static const zst_element_desc_t g_x264enc_elements[] = {
     {
-        .name = "h264enc",
+        .name = "x264enc",
         .long_name = "H.264 Encoder",
         .category = "Codec/Encoder",
         .description = "Encodes raw video to H.264",
         .author = "zstreamer",
         .properties = NULL,
         .nb_properties = 0,
-        .pads = g_h264enc_pads,
-        .nb_pads = sizeof(g_h264enc_pads) / sizeof(g_h264enc_pads[0]),
+        .pads = g_x264enc_pads,
+        .nb_pads = sizeof(g_x264enc_pads) / sizeof(g_x264enc_pads[0]),
         .create = NULL
     }
 };
 
 static zst_plugin_t g_plugin = {
     .desc = {
-        .name = "h264encoder_plugin",
+        .name = "x264encoder_plugin",
         .author = "zstreamer",
         .version = "1.0.0",
         .init = NULL,
@@ -413,9 +413,9 @@ const zst_element_desc_t*
 zst_get_plugin_elements(uint32_t* nb_elements_out)
 {
     if (nb_elements_out) {
-        *nb_elements_out = sizeof(g_h264enc_elements) / sizeof(g_h264enc_elements[0]);
+        *nb_elements_out = sizeof(g_x264enc_elements) / sizeof(g_x264enc_elements[0]);
     }
-    return g_h264enc_elements;
+    return g_x264enc_elements;
 }
 
 ZST_PLUGIN_EXPORT
