@@ -33,13 +33,19 @@ This document lists features that are still planned across all phases.
 | Pad Probes | Buffer interception callbacks on pads | 📝 Planned |
 | Segment Seeking | NPT-based seek within a stream | 📝 Planned |
 
-## Pipeline & CI — Phases 9-10
+## Testing & CI — Phase 9
 
 | Item | Description | Status |
 |------|-------------|--------|
 | CI Pipeline | GitHub Actions: build + test + static analysis | 📝 Planned |
+
+## Documentation — Phase 10
+
+| Item | Description | Status |
+|------|-------------|--------|
 | Doxygen API Reference | Auto-generated API documentation | 📝 Planned |
 | Tutorials | Getting-started guides, pipeline examples | 📝 Planned |
+| Deep-Dives & Guides | Caps, bus, zero-copy, A/V sync, plugins | 📝 Planned |
 
 ## SRT Transport Protocol
 
