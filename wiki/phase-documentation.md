@@ -11,11 +11,11 @@
 - [x] **Network Streaming:** "Streaming live video over RTSP". Guide setting up the `rtsp_server` and `rtsp_source`/`rtsp_sink`.
 
 ## 3. Architecture Deep-Dives
-- [ ] **Caps Negotiation:** Deep dive into how pads resolve format intersection, structure fields, and dynamic reconfiguration.
-- [ ] **Event Bus Patterns:** Explore `zst_bus_t`, handling errors, EOS propagation, state changes, and segment messages asynchronously.
-- [ ] **Allocator + Zero-Copy Guide:** How `zst_allocator_t` and buffer pools prevent memory allocation during `PLAYING` state. Describe `zst_allocator_dmabuf_t` and device-specific memory.
-- [ ] **Clock and A/V Sync Guide:** Detailed mechanics of `zst_clock_t`, master/slave relationships, and how the scheduler handles `ZST_FLOW_DROPPED` for late frames.
-- [ ] **Queue Threading Model Explainer:** How `zst_queue_t` decouple pipeline branches with thread pools and atomic ref-counting.
+- [x] **Caps Negotiation:** Deep dive into how pads resolve format intersection, structure fields, and dynamic reconfiguration.
+- [x] **Event Bus Patterns:** Explore `zst_bus_t`, handling errors, EOS propagation, state changes, and segment messages asynchronously.
+- [x] **Allocator + Zero-Copy Guide:** How `zst_allocator_t` and buffer pools prevent memory allocation during `PLAYING` state. Describe `zst_allocator_dmabuf_t` and device-specific memory.
+- [x] **Clock and A/V Sync Guide:** Detailed mechanics of `zst_clock_t`, master/slave relationships, and how the scheduler handles `ZST_FLOW_DROPPED` for late frames.
+- [x] **Queue Threading Model Explainer:** How `zst_queue_t` decouple pipeline branches with thread pools and atomic ref-counting.
 
 ## 4. Plugin Authoring
 - [x] **Plugin Authoring Guide:** Steps to implement a custom element `zst_element_ops_t`, property registration, capabilities setup, and dynamic loading via `zst_plugin_registry_t`.
