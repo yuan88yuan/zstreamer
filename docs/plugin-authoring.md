@@ -11,7 +11,7 @@ An element consists of:
 - `zst_element_ops_t` containing function pointers for lifecycle events, processing, property management, etc.
 - One or more `zst_pad_t` for input (sink pads) or output (src pads).
 
-## 2. Implementing `zst_element_ops_t`
+## 2. Implementing zst_element_ops_t
 
 The `zst_element_ops_t` structure provides callbacks that the `zstreamer` framework calls during pipeline execution.
 
@@ -121,7 +121,7 @@ Add it to the `my_element_ops`:
     .get_caps = my_element_get_caps,
 ```
 
-## 5. Dynamic Loading via `zst_plugin_registry_t`
+## 5. Dynamic Loading via zst_plugin_registry_t
 
 To make your element discoverable and loadable at runtime, you need to expose it via the plugin API.
 Your dynamic library (`.so`) must export specific functions using `ZST_PLUGIN_EXPORT`.

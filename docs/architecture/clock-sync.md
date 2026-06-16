@@ -2,7 +2,7 @@
 
 Accurate timing and synchronization are fundamental to multimedia pipelines. zstreamer uses a unified clock system (`zst_clock_t`) to ensure audio and video streams stay aligned and play back at the correct speed.
 
-## The `zst_clock_t`
+## The zst_clock_t
 
 A `zst_clock_t` is an object that provides a monotonically increasing time source, measured in nanoseconds. It abstracts the underlying timing mechanism (e.g., system monotonic clock, audio device clock, or an external network clock).
 
@@ -31,7 +31,7 @@ The clock is actively used by the pipeline scheduler (`zst_scheduler_t`) to cont
 2.  **Waiting:** Before a sink element renders a buffer, it checks the buffer's PTS against the pipeline's master clock.
 3.  `zst_clock_wait(clock, duration)`: If the PTS is in the future, the sink calls `zst_clock_wait` to block the thread until the correct presentation time arrives. Note that `time` passed to `zst_clock_wait` is a relative duration, not an absolute timestamp.
 
-## Handling Late Frames (`ZST_FLOW_DROPPED`)
+## Handling Late Frames (ZST_FLOW_DROPPED)
 
 In real-time systems, processing delays can cause a buffer to arrive at the sink *after* its scheduled PTS.
 
