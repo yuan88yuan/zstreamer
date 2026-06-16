@@ -61,7 +61,7 @@ nv_video_encoder_open(zst_element_t* el)
     nv_video_encoder_t* s = el->priv;
     s->fd = open("/dev/nvhost-msenc", O_RDWR | O_NONBLOCK);
     if (s->fd < 0) {
-        ZST_LOG_ERROR("nvenv", "Failed to open /dev/nvhost-msenc (ensure you are on Jetson)");
+        ZST_LOG_ERROR("nvenc", "Failed to open /dev/nvhost-msenc (ensure you are on Jetson)");
         return ZST_ERROR;
     }
     s->initialized = 0;
@@ -400,7 +400,7 @@ nv_video_encoder_sink_push(zst_pad_t* pad, zst_buffer_t* buf)
 }
 
 static zst_element_ops_t g_nv_video_encoder_ops = {
-    .name    = "nvenv",
+    .name    = "nvenc",
     .open    = nv_video_encoder_open,
     .close   = nv_video_encoder_close,
     .start   = nv_video_encoder_start,
@@ -450,13 +450,13 @@ zst_nv_video_encoder_create(void)
 static zst_element_t*
 plugin_create_element(const char* name)
 {
-    if (strcmp(name, "nvenv") == 0) {
+    if (strcmp(name, "nvenc") == 0) {
         return zst_nv_video_encoder_create();
     }
     return NULL;
 }
 
-static const zst_property_spec_t g_nvenv_properties[] = {
+static const zst_property_spec_t g_nvenc_properties[] = {
     { "codec", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "h264", "h264 or h265" },
     { "preset", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "fast", "ultrafast, fast, medium, slow" },
     { "bitrate", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "4000000", "Target bitrate in bits/sec" },
@@ -464,30 +464,30 @@ static const zst_property_spec_t g_nvenv_properties[] = {
     { "profile", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "main", "main, baseline, high" }
 };
 
-static const zst_pad_template_t g_nvenv_pads[] = {
+static const zst_pad_template_t g_nvenc_pads[] = {
     { "sink", ZST_PAD_SINK, "video/x-raw" },
     { "src", ZST_PAD_SRC, "video/x-h264" },
     { "src", ZST_PAD_SRC, "video/x-h265" }
 };
 
-static const zst_element_desc_t g_nvenv_elements[] = {
+static const zst_element_desc_t g_nvenc_elements[] = {
     {
-        .name = "nvenv",
+        .name = "nvenc",
         .long_name = "NVIDIA V4L2 Video Encoder",
         .category = "Codec/Encoder",
         .description = "Hardware H.264/H.265 video encoder using NV V4L2 extensions",
         .author = "zstreamer",
-        .properties = g_nvenv_properties,
-        .nb_properties = sizeof(g_nvenv_properties) / sizeof(g_nvenv_properties[0]),
-        .pads = g_nvenv_pads,
-        .nb_pads = sizeof(g_nvenv_pads) / sizeof(g_nvenv_pads[0]),
+        .properties = g_nvenc_properties,
+        .nb_properties = sizeof(g_nvenc_properties) / sizeof(g_nvenc_properties[0]),
+        .pads = g_nvenc_pads,
+        .nb_pads = sizeof(g_nvenc_pads) / sizeof(g_nvenc_pads[0]),
         .create = NULL
     }
 };
 
 static zst_plugin_t g_plugin = {
     .desc = {
-        .name = "nvenv_plugin",
+        .name = "nvenc_plugin",
         .author = "zstreamer",
         .version = "1.0.0",
         .init = NULL,
@@ -501,9 +501,9 @@ const zst_element_desc_t*
 zst_get_plugin_elements(uint32_t* nb_elements_out)
 {
     if (nb_elements_out) {
-        *nb_elements_out = sizeof(g_nvenv_elements) / sizeof(g_nvenv_elements[0]);
+        *nb_elements_out = sizeof(g_nvenc_elements) / sizeof(g_nvenc_elements[0]);
     }
-    return g_nvenv_elements;
+    return g_nvenc_elements;
 }
 
 ZST_PLUGIN_EXPORT
