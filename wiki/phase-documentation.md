@@ -1,10 +1,10 @@
 # Phase 10 — Documentation
 
 ## 1. Doxygen Setup & Integration
-- [ ] Configure `Doxyfile` to output HTML/LaTeX docs.
-- [ ] Ensure public API header files are fully documented (`include/` directory).
-- [ ] Integrate Doxygen build into `CMakeLists.txt` via a `docs` target.
-- [ ] Configure GitHub Actions to auto-generate and deploy Doxygen HTML output to GitHub Pages on merges to main.
+- [x] Configure `Doxyfile` to output HTML/LaTeX docs.
+- [x] Ensure public API header files are fully documented (`include/` directory).
+- [x] Integrate Doxygen build into `CMakeLists.txt` via a `docs` target.
+- [x] Configure GitHub Actions to auto-generate and deploy Doxygen HTML output to GitHub Pages on merges to main.
 
 ## 2. Tutorials
 - [ ] **Getting Started:** "Recording a webcam to MP4 in 5 steps". This should walk through initialization, creating elements (`v4l2_source`, `h264_encoder`, `mp4_muxer`, `file_sink`), linking pads, starting the pipeline, and graceful shutdown on EOS.
