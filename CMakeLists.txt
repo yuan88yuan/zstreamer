@@ -123,6 +123,23 @@ if(CUDAToolkit_FOUND)
     add_compile_definitions(HAS_CUDA=1)
 endif()
 
+# ── NVIDIA Jetson Allocator Support ──────────────────────────────────
+option(ENABLE_JETSON "Enable Jetson NvBuffer allocator support" OFF)
+if(ENABLE_JETSON)
+    add_compile_definitions(HAS_JETSON=1)
+    find_library(NVBUF_UTILS_LIBRARY NAMES nvbuf_utils)
+    if(NVBUF_UTILS_LIBRARY)
+        set(JETSON_LIBRARIES ${NVBUF_UTILS_LIBRARY})
+        message(STATUS "Jetson NvBuffer utils found")
+    else()
+        message(WARNING "Jetson NvBuffer utils not found, falling back to stub for tests")
+        set(JETSON_LIBRARIES "")
+        # Add stub path
+        include_directories(tests)
+        set(STUB_SOURCES tests/stub_nvbuf_utils.cpp)
+    endif()
+endif()
+
 # ── Intel oneAPI SYCL Allocator Support ──────────────────────────────
 option(ENABLE_ONEAPI "Enable Intel oneAPI SYCL allocator support" ON)
 if(ENABLE_ONEAPI)
@@ -215,6 +232,10 @@ if(HAS_ONEAPI)
     list(APPEND CORE_SOURCES src/zst_allocator_oneapi.cpp)
 endif()
 
+if(ENABLE_JETSON)
+    list(APPEND CORE_SOURCES src/zst_allocator_jetson.cpp ${STUB_SOURCES})
+endif()
+
 # ── Build the core library ───────────────────────────────────────────────
 if(BUILD_SHARED)
     add_library(zstreamer SHARED ${CORE_SOURCES})
@@ -248,6 +269,10 @@ target_link_libraries(zstreamer
     PUBLIC  Threads::Threads
     PRIVATE ${DL_LIB} Vulkan::Vulkan
 )
+
+if(ENABLE_JETSON)
+    target_link_libraries(zstreamer PRIVATE ${JETSON_LIBRARIES})
+endif()
 
 if(CUDAToolkit_FOUND)
     target_link_libraries(zstreamer PUBLIC CUDA::cudart)

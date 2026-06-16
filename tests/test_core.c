@@ -546,6 +546,30 @@ test_cuda_allocator(void)
 }
 
 static void
+test_jetson_allocator(void)
+{
+    TEST("jetson allocator");
+    zst_allocator_t* alloc = zst_allocator_jetson_create();
+
+#ifdef HAS_JETSON
+    assert(NULL != alloc);
+    size_t size = 4096;
+    void* ptr = zst_allocator_alloc(alloc, size);
+    assert(ptr != NULL);
+
+    int fd = zst_allocator_jetson_get_fd(alloc, ptr);
+    assert(fd >= 0);
+
+    zst_allocator_free(alloc, ptr);
+    zst_allocator_unref(alloc);
+#else
+    assert(NULL == alloc);
+#endif
+
+    PASS();
+}
+
+static void
 test_oneapi_allocator(void)
 {
     TEST("oneapi allocator");
@@ -6627,6 +6651,7 @@ int main(void)
     test_vulkan_allocator();
     test_cuda_allocator();
     test_oneapi_allocator();
+    test_jetson_allocator();
     test_pipeline_zero_malloc_integration();
 
     /* ── Clock (Phase 8b) ── */
