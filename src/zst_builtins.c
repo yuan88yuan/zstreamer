@@ -46,6 +46,10 @@ zst_element_t* zst_h264_encoder_create(void);
 zst_element_t* zst_h264_decoder_create(void);
 zst_element_t* zst_h265_encoder_create(void);
 zst_element_t* zst_h265_decoder_create(void);
+#ifdef HAS_JETSON
+zst_element_t* zst_nv_video_encoder_create(void);
+zst_element_t* zst_nv_video_decoder_create(void);
+#endif
 zst_element_t* zst_aac_encoder_create(void);
 zst_element_t* zst_aac_decoder_create(void);
 zst_element_t* zst_mp4_muxer_create(void);
@@ -398,6 +402,10 @@ create_builtin_element(const char* name)
     if (strcmp(name, "h264dec") == 0)      return zst_h264_decoder_create();
     if (strcmp(name, "h265enc") == 0)      return zst_h265_encoder_create();
     if (strcmp(name, "h265dec") == 0)      return zst_h265_decoder_create();
+#ifdef HAS_JETSON
+    if (strcmp(name, "nvenc") == 0)        return zst_nv_video_encoder_create();
+    if (strcmp(name, "nvdec") == 0)        return zst_nv_video_decoder_create();
+#endif
     if (strcmp(name, "aacenc") == 0)       return zst_aac_encoder_create();
     if (strcmp(name, "aacdec") == 0)       return zst_aac_decoder_create();
     if (strcmp(name, "mp4mux") == 0)       return zst_mp4_muxer_create();

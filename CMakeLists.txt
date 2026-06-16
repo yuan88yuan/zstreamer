@@ -325,6 +325,10 @@ set(ELEMENT_LIBRARY_SOURCES
     src/http_source.c
 )
 
+if(ENABLE_JETSON)
+    list(APPEND ELEMENT_LIBRARY_SOURCES src/nv_video_encoder.c src/nv_video_decoder.c)
+endif()
+
 if(BUILD_SHARED)
     add_library(zstreamer-elements SHARED ${ELEMENT_LIBRARY_SOURCES})
 else()
@@ -512,7 +516,21 @@ add_library(zst_httpsource SHARED src/http_source.c)
 target_compile_definitions(zst_httpsource PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_httpsource PRIVATE zstreamer ${AVFORMAT_LIBRARIES} ${AVUTIL_LIBRARIES})
 
-set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_v4l2sink zst_rtspsource zst_rtspsink zst_rtsp_server zst_alsasource zst_alsasink zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_textsource zst_netsrc zst_netsink zst_h264decoder zst_h265encoder zst_h265decoder zst_aacdecoder zst_rtmpsource zst_rtmpsink zst_srt zst_mpegtsmux zst_mpegtsdemux zst_mp4demux zst_httpsource)
+if(ENABLE_JETSON)
+    add_library(zst_nvenc SHARED src/nv_video_encoder.c)
+    target_compile_definitions(zst_nvenc PRIVATE BUILDING_PLUGIN)
+    target_link_libraries(zst_nvenc PRIVATE zstreamer ${JETSON_LIBRARIES})
+
+    add_library(zst_nvdec SHARED src/nv_video_decoder.c)
+    target_compile_definitions(zst_nvdec PRIVATE BUILDING_PLUGIN)
+    target_link_libraries(zst_nvdec PRIVATE zstreamer ${JETSON_LIBRARIES})
+
+    set(JETSON_PLUGINS zst_nvenc zst_nvdec)
+else()
+    set(JETSON_PLUGINS "")
+endif()
+
+set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_v4l2sink zst_rtspsource zst_rtspsink zst_rtsp_server zst_alsasource zst_alsasink zst_h264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_textsource zst_netsrc zst_netsink zst_h264decoder zst_h265encoder zst_h265decoder zst_aacdecoder zst_rtmpsource zst_rtmpsink zst_srt zst_mpegtsmux zst_mpegtsdemux zst_mp4demux zst_httpsource ${JETSON_PLUGINS})
 foreach(plugin ${PLUGIN_TARGETS})
     target_include_directories(${plugin} PRIVATE ${ZSTREAMER_INCLUDE_DIR} PRIVATE ${ELEMENT_INCLUDE_DIRS})
     set_target_properties(${plugin} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
