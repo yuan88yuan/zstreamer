@@ -132,6 +132,7 @@ docker build -t zstreamer . && docker run --rm zstreamer
 | `BUILD_TESTS`     | ON      | Build unit tests                      |
 | `BUILD_SHARED`    | OFF     | Build core as `.so` instead of `.a`   |
 | `ENABLE_PLUGINS`  | ON      | Enable dlopen-based plugin loading    |
+| `ENABLE_JETSON`   | OFF     | Enable Jetson NvBuffer allocator support |
 
 ### Docker Targets
 
@@ -141,6 +142,58 @@ The Dockerfile has two build targets:
 |--------|--------------------------------------------|-------------------------------|
 | `ci`   | `docker run --rm zstreamer`                 | One-shot `ctest` (default)    |
 | `dev`  | `docker run --rm -it zstreamer bash`        | Interactive shell with build  |
+
+### NVIDIA Jetson Build (Dockerfile.jetson)
+
+For NVIDIA Jetson platforms (running JetPack/L4T), you can build the framework with native NvBuffer allocator support.
+
+#### Prerequisites (Native Jetson Host)
+- A Jetson host device (ARM64 running L4T).
+- [NVIDIA Container Toolkit](https://github.com/NVIDIA/nvidia-container-toolkit) installed and configured on the host.
+
+#### Building and Running on x86_64 Hosts (via QEMU Emulation)
+If you want to build or run the ARM64 Jetson container on an x86_64 host, you must register `qemu-user-static` interpreters:
+
+1. Register the QEMU interpreters on your x86_64 host:
+   ```bash
+   docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+   ```
+2. Build specifying the ARM64 platform:
+   ```bash
+   docker build --platform linux/arm64 -f Dockerfile.jetson -t zstreamer-jetson .
+   ```
+3. Run under emulation (note: Tegra hardware-accelerated encoding/decoding will not be functional under emulation without the actual Jetson SoC hardware):
+   ```bash
+   docker run --rm -it --platform linux/arm64 zstreamer-jetson bash
+   ```
+
+#### Build the Jetson Image (Natively on Jetson)
+Build the container image using the Jetson-specific Dockerfile:
+```bash
+docker build -f Dockerfile.jetson -t zstreamer-jetson .
+```
+
+#### Run the Jetson Container (Natively on Jetson)
+To access the Jetson GPU, hardware video encoder/decoder, and `NvBuffer` hardware allocator from inside the container, you must run the container with the NVIDIA container runtime:
+
+```bash
+# Run unit tests inside the Jetson container
+docker run --rm --runtime nvidia zstreamer-jetson
+
+# Start an interactive developer shell
+docker run --rm -it --runtime nvidia zstreamer-jetson bash
+```
+
+If you encounter device-access issues, manually map the required Tegra device nodes:
+```bash
+docker run --rm -it --runtime nvidia \
+    --device /dev/nvhost-msenc \
+    --device /dev/nvhost-ctrl \
+    --device /dev/nvhost-ctrl-gpu \
+    --device /dev/nvhost-vic \
+    --device /dev/nvmap \
+    zstreamer-jetson bash
+```
 
 ---
 
