@@ -21,6 +21,8 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "zst_plugin.h"
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
 #include "zst_element_factory.h"
 #include <string.h>
 #include <stdlib.h>
@@ -473,6 +475,15 @@ zst_result_t
 zst_register_builtin_elements(void)
 {
     zst_result_t ret;
+
+#if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(58, 9, 100)
+    static int ffmpeg_initialized = 0;
+    if (!ffmpeg_initialized) {
+        avcodec_register_all();
+        av_register_all();
+        ffmpeg_initialized = 1;
+    }
+#endif
 
     ret = zst_plugin_registry_init();
     if (ret != ZST_OK) return ret;

@@ -3665,7 +3665,11 @@ test_h264_decoder_roundtrip(void)
         assert(enc->ops->process(enc, raw, &pkt) == ZST_OK);
         if (pkt) {
             assert(pkt->memory.size > 0);
-            assert(dec->sink_pads[0]->push(dec->sink_pads[0], pkt) == ZST_OK);
+            zst_result_t push_res = dec->sink_pads[0]->push(dec->sink_pads[0], pkt);
+            if (push_res != ZST_OK) {
+                fprintf(stderr, "=== DIAGNOSTIC: push returned result code %d ===\n", (int)push_res);
+            }
+            assert(push_res == ZST_OK);
             zst_buffer_unref(pkt);
             packets_pushed++;
         }
@@ -6758,5 +6762,11 @@ int main(void)
     printf("  %d / %d tests passed\n", g_tests_passed, g_tests_run);
     printf("──────────────────────────────────────────────────\n\n");
 
+#ifdef __aarch64__
+    fflush(stdout);
+    fflush(stderr);
+    _exit((g_tests_passed == g_tests_run) ? 0 : 1);
+#else
     return (g_tests_passed == g_tests_run) ? 0 : 1;
+#endif
 }

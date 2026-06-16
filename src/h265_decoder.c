@@ -316,8 +316,14 @@ h265_emit_frame(zst_element_t* el, h265_decoder_t* s, zst_buffer_t** out)
         vbuf->pts = (zst_time_t)pts;
         vbuf->dts = (zst_time_t)pts;
     }
-    if (s->frame->duration > 0) {
-        vbuf->duration = (zst_time_t)s->frame->duration;
+    int64_t frame_duration = 0;
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 16, 100)
+    frame_duration = s->frame->duration;
+#else
+    frame_duration = s->frame->pkt_duration;
+#endif
+    if (frame_duration > 0) {
+        vbuf->duration = (zst_time_t)frame_duration;
     }
 
     zst_video_frame_t* v_frame = vbuf->payload;
@@ -383,6 +389,34 @@ h265_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     }
 
     int ret = avcodec_send_packet(s->codec_ctx, av_pkt);
+    if (ret == AVERROR(EAGAIN)) {
+        while (1) {
+            int recv_ret = avcodec_receive_frame(s->codec_ctx, s->frame);
+            if (recv_ret == AVERROR(EAGAIN) || recv_ret == AVERROR_EOF) {
+                break;
+            } else if (recv_ret < 0) {
+#ifdef AVERROR_INPUT_CHANGED
+                if (recv_ret == AVERROR_INPUT_CHANGED) {
+                    avcodec_flush_buffers(s->codec_ctx);
+                    if (av_pkt && av_pkt->buf) av_packet_unref(av_pkt);
+                    return ZST_AGAIN;
+                }
+#endif
+                avcodec_flush_buffers(s->codec_ctx);
+                if (av_pkt && av_pkt->buf) av_packet_unref(av_pkt);
+                return recv_ret == AVERROR_INVALIDDATA ? ZST_AGAIN : ZST_ERROR;
+            }
+
+            zst_result_t emit_ret = h265_emit_frame(el, s, out);
+            av_frame_unref(s->frame);
+            if (emit_ret != ZST_OK) {
+                if (av_pkt && av_pkt->buf) av_packet_unref(av_pkt);
+                return emit_ret;
+            }
+        }
+        ret = avcodec_send_packet(s->codec_ctx, av_pkt);
+    }
+
     if (av_pkt && av_pkt->buf) {
         av_packet_unref(av_pkt);
     }
