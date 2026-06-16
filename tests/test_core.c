@@ -6522,6 +6522,47 @@ static void test_rtsp_source_bunny_verification(void) {
 
 
 
+
+#ifdef ENABLE_JETSON
+static void test_nv_video_encoder(void) {
+    TEST("NV V4L2 encoder execution");
+    zst_pipeline_t* pipe = zst_pipeline_create();
+
+    zst_element_t* src = zst_element_factory_make("videotestsrc");
+    zst_element_t* nvenc = zst_element_factory_make("nvenv");
+    zst_element_t* sink = zst_element_factory_make("fakesink");
+
+    assert(src && nvenc && sink);
+
+    zst_element_set_property_int(src, "num-buffers", 5);
+    zst_element_set_property_int(src, "width", 640);
+    zst_element_set_property_int(src, "height", 480);
+    zst_element_set_property_bool(src, "real-time-pacing", false);
+
+    zst_pipeline_add(pipe, src);
+    zst_pipeline_add(pipe, nvenc);
+    zst_pipeline_add(pipe, sink);
+
+    assert(zst_pad_link(zst_element_get_pad(src, "src"), zst_element_get_pad(nvenc, "sink")) == ZST_OK);
+    assert(zst_pad_link(zst_element_get_pad(nvenc, "src"), zst_element_get_pad(sink, "sink")) == ZST_OK);
+
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_PLAYING) == ZST_OK);
+
+    zst_scheduler_config_t sched_cfg = {
+        .mode = ZST_SCHEDULER_SINGLE_THREAD,
+        .worker_threads = 1
+    };
+    zst_scheduler_t* sched = zst_scheduler_create(&sched_cfg);
+    zst_scheduler_attach(sched, pipe);
+    zst_scheduler_run(sched);
+
+    zst_pipeline_set_state(pipe, ZST_STATE_NULL);
+    zst_scheduler_destroy(sched);
+    zst_pipeline_destroy(pipe);
+    PASS();
+}
+#endif
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -6706,6 +6747,11 @@ int main(void)
     printf("[mp4 demuxer]\n");
     test_mp4_demuxer_properties();
     test_mp4_demuxer_elements();
+
+
+#ifdef ENABLE_JETSON
+    test_nv_video_encoder();
+#endif
 
     /* ── Summary ── */
     printf("\n──────────────────────────────────────────────────\n");
