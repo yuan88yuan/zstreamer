@@ -79,16 +79,22 @@ nv_video_encoder_close(zst_element_t* el)
                 if (s->capture_buffers[i].m.userptr && s->capture_buffers[i].m.userptr != (unsigned long)MAP_FAILED) {
                     munmap((void*)s->capture_buffers[i].m.userptr, s->capture_buffers[i].length);
                 }
+                if (s->capture_buffers[i].m.planes) {
+                    free(s->capture_buffers[i].m.planes);
+                }
             }
             free(s->capture_buffers);
             s->capture_buffers = NULL;
         }
         if (s->output_buffers) {
             for (uint32_t i = 0; i < s->nb_output_buffers; i++) {
-                for(int j = 0; j < 3; j++) {
-                    if (s->output_buffers[i].m.planes[j].m.userptr && s->output_buffers[i].m.planes[j].m.userptr != (unsigned long)MAP_FAILED) {
-                        munmap((void*)s->output_buffers[i].m.planes[j].m.userptr, s->output_buffers[i].m.planes[j].length);
+                if (s->output_buffers[i].m.planes) {
+                    for(int j = 0; j < 3; j++) {
+                        if (s->output_buffers[i].m.planes[j].m.userptr && s->output_buffers[i].m.planes[j].m.userptr != (unsigned long)MAP_FAILED) {
+                            munmap((void*)s->output_buffers[i].m.planes[j].m.userptr, s->output_buffers[i].m.planes[j].length);
+                        }
                     }
+                    free(s->output_buffers[i].m.planes);
                 }
             }
             free(s->output_buffers);
@@ -170,7 +176,7 @@ nv_video_encoder_init_v4l2(nv_video_encoder_t* s, uint32_t width, uint32_t heigh
     s->capture_buffers = calloc(req.count, sizeof(struct v4l2_buffer));
     for (uint32_t i = 0; i < req.count; i++) {
         struct v4l2_buffer buf = {0};
-        struct v4l2_plane planes[1] = {0};
+        struct v4l2_plane* planes = calloc(1, sizeof(struct v4l2_plane));
         buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
         buf.memory = V4L2_MEMORY_MMAP;
         buf.index = i;
@@ -180,6 +186,7 @@ nv_video_encoder_init_v4l2(nv_video_encoder_t* s, uint32_t width, uint32_t heigh
         // Allocate space for mapping in capture_buffers
         s->capture_buffers[i].length = planes[0].length;
         s->capture_buffers[i].m.userptr = (unsigned long)mmap(NULL, planes[0].length, PROT_READ | PROT_WRITE, MAP_SHARED, s->fd, planes[0].m.mem_offset);
+        s->capture_buffers[i].m.planes = planes;
     }
 
     memset(&req, 0, sizeof(req));
@@ -191,7 +198,7 @@ nv_video_encoder_init_v4l2(nv_video_encoder_t* s, uint32_t width, uint32_t heigh
     s->output_buffers = calloc(req.count, sizeof(struct v4l2_buffer));
     for (uint32_t i = 0; i < req.count; i++) {
         struct v4l2_buffer buf = {0};
-        struct v4l2_plane planes[3] = {0};
+        struct v4l2_plane* planes = calloc(3, sizeof(struct v4l2_plane));
         buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
         buf.memory = V4L2_MEMORY_MMAP;
         buf.index = i;
@@ -200,9 +207,9 @@ nv_video_encoder_init_v4l2(nv_video_encoder_t* s, uint32_t width, uint32_t heigh
         if (ioctl(s->fd, VIDIOC_QUERYBUF, &buf) < 0) return ZST_ERROR;
         // Map output planes
         for (int j = 0; j < 3; j++) {
-            s->output_buffers[i].m.planes[j].m.userptr = (unsigned long)mmap(NULL, planes[j].length, PROT_READ | PROT_WRITE, MAP_SHARED, s->fd, planes[j].m.mem_offset);
-            s->output_buffers[i].m.planes[j].length = planes[j].length;
+            planes[j].m.userptr = (unsigned long)mmap(NULL, planes[j].length, PROT_READ | PROT_WRITE, MAP_SHARED, s->fd, planes[j].m.mem_offset);
         }
+        s->output_buffers[i].m.planes = planes;
     }
 
     enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
@@ -256,16 +263,16 @@ nv_video_encoder_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out
 
     if (dq_out >= 0 || errno == EAGAIN) {
         if (dq_out < 0) {
-            static int out_idx = 0;
-            vbuf_out.index = out_idx;
-            out_idx = (out_idx + 1) % s->nb_output_buffers;
+            static int fallback_out_idx = 0;
+            vbuf_out.index = fallback_out_idx;
+            fallback_out_idx = (fallback_out_idx + 1) % s->nb_output_buffers;
         }
 
         for (int j = 0; j < 3; j++) {
             size_t bytes = (j == 0) ? frame->stride[0] * s->height : frame->stride[j] * (s->height / 2);
-            memcpy((void*)s->output_buffers[out_idx].m.planes[j].m.userptr, frame->plane[j], bytes);
+            memcpy((void*)s->output_buffers[vbuf_out.index].m.planes[j].m.userptr, frame->plane[j], bytes);
             planes_out[j].bytesused = bytes;
-            planes_out[j].length = s->output_buffers[out_idx].m.planes[j].length;
+            planes_out[j].length = s->output_buffers[vbuf_out.index].m.planes[j].length;
         }
 
         ioctl(s->fd, VIDIOC_QBUF, &vbuf_out);
