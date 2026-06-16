@@ -2,7 +2,7 @@
 
 This guide explains how to properly write tests for your custom plugins in `zstreamer`.
 
-## 1. Writing Tests in `tests/test_core.c`
+## 1. Writing Tests in tests/test_core.c
 
 When developing new plugins or core features, you should add your tests to `tests/test_core.c`. This file contains the test suite for `zstreamer`.
 

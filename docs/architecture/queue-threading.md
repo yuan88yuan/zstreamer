@@ -16,7 +16,7 @@ When you insert a `queue` element into a pipeline (e.g., `source -> queue -> sin
 
 This decoupling means that if the sink temporarily blocks (e.g., waiting for the clock to sync before rendering a frame), the source can continue producing buffers and filling the queue, preventing the entire pipeline from stalling.
 
-## Thread-Safe Bounded Queue (`zst_queue_t`)
+## Thread-Safe Bounded Queue (zst_queue_t)
 
 The core of this decoupling is the `zst_queue_t` object. It provides thread-safe operations for enqueuing and dequeuing items (typically `zst_buffer_t` objects).
 

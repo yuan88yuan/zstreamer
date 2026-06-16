@@ -13,28 +13,28 @@ The `zst_event_t` structure contains:
 
 ## Common Event Patterns
 
-### 1. Handling Errors (`ZST_EVENT_ERROR`)
+### 1. Handling Errors (ZST_EVENT_ERROR)
 
 When an element encounters a fatal error (e.g., failed to open a file, decoding error), it should not simply return an error code or crash. Instead, it posts an error event to the bus.
 
 -   **Posting:** `zst_bus_post_error(bus, element, "Detailed error message");`
 -   **Handling:** The application pops the event, logs the error message (`event->as.error.message`), and typically initiates pipeline shutdown or recovery procedures.
 
-### 2. EOS Propagation (`ZST_EVENT_EOS`)
+### 2. EOS Propagation (ZST_EVENT_EOS)
 
 End-Of-Stream (EOS) indicates that a stream has finished and no more data will be produced.
 
 -   **Generation:** A source element (like a file reader) detects the end of the file and posts an EOS event. Alternatively, an element can send an EOS event downstream via `zst_pad_push_event()`. When an EOS event reaches a sink element, the sink typically posts a bus message to notify the application.
 -   **Handling:** The application waits for EOS events from all active sinks. Once received, it knows the pipeline has finished processing and can be safely stopped.
 
-### 3. State Changes (`ZST_EVENT_STATE_CHANGED`)
+### 3. State Changes (ZST_EVENT_STATE_CHANGED)
 
 When an element transitions between states (NULL -> READY -> PLAYING), it posts a state change event.
 
 -   **Posting:** The framework automatically handles posting state change events when `zst_element_set_state()` completes successfully. The event payload (`event->as.state_changed`) contains the `old_state` and `new_state`.
 -   **Handling:** The application uses these events to track the overall progress of pipeline state changes, especially asynchronous ones.
 
-### 4. Segment Messages (`ZST_EVENT_SEGMENT`)
+### 4. Segment Messages (ZST_EVENT_SEGMENT)
 
 Segment events communicate timing and boundaries for the media stream. They are crucial for seeking and synchronized playback.
 

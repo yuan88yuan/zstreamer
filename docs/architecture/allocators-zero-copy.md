@@ -2,7 +2,7 @@
 
 zstreamer is designed for high-performance multimedia processing, which requires minimizing memory copying and allocation overhead during the active `PLAYING` state. This is achieved through a robust allocator interface (`zst_allocator_t`) and buffer pools (`zst_buffer_pool_t`).
 
-## `zst_allocator_t` Interface
+## zst_allocator_t Interface
 
 The `zst_allocator_t` provides an abstraction over different types of memory. It defines a standard interface for allocating, freeing, mapping, and unmapping memory blocks.
 
@@ -13,7 +13,7 @@ zstreamer supports several allocator backends:
 
 By abstracting the memory source, elements can work with buffers without knowing their underlying physical location, while still enabling zero-copy pipelines when compatible allocators are used.
 
-## `zst_buffer_pool_t` for Allocation Prevention
+## zst_buffer_pool_t for Allocation Prevention
 
 Dynamic memory allocation (`malloc`/`free`) is a common source of performance jitter and latency. zstreamer avoids this during pipeline execution by using buffer pools.
 
