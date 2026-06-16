@@ -295,7 +295,8 @@ When working on this project, the most important files to read first:
    - [`wiki/phase-elements.md`](phase-elements.md) — Phase 4 (12+ element implementations)
    - [`wiki/phase-infrastructure.md`](phase-infrastructure.md) — Phases 5–7 (caps, bus, plugins)
    - [`wiki/phase-advanced.md`](phase-advanced.md) — Phase 8 (allocator, clock, advanced)
-   - [`wiki/phase-future.md`](phase-future.md) — Phases 9–10 (CI, docs)
+   - [`wiki/phase-testing-ci.md`](phase-testing-ci.md) — Phase 9 (testing, CI)
+   - [`wiki/phase-documentation.md`](phase-documentation.md) — Phase 10 (docs)
 5. `CMakeLists.txt` — Build targets and dependencies
 6. `src/zst_queue_element.c` — Queue element implementation
 7. `src/v4l2_source.c` — Real V4L2 capture (reference for HW element pattern)

@@ -8,7 +8,8 @@ All phases are now documented in separate files for easier maintenance.
 | 4     | [Element Implementations](phase-elements.md) | ~450 | ✅ Done (34 implemented, including V4L2 Sink) + planned additions |
 | 5–7   | [Infrastructure](phase-infrastructure.md) | ~58 | ✅ Complete |
 | 8     | [Advanced Features](phase-advanced.md) | ~417 | 🔄 In Progress |
-| 9–10  | [Future Work](phase-future.md) | ~34 | 🔄 In Progress |
+| 9     | [Testing & CI](phase-testing-ci.md) | ~10 | 🔄 In Progress |
+| 10    | [Documentation](phase-documentation.md) | ~25 | ⬜ Planned |
 | Post-P0 | [RTMP Hardening](phase-rtmp-hardening.md) | ~60 | ✅ Done |
 | Post-P0 | [RTSP Media-On-Demand](phase-rtsp-mod.md) | ~70 | ✅ Done |
 | Post-P0 | [Xilinx VCU Integration](phase-xilinx-vcu.md) | ~30 | ⬜ Planned |
@@ -32,7 +33,7 @@ All phases are now documented in separate files for easier maintenance.
 | Allocator API (8a) | ✅ Done | Pool + elements migration done; comprehensive pool unit tests completed |
 | Clock (8b) | ✅ Done | System clock, pipeline integration |
 | Testing & CI (9) | 🔄 In Progress | CI pipeline, stress tests, static analysis |
-| Documentation (10) | ⬜ Planned | Doxygen API ref, tutorials |
+| Documentation (10) | ⬜ Planned | Doxygen API ref, tutorials, deep-dives, plugin guide |
 | Advanced Features (8c) | ✅ Done | Element bin, pad probes, segment seeking |
 | Element Public API (8d) | ✅ Done | Descriptor ABI, plugin introspection, typed properties, official element metadata, convenience headers, library & installation layout |
 
