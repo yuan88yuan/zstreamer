@@ -303,6 +303,7 @@ set(ELEMENT_LIBRARY_SOURCES
     src/file_source.c
     src/fake_sink.c
     src/video_scaler.c
+    src/nv_video_scaler.c
     src/audio_resampler.c
     src/video_test_src.c
     src/audio_test_src.c
@@ -360,6 +361,7 @@ set(ELEMENT_SOURCES
     src/alsa_source.c
     src/aac_encoder.c
     src/video_scaler.c
+    src/nv_video_scaler.c
     src/audio_resampler.c
     src/text_overlay.c
     src/video_test_src.c
@@ -613,6 +615,18 @@ if(BUILD_TESTS)
     )
 
     # -- full pipeline example --
+    add_test(NAME test_nv_video_scaler COMMAND test_nv_video_scaler)
+
+    add_executable(test_nv_video_scaler
+        tests/test_nv_video_scaler.c
+    )
+    target_include_directories(test_nv_video_scaler
+        PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+    )
+    target_link_libraries(test_nv_video_scaler
+        PRIVATE zstreamer-elements
+    )
+
     add_executable(example_record
         tests/example_record.c
     )
