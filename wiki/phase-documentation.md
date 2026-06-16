@@ -18,5 +18,5 @@
 - [ ] **Queue Threading Model Explainer:** How `zst_queue_t` decouple pipeline branches with thread pools and atomic ref-counting.
 
 ## 4. Plugin Authoring
-- [ ] **Plugin Authoring Guide:** Steps to implement a custom element `zst_element_ops_t`, property registration, capabilities setup, and dynamic loading via `zst_plugin_registry_t`.
-- [ ] **Testing Plugins:** How to properly write tests in `tests/test_core.c` using standard mock sources/sinks and ensuring the plugin builds gracefully.
+- [x] **Plugin Authoring Guide:** Steps to implement a custom element `zst_element_ops_t`, property registration, capabilities setup, and dynamic loading via `zst_plugin_registry_t`.
+- [x] **Testing Plugins:** How to properly write tests in `tests/test_core.c` using standard mock sources/sinks and ensuring the plugin builds gracefully.
