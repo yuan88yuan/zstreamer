@@ -6533,7 +6533,7 @@ static void test_nv_video_encoder(void) {
     zst_pipeline_t* pipe = zst_pipeline_create();
 
     zst_element_t* src = zst_element_factory_make("videotestsrc");
-    zst_element_t* nvenc = zst_element_factory_make("nvenv");
+    zst_element_t* nvenc = zst_element_factory_make("nvenc");
     zst_element_t* sink = zst_element_factory_make("fakesink");
 
     assert(src && nvenc && sink);
