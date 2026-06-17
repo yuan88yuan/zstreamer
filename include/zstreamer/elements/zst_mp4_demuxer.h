@@ -12,10 +12,12 @@ extern "C" {
 #define ZST_MP4_DEMUXER_FACTORY "mp4demux"
 
 #define ZST_MP4_DEMUXER_PROP_LOCATION     "location"
+#define ZST_MP4_DEMUXER_PROP_REAL_TIME_PACING "real-time-pacing"
 
 typedef struct {
     size_t struct_size;
     const char* location;
+    bool real_time_pacing;
 } zst_mp4_demuxer_config_t;
 
 zst_element_t* zst_mp4_demuxer_create(void);

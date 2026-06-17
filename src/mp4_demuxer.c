@@ -62,6 +62,8 @@ typedef struct {
     char             location[256];
     int              direct_file;
     zst_time_t       base_time;
+
+    bool             real_time_pacing;
 } mp4_demuxer_t;
 
 /* ── Push-mode buffer queue helpers ──────────────────────────────────── */
@@ -621,7 +623,7 @@ mp4_demux_process(zst_element_t* el)
                 zst_time_t file_dts = av_rescale_q(pkt->dts, tb, (AVRational){1, 1000000000});
                 out->duration = av_rescale_q(pkt->duration, tb, (AVRational){1, 1000000000});
 
-                if (s->direct_file && el->clock) {
+                if ((s->direct_file || s->real_time_pacing) && el->clock) {
                     if (s->base_time == 0) {
                         s->base_time = zst_clock_get_time(el->clock);
                     }
@@ -632,10 +634,11 @@ mp4_demux_process(zst_element_t* el)
                     out->dts = file_dts;
                 }
 
-                /* Clock sync if enabled in direct-file mode */
-                if (s->direct_file && el->pipeline && el->pipeline->clock_sync && el->clock && out->pts > 0) {
+                /* Clock sync if enabled in direct-file mode or real-time pacing is on */
+                bool should_wait = s->real_time_pacing || (s->direct_file && el->pipeline && el->pipeline->clock_sync);
+                if (should_wait && el->clock && out->pts > 0) {
                     zst_time_t current = zst_clock_get_time(el->clock);
-                    if (out->pts > current + 5000000ULL) {
+                    if (out->pts > current) {
                         zst_clock_wait(el->clock, out->pts - current);
                     }
                 }
@@ -790,6 +793,9 @@ mp4_demux_set_property(zst_element_t* el, const char* name, const char* value)
         snprintf(s->location, sizeof(s->location), "%s", value);
         s->direct_file = s->location[0] != '\0';
         return ZST_OK;
+    } else if (strcmp(name, "real-time-pacing") == 0) {
+        s->real_time_pacing = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcmp(value, "yes") == 0);
+        return ZST_OK;
     }
     return ZST_ERROR;
 }
@@ -800,6 +806,9 @@ mp4_demux_get_property(zst_element_t* el, const char* name, char* value_out, siz
     mp4_demuxer_t* s = el->priv;
     if (strcmp(name, "location") == 0 || strcmp(name, "path") == 0) {
         snprintf(value_out, max_len, "%s", s->location);
+        return ZST_OK;
+    } else if (strcmp(name, "real-time-pacing") == 0) {
+        snprintf(value_out, max_len, "%s", s->real_time_pacing ? "true" : "false");
         return ZST_OK;
     }
     return ZST_ERROR;
@@ -849,12 +858,17 @@ zst_mp4_demuxer_create(void)
 zst_element_t*
 zst_mp4_demuxer_create_with_config(const zst_mp4_demuxer_config_t* config)
 {
-    if (!config || config->struct_size < sizeof(zst_mp4_demuxer_config_t)) return NULL;
+    if (!config || config->struct_size < sizeof(size_t)) return NULL;
     zst_element_t* el = zst_element_factory_make("mp4demux");
     if (!el) return NULL;
 
-    if (config->location) {
-        zst_element_set_property_string(el, "location", config->location);
+    if (config->struct_size >= offsetof(zst_mp4_demuxer_config_t, location) + sizeof(config->location)) {
+        if (config->location) {
+            zst_element_set_property_string(el, "location", config->location);
+        }
+    }
+    if (config->struct_size >= sizeof(zst_mp4_demuxer_config_t)) {
+        zst_element_set_property_bool(el, "real-time-pacing", config->real_time_pacing);
     }
 
     return el;
@@ -891,7 +905,8 @@ plugin_create_element(const char* name)
 }
 
 static const zst_property_spec_t g_mp4demux_properties[] = {
-    { "location", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Input MP4 file path (optional; enables direct-file mode)" }
+    { "location", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Input MP4 file path (optional; enables direct-file mode)" },
+    { "real-time-pacing", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Make stream output at pts timing" }
 };
 
 static const zst_pad_template_t g_mp4demux_pads[] = {
