@@ -27,6 +27,7 @@ pkg_check_modules(AVFORMAT REQUIRED libavformat)
 pkg_check_modules(AVCODEC REQUIRED libavcodec)
 pkg_check_modules(AVUTIL REQUIRED libavutil)
 pkg_check_modules(X264 REQUIRED x264)
+pkg_check_modules(X265 REQUIRED x265)
 pkg_check_modules(ALSA REQUIRED alsa)
 pkg_check_modules(V4L2 REQUIRED libv4l2)
 pkg_check_modules(SWSCALE REQUIRED libswscale)
@@ -180,6 +181,7 @@ set(ELEMENT_INCLUDE_DIRS
     ${AVCODEC_INCLUDE_DIRS}
     ${AVUTIL_INCLUDE_DIRS}
     ${X264_INCLUDE_DIRS}
+    ${X265_INCLUDE_DIRS}
     ${ALSA_INCLUDE_DIRS}
     ${V4L2_INCLUDE_DIRS}
     ${SWSCALE_INCLUDE_DIRS}
@@ -193,6 +195,7 @@ set(ELEMENT_LIBRARIES
     ${AVCODEC_LIBRARIES}
     ${AVUTIL_LIBRARIES}
     ${X264_LIBRARIES}
+    ${X265_LIBRARIES}
     ${ALSA_LIBRARIES}
     ${V4L2_LIBRARIES}
     ${SWSCALE_LIBRARIES}
@@ -293,6 +296,7 @@ set(ELEMENT_LIBRARY_SOURCES
     src/alsa_source.c
     src/alsa_sink.c
     src/x264_encoder.c
+    src/x265_encoder.c
     src/h264_decoder.c
     src/h265_encoder.c
     src/h265_decoder.c
@@ -359,6 +363,7 @@ set(ELEMENT_SOURCES
     src/v4l2_source.c
     src/v4l2_sink.c
     src/x264_encoder.c
+    src/x265_encoder.c
     src/mp4_muxer.c
     src/file_sink.c
     src/fake_sink.c
@@ -423,6 +428,10 @@ target_link_libraries(zst_alsasink PRIVATE zstreamer ${ALSA_LIBRARIES})
 add_library(zst_x264encoder SHARED src/x264_encoder.c)
 target_compile_definitions(zst_x264encoder PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_x264encoder PRIVATE zstreamer ${X264_LIBRARIES})
+
+add_library(zst_x265encoder SHARED src/x265_encoder.c)
+target_compile_definitions(zst_x265encoder PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_x265encoder PRIVATE zstreamer ${X265_LIBRARIES})
 
 add_library(zst_aacencoder SHARED src/aac_encoder.c)
 target_compile_definitions(zst_aacencoder PRIVATE BUILDING_PLUGIN)
@@ -530,7 +539,7 @@ else()
     set(JETSON_PLUGINS "")
 endif()
 
-set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_v4l2sink zst_rtspsource zst_rtspsink zst_rtsp_server zst_alsasource zst_alsasink zst_x264encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_textsource zst_netsrc zst_netsink zst_h264decoder zst_h265encoder zst_h265decoder zst_aacdecoder zst_rtmpsource zst_rtmpsink zst_srt zst_mpegtsmux zst_mpegtsdemux zst_mp4demux zst_httpsource ${JETSON_PLUGINS})
+set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_v4l2source zst_v4l2sink zst_rtspsource zst_rtspsink zst_rtsp_server zst_alsasource zst_alsasink zst_x264encoder zst_x265encoder zst_aacencoder zst_mp4muxer zst_videoscaler zst_audioresampler zst_textoverlay zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_textsource zst_netsrc zst_netsink zst_h264decoder zst_h265encoder zst_h265decoder zst_aacdecoder zst_rtmpsource zst_rtmpsink zst_srt zst_mpegtsmux zst_mpegtsdemux zst_mp4demux zst_httpsource ${JETSON_PLUGINS})
 foreach(plugin ${PLUGIN_TARGETS})
     target_include_directories(${plugin} PRIVATE ${ZSTREAMER_INCLUDE_DIR} PRIVATE ${ELEMENT_INCLUDE_DIRS})
     set_target_properties(${plugin} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")

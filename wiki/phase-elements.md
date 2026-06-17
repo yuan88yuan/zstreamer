@@ -261,7 +261,8 @@ Decodes H.264 elementary stream packets into raw video frames for processing, tr
 Encodes raw video frames to H.265/HEVC for lower bitrate streaming and storage profiles.
 
 - [x] `h265enc` element with 1 sink pad (`video/x-raw`) and 1 src pad (`video/x-h265`)
-- [x] Backend: x265 (`libx265`) or FFmpeg HEVC encoder (`AV_CODEC_ID_HEVC`)
+- [x] `x265enc` element with 1 sink pad (`video/x-raw`) and 1 src pad (`video/x-h265`)
+- [x] Backend: x265 (`libx265`) and FFmpeg HEVC encoder (`AV_CODEC_ID_HEVC`) natively supported via two distinct plugins
 - [x] Accept I420/YUV420P frames from `zst_video_frame_t` payload
 - [x] Configurable preset/tune, CRF/bitrate, GOP/keyframe interval, profile/level
 - [x] Output VPS/SPS/PPS headers and frame NAL units in Annex B format
@@ -269,7 +270,7 @@ Encodes raw video frames to H.265/HEVC for lower bitrate streaming and storage p
 - [x] EOS flush: drain delayed encoder frames before propagating EOS
 - [x] Caps negotiation: advertise `video/x-h265` with stream format/profile metadata
 
-**Dependencies:** `libavcodec-dev`, `libavutil-dev`
+**Dependencies:** `libavcodec-dev`, `libavutil-dev`, `libx265-dev`
 
 ### 4x — H.265 Decoder  (✅ Done)
 
