@@ -585,6 +585,19 @@ if(BUILD_TESTS)
         COMMAND test_audiotestsrc_timing
     )
 
+    add_executable(test_mp4demux_timing
+        tests/test_mp4demux_timing.c
+    )
+    target_include_directories(test_mp4demux_timing
+        PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+    )
+    target_link_libraries(test_mp4demux_timing
+        PRIVATE zstreamer-elements m
+    )
+    add_test(NAME test_mp4demux_timing
+        COMMAND test_mp4demux_timing
+    )
+
     add_executable(test_custom_paced_video_source
         tests/test_custom_paced_video_source.c
     )
