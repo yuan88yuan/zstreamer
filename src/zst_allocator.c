@@ -352,6 +352,7 @@ zst_allocator_dmabuf_get_fd(zst_allocator_t* allocator, void* ptr)
     return fd;
 }
 
+#ifdef HAS_VULKAN
 #include <vulkan/vulkan.h>
 
 typedef struct {
@@ -611,3 +612,10 @@ zst_allocator_vulkan_create(void)
 
     return alloc;
 }
+#else
+zst_allocator_t*
+zst_allocator_vulkan_create(void)
+{
+    return NULL;
+}
+#endif

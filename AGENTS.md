@@ -123,6 +123,9 @@ docker run --rm -it \
 
 # Docker — rebuild after source changes (cache-friendly)
 docker build -t zstreamer . && docker run --rm zstreamer
+
+# Docker — Cross-compile for ARM64 (Petalinux / Xilinx SC6f0)
+docker build -f Dockerfile.xlnk2_arm64 -t zstreamer-xlnk2-arm64 .
 ```
 
 ### Build Options
@@ -269,6 +272,7 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | Clock Sync Bugfix           | ✅ Fixed (frame-to-frame delta comparison in scheduler — see [wiki/clock-sync-debug.md](wiki/clock-sync-debug.md)) |
 | CI Pipeline                 | ✅ Done (GitHub Actions CI with unit and docker-run loopback integration tests) |
 | Documentation               | ✅ Phase 10 Done (Doxygen, Tutorials, Architecture Deep-Dives, Plugin Authoring) |
+| ARM64 Cross-compilation     | ✅ Done (added optional dependency guards, CMake support, unit test skips, and build verification via Dockerfile.xlnk2_arm64) |
 
 ---
 

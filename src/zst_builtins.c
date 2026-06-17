@@ -5,7 +5,7 @@
     lives in libzstreamer-elements.  Each element constructor is referenced
     via a direct (strong) extern declaration — no weak symbols — so the
     linker naturally pulls in the element .o files from the static archive,
-    and --as-needed keeps libzstreamer-elements.so in the NEETED list.
+    and --as-needed keeps libzstreamer-elements.so in the NEEDED list.
 
     Because this function is ONLY defined here (not in the core library),
     any app that calls zst_register_builtin_elements() creates a strong
@@ -21,8 +21,10 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "zst_plugin.h"
+#ifdef HAS_FFMPEG
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#endif
 #include "zst_element_factory.h"
 #include <string.h>
 #include <stdlib.h>
@@ -35,44 +37,68 @@
 zst_element_t* zst_queue_element_create(const char* name);
 
 zst_element_t* zst_file_source_create(const char* path);
+#ifdef HAS_FFMPEG
 zst_element_t* zst_http_source_create(const char* url);
+#endif
 zst_element_t* zst_file_sink_create(const char* path);
 zst_element_t* zst_fake_sink_create(void);
+#ifdef HAS_V4L2
 zst_element_t* zst_v4l2_source_create(void);
 zst_element_t* zst_v4l2_sink_create(void);
+#endif
+#ifdef HAS_ALSA
 zst_element_t* zst_alsa_source_create(void);
 zst_element_t* zst_alsa_sink_create(void);
+#endif
+#ifdef HAS_X264
 zst_element_t* zst_x264_encoder_create(void);
+#endif
+#ifdef HAS_X265
 zst_element_t* zst_x265_encoder_create(void);
+#endif
+#ifdef HAS_FFMPEG
 zst_element_t* zst_h264_decoder_create(void);
 zst_element_t* zst_h265_encoder_create(void);
 zst_element_t* zst_h265_decoder_create(void);
+#endif
 #ifdef HAS_JETSON
 zst_element_t* zst_nv_video_encoder_create(void);
 zst_element_t* zst_nv_video_decoder_create(void);
 #endif
+#ifdef HAS_FFMPEG
 zst_element_t* zst_aac_encoder_create(void);
 zst_element_t* zst_aac_decoder_create(void);
 zst_element_t* zst_mp4_muxer_create(void);
 zst_element_t* zst_video_scaler_create(int target_width, int target_height, const char* target_pixel_format);
 zst_element_t* zst_audio_resampler_create(int target_sample_rate, int target_channels, const char* target_format);
+#endif
 zst_element_t* zst_video_test_src_create(void);
 zst_element_t* zst_audio_test_src_create(void);
+#ifdef HAS_FREETYPE
 zst_element_t* zst_text_overlay_create(const char* text);
 zst_element_t* zst_text_source_create(void);
+#endif
 zst_element_t* zst_srt_parser_create(const char* path);
 zst_element_t* zst_net_source_create(void);
 zst_element_t* zst_net_sink_create(void);
+#ifdef HAS_FFMPEG
 zst_element_t* zst_rtsp_source_create(const char* url);
 zst_element_t* zst_rtsp_sink_create(void);
+#endif
 zst_element_t* zst_rtsp_server_create(void);
+#ifdef HAS_FFMPEG
 zst_element_t* zst_rtmp_source_create(const char* url);
 zst_element_t* zst_rtmp_sink_create(void);
+#endif
+#ifdef HAS_SRT
 zst_element_t* zst_srt_source_create(void);
 zst_element_t* zst_srt_sink_create(void);
+#endif
+#ifdef HAS_FFMPEG
 zst_element_t* zst_mpegts_muxer_create(void);
 zst_element_t* zst_mpegts_demuxer_create(void);
 zst_element_t* zst_mp4_demuxer_create(void);
+#endif
 zst_element_t* zst_nv_video_scaler_create(void);
 
 /*──────────────────────────────────────────────────────────────────────────
@@ -87,12 +113,17 @@ static const zst_pad_template_t g_pad_video_src[]    = { { "src", ZST_PAD_SRC, "
 static const zst_pad_template_t g_pad_audio_src[]    = { { "src", ZST_PAD_SRC, "audio/x-raw" } };
 static const zst_pad_template_t g_pad_srt_parser[]   = { { "src", ZST_PAD_SRC, "text/x-raw" } };
 
+#ifdef HAS_X264
 static const zst_pad_template_t g_pad_x264enc[] = {
     { "sink", ZST_PAD_SINK, "video/x-raw" }, { "src", ZST_PAD_SRC, "video/x-h264" }
 };
+#endif
+#ifdef HAS_X265
 static const zst_pad_template_t g_pad_x265enc[] = {
     { "sink", ZST_PAD_SINK, "video/x-raw" }, { "src", ZST_PAD_SRC, "video/x-h265" }
 };
+#endif
+#ifdef HAS_FFMPEG
 static const zst_pad_template_t g_pad_h264dec[] = {
     { "sink", ZST_PAD_SINK, "video/x-h264" }, { "src", ZST_PAD_SRC, "video/x-raw" }
 };
@@ -108,6 +139,7 @@ static const zst_pad_template_t g_pad_aacenc[] = {
 static const zst_pad_template_t g_pad_aacdec[] = {
     { "sink", ZST_PAD_SINK, "audio/x-aac" }, { "src", ZST_PAD_SRC, "audio/x-raw" }
 };
+#endif
 static const zst_pad_template_t g_pad_video_filter[] = {
     { "sink", ZST_PAD_SINK, "video/x-raw" }, { "src", ZST_PAD_SRC, "video/x-raw" }
 };
@@ -115,28 +147,35 @@ static const zst_pad_template_t g_pad_audio_filter[] = {
     { "sink", ZST_PAD_SINK, "audio/x-raw" }, { "src", ZST_PAD_SRC, "audio/x-raw" }
 };
 
+#ifdef HAS_FFMPEG
 static const zst_pad_template_t g_pad_mp4mux[]       = {
     { "video", ZST_PAD_SINK, "video/x-h264" }, { "audio", ZST_PAD_SINK, "audio/x-aac" }, { "src", ZST_PAD_SRC, "video/quicktime" }
 };
+#endif
 static const zst_pad_template_t g_pad_net_src[] = {
     { "src", ZST_PAD_SRC, "application/octet-stream" }
 };
 static const zst_pad_template_t g_pad_net_sink[] = {
     { "sink", ZST_PAD_SINK, "application/octet-stream" }
 };
+#ifdef HAS_FREETYPE
 static const zst_pad_template_t g_pad_textoverlay[]  = {
     { "sink", ZST_PAD_SINK, "video/x-raw" }, { "text", ZST_PAD_SINK, "text/x-raw" }, { "src", ZST_PAD_SRC, "video/x-raw" }
 };
+#endif
+#ifdef HAS_FFMPEG
 static const zst_pad_template_t g_pad_rtsp_src[]     = {
     { "video", ZST_PAD_SRC, "video/x-h264" }, { "audio", ZST_PAD_SRC, "audio/x-aac" }
 };
 static const zst_pad_template_t g_pad_rtsp_sink[]    = {
     { "video", ZST_PAD_SINK, "video/x-h264" }, { "audio", ZST_PAD_SINK, "audio/x-aac" }
 };
+#endif
 static const zst_pad_template_t g_pad_rtsp_server[]  = {
     { "video_%u", ZST_PAD_SINK, "video/x-h264" }, { "audio_%u", ZST_PAD_SINK, "audio/x-aac" }
 };
 
+#ifdef HAS_FFMPEG
 static const zst_pad_template_t g_pad_rtmp_src[]     = {
     { "video", ZST_PAD_SRC, "video/x-h264" },
     { "audio", ZST_PAD_SRC, "audio/x-aac" }
@@ -158,6 +197,7 @@ static const zst_pad_template_t g_pad_tsdemux[]     = {
 static const zst_pad_template_t g_pad_mp4demux[]     = {
     { "sink", ZST_PAD_SINK, "video/quicktime" }, { "video", ZST_PAD_SRC, "video/x-h264" }, { "audio", ZST_PAD_SRC, "audio/x-aac" }
 };
+#endif
 
 /*──────────────────────────────────────────────────────────────────────────
   Property spec tables (for elements that expose typed properties).
@@ -170,6 +210,7 @@ static const zst_property_spec_t g_builtin_filesrc_props[] = {
     { "length", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Maximum number of bytes to read; -1 means unlimited" }
 };
 
+#ifdef HAS_FFMPEG
 static const zst_property_spec_t g_builtin_httpsrc_props[] = {
     { "url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "URL of the HTTP/HTTPS resource" },
     { "uri", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Alias for url" },
@@ -181,6 +222,7 @@ static const zst_property_spec_t g_builtin_httpsrc_props[] = {
     { "reconnect-delay-ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "500", "Delay between reconnect attempts in milliseconds" },
     { "max-reconnect-attempts", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Maximum reconnect attempts; -1 means unlimited" }
 };
+#endif
 
 static const zst_property_spec_t g_builtin_filesink_props[] = {
     { "path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Output file path" },
@@ -193,6 +235,7 @@ static const zst_property_spec_t g_builtin_fakesink_props[] = {
     { "total-bytes", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE, "0", "Number of bytes received since open" }
 };
 
+#ifdef HAS_FFMPEG
 static const zst_property_spec_t g_builtin_rtmpsrc_props[] = {
     { "url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "RTMP Endpoint URL (supports rtmp://user:pass@host/app/stream)" },
     { "rtmp_url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Alias for url" },
@@ -212,7 +255,9 @@ static const zst_property_spec_t g_builtin_rtmpsink_props[] = {
     { "reconnect-delay-ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "500", "Delay between reconnect attempts" },
     { "max-reconnect-attempts", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "-1", "Maximum reconnect attempts; -1 means unlimited" }
 };
+#endif
 
+#ifdef HAS_SRT
 static const zst_property_spec_t g_builtin_srtsrc_props[] = {
     { "uri", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "SRT Connection URI" },
     { "host", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "127.0.0.1", "SRT peer host (caller/rendezvous modes)" },
@@ -236,7 +281,9 @@ static const zst_property_spec_t g_builtin_srtsink_props[] = {
     { "streamid", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "SRT stream ID" },
     { "payload-size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1316", "SRT packet payload size" }
 };
+#endif
 
+#ifdef HAS_FFMPEG
 static const zst_property_spec_t g_builtin_rtspsrc_props[] = {
     { "url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "RTSP URL" },
     { "rtsp_url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Alias for url" },
@@ -286,6 +333,7 @@ static const zst_property_spec_t g_builtin_tsdemux_props[] = {
 static const zst_property_spec_t g_builtin_mp4demux_props[] = {
     { "location", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Input MP4 file path (optional; enables direct-file mode)" }
 };
+#endif
 
 static const zst_property_spec_t g_builtin_videotestsrc_props[] = {
     { "width", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "640", "Video width" },
@@ -301,7 +349,7 @@ static const zst_property_spec_t g_builtin_videotestsrc_props[] = {
 
 static const zst_property_spec_t g_builtin_audiotestsrc_props[] = {
     { "sample-rate", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "44100", "Audio sample rate" },
-    { "channels", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "2", "Audio channels" },
+    { "channels", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "2", "Audio channels count" },
     { "sample-format", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "S16LE", "Audio sample format" },
     { "wave", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "sine", "Audio wave type" },
     { "frequency", ZST_PROPERTY_DOUBLE, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "440.0", "Frequency of tone" },
@@ -314,6 +362,7 @@ static const zst_property_spec_t g_builtin_audiotestsrc_props[] = {
     { "real-time-pacing", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Pace generated audio buffers in real time" }
 };
 
+#ifdef HAS_FREETYPE
 static const zst_property_spec_t g_builtin_textoverlay_props[] = {
     { "text", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Text to overlay" },
     { "timecode", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Show timecode" },
@@ -322,6 +371,7 @@ static const zst_property_spec_t g_builtin_textoverlay_props[] = {
     { "x", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "10", "X coordinate" },
     { "y", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "10", "Y coordinate" }
 };
+#endif
 
 static const zst_property_spec_t g_builtin_netsrc_props[] = {
     { "host", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "127.0.0.1", "Network host to bind or connect to" },
@@ -347,6 +397,7 @@ static const zst_property_spec_t g_builtin_rtspserver_props[] = {
     { "client_count", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE, "0", "Number of connected RTSP clients" }
 };
 
+#ifdef HAS_FREETYPE
 static const zst_property_spec_t g_builtin_textsource_props[] = {
     { "width", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "640", "Video width" },
     { "height", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "480", "Video height" },
@@ -372,7 +423,9 @@ static const zst_property_spec_t g_builtin_textsource_props[] = {
     { "x", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "10", "X coordinate offset" },
     { "y", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "10", "Y coordinate offset" }
 };
+#endif
 
+#ifdef HAS_FFMPEG
 static const zst_property_spec_t g_builtin_mp4mux_props[] = {
     { "width", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "640", "Video width" },
     { "height", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "480", "Video height" },
@@ -384,6 +437,7 @@ static const zst_property_spec_t g_builtin_mp4mux_props[] = {
     { "location", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Output file path" },
     { "path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Alias for location" }
 };
+#endif
 
 /*──────────────────────────────────────────────────────────────────────────
   create_element callback — constructs an element by name using direct
@@ -395,44 +449,68 @@ create_builtin_element(const char* name)
     if (!name) return NULL;
     if (strcmp(name, "queue") == 0)        return zst_queue_element_create(NULL);
     if (strcmp(name, "filesrc") == 0)      return zst_file_source_create("");
+#ifdef HAS_FFMPEG
     if (strcmp(name, "httpsrc") == 0)      return zst_http_source_create("");
+#endif
     if (strcmp(name, "filesink") == 0)     return zst_file_sink_create("");
     if (strcmp(name, "fakesink") == 0)     return zst_fake_sink_create();
+#ifdef HAS_V4L2
     if (strcmp(name, "v4l2src") == 0)      return zst_v4l2_source_create();
     if (strcmp(name, "v4l2sink") == 0)     return zst_v4l2_sink_create();
+#endif
+#ifdef HAS_ALSA
     if (strcmp(name, "alsasrc") == 0)      return zst_alsa_source_create();
     if (strcmp(name, "alsasink") == 0)     return zst_alsa_sink_create();
+#endif
+#ifdef HAS_X264
     if (strcmp(name, "x264enc") == 0)      return zst_x264_encoder_create();
+#endif
+#ifdef HAS_X265
     if (strcmp(name, "x265enc") == 0)      return zst_x265_encoder_create();
+#endif
+#ifdef HAS_FFMPEG
     if (strcmp(name, "h264dec") == 0)      return zst_h264_decoder_create();
     if (strcmp(name, "h265enc") == 0)      return zst_h265_encoder_create();
     if (strcmp(name, "h265dec") == 0)      return zst_h265_decoder_create();
+#endif
 #ifdef HAS_JETSON
     if (strcmp(name, "nvenc") == 0)        return zst_nv_video_encoder_create();
     if (strcmp(name, "nvdec") == 0)        return zst_nv_video_decoder_create();
 #endif
+#ifdef HAS_FFMPEG
     if (strcmp(name, "aacenc") == 0)       return zst_aac_encoder_create();
     if (strcmp(name, "aacdec") == 0)       return zst_aac_decoder_create();
     if (strcmp(name, "mp4mux") == 0)       return zst_mp4_muxer_create();
     if (strcmp(name, "videoscaler") == 0)  return zst_video_scaler_create(0, 0, NULL);
     if (strcmp(name, "audioresampler") == 0) return zst_audio_resampler_create(0, 0, NULL);
+#endif
     if (strcmp(name, "videotestsrc") == 0) return zst_video_test_src_create();
     if (strcmp(name, "audiotestsrc") == 0) return zst_audio_test_src_create();
+#ifdef HAS_FREETYPE
     if (strcmp(name, "textoverlay") == 0)  return zst_text_overlay_create(NULL);
     if (strcmp(name, "textsource") == 0)   return zst_text_source_create();
+#endif
     if (strcmp(name, "srt_parser") == 0)   return zst_srt_parser_create(NULL);
     if (strcmp(name, "netsrc") == 0)       return zst_net_source_create();
     if (strcmp(name, "netsink") == 0)      return zst_net_sink_create();
+#ifdef HAS_FFMPEG
     if (strcmp(name, "rtspsrc") == 0)      return zst_rtsp_source_create(NULL);
     if (strcmp(name, "rtspsink") == 0)     return zst_rtsp_sink_create();
+#endif
     if (strcmp(name, "rtsp_server") == 0)  return zst_rtsp_server_create();
+#ifdef HAS_FFMPEG
     if (strcmp(name, "rtmpsrc") == 0)      return zst_rtmp_source_create(NULL);
     if (strcmp(name, "rtmpsink") == 0)     return zst_rtmp_sink_create();
+#endif
+#ifdef HAS_SRT
     if (strcmp(name, "srtsrc") == 0)       return zst_srt_source_create();
     if (strcmp(name, "srtsink") == 0)      return zst_srt_sink_create();
+#endif
+#ifdef HAS_FFMPEG
     if (strcmp(name, "tsmux") == 0)        return zst_mpegts_muxer_create();
     if (strcmp(name, "tsdemux") == 0)      return zst_mpegts_demuxer_create();
     if (strcmp(name, "mp4demux") == 0)     return zst_mp4_demuxer_create();
+#endif
     if (strcmp(name, "nvvideoscaler") == 0) return zst_nv_video_scaler_create();
     return NULL;
 }
@@ -446,15 +524,26 @@ create_builtin_element(const char* name)
 static const zst_element_desc_t g_builtin_descs[] = {
     DESC("queue",   "Queue",            "Generic",      "Thread-safe buffering element",                                                                                        NULL,                           0, g_pad_filter),
     DESC("filesrc", "File Source",      "Source/File",  "Reads buffers from a local file",                                                                                      g_builtin_filesrc_props,        sizeof(g_builtin_filesrc_props) / sizeof(g_builtin_filesrc_props[0]), g_pad_src),
+#ifdef HAS_FFMPEG
     DESC("httpsrc", "HTTP Source",      "Source/Network", "Reads buffers from HTTP/HTTPS server",                                                                                 g_builtin_httpsrc_props,        sizeof(g_builtin_httpsrc_props) / sizeof(g_builtin_httpsrc_props[0]), g_pad_src),
+#endif
     DESC("filesink", "File Sink",       "Sink/File",    "Writes incoming buffers to a local file",                                                                              g_builtin_filesink_props,       sizeof(g_builtin_filesink_props) / sizeof(g_builtin_filesink_props[0]), g_pad_sink),
     DESC("fakesink", "Fake Sink",       "Sink/Test",    "Consumes buffers and records simple statistics",                                                                       g_builtin_fakesink_props,       sizeof(g_builtin_fakesink_props) / sizeof(g_builtin_fakesink_props[0]), g_pad_sink),
+#ifdef HAS_V4L2
     DESC("v4l2src", "V4L2 Source",      "Source/Video", "Captures video from a V4L2 device",                                                                                    NULL,                           0, g_pad_video_src),
     DESC("v4l2sink", "V4L2 Sink",       "Sink/Video",   "Outputs video to a V4L2 device",                                                                                       NULL,                           0, g_pad_sink),
+#endif
+#ifdef HAS_ALSA
     DESC("alsasrc", "ALSA Source",      "Source/Audio", "Captures audio from ALSA",                                                                                             NULL,                           0, g_pad_audio_src),
     DESC("alsasink", "ALSA Sink",       "Sink/Audio",   "Outputs audio to ALSA",                                                                                                NULL,                           0, g_pad_sink),
+#endif
+#ifdef HAS_X264
     DESC("x264enc", "H.264 Encoder",    "Codec/Encoder","Encodes raw video to H.264",                                                                                           NULL,                           0, g_pad_x264enc),
+#endif
+#ifdef HAS_X265
     DESC("x265enc", "H.265 Encoder",    "Codec/Encoder","Encodes raw video to H.265",                                                                                           NULL,                           0, g_pad_x265enc),
+#endif
+#ifdef HAS_FFMPEG
     DESC("h264dec", "H.264 Decoder",    "Codec/Decoder","Decodes H.264 video frames",                                                                                           NULL,                           0, g_pad_h264dec),
     DESC("h265enc", "H.265 Encoder",    "Codec/Encoder","Encodes raw video to H.265",                                                                                           g_builtin_h265enc_props,        sizeof(g_builtin_h265enc_props) / sizeof(g_builtin_h265enc_props[0]), g_pad_h265enc),
     DESC("h265dec", "H.265 Decoder",    "Codec/Decoder","Decodes H.265 video frames",                                                                                           NULL,                           0, g_pad_h265dec),
@@ -463,23 +552,34 @@ static const zst_element_desc_t g_builtin_descs[] = {
     DESC("mp4mux",  "MP4 Muxer",        "Muxer/File",   "Muxes encoded audio/video into MP4",                                                                                  g_builtin_mp4mux_props,         sizeof(g_builtin_mp4mux_props) / sizeof(g_builtin_mp4mux_props[0]), g_pad_mp4mux),
     DESC("videoscaler", "Video Scaler", "Filter/Video", "Converts video resolution or pixel format",                                                                            NULL,                           0, g_pad_video_filter),
     DESC("audioresampler", "Audio Resampler", "Filter/Audio", "Converts audio sample rate, channels, or format",                                                                NULL,                           0, g_pad_audio_filter),
+#endif
     DESC("videotestsrc", "Video Test Source", "Source/Test", "Generates synthetic video test patterns",                                                                         g_builtin_videotestsrc_props,   sizeof(g_builtin_videotestsrc_props) / sizeof(g_builtin_videotestsrc_props[0]), g_pad_video_src),
     DESC("audiotestsrc", "Audio Test Source", "Source/Test", "Generates synthetic audio test signals",                                                                          g_builtin_audiotestsrc_props,   sizeof(g_builtin_audiotestsrc_props) / sizeof(g_builtin_audiotestsrc_props[0]), g_pad_audio_src),
+#ifdef HAS_FREETYPE
     DESC("textoverlay", "Text Overlay", "Filter/Video", "Overlays text on video frames",                                                                                        g_builtin_textoverlay_props,    sizeof(g_builtin_textoverlay_props) / sizeof(g_builtin_textoverlay_props[0]), g_pad_textoverlay),
     DESC("textsource", "Text Source",   "Source/Video", "Generates video frames containing text",                                                                                g_builtin_textsource_props,     sizeof(g_builtin_textsource_props) / sizeof(g_builtin_textsource_props[0]), g_pad_video_src),
+#endif
     DESC("srt_parser", "SRT Parser",    "Parser/Text",  "Parses SubRip subtitle data",                                                                                          NULL,                           0, g_pad_srt_parser),
     DESC("netsrc",  "Network Source",   "Source/Network","Receives buffers from TCP/UDP or Unix sockets",                                                                       g_builtin_netsrc_props,         sizeof(g_builtin_netsrc_props) / sizeof(g_builtin_netsrc_props[0]), g_pad_net_src),
     DESC("netsink", "Network Sink",     "Sink/Network", "Sends buffers to TCP/UDP or Unix sockets",                                                                             g_builtin_netsink_props,        sizeof(g_builtin_netsink_props) / sizeof(g_builtin_netsink_props[0]), g_pad_net_sink),
+#ifdef HAS_FFMPEG
     DESC("rtspsrc", "RTSP Source",      "Source/Network","Receives audio/video from an RTSP endpoint",                                                                          g_builtin_rtspsrc_props,        sizeof(g_builtin_rtspsrc_props) / sizeof(g_builtin_rtspsrc_props[0]), g_pad_rtsp_src),
     DESC("rtspsink", "RTSP Sink",       "Sink/Network", "Publishes audio/video to an RTSP endpoint",                                                                             g_builtin_rtspsink_props,       sizeof(g_builtin_rtspsink_props) / sizeof(g_builtin_rtspsink_props[0]), g_pad_rtsp_sink),
+#endif
     DESC("rtsp_server", "RTSP Server",  "Sink/Network", "Serves RTP streams over RTSP",                                                                                         g_builtin_rtspserver_props,     sizeof(g_builtin_rtspserver_props) / sizeof(g_builtin_rtspserver_props[0]), g_pad_rtsp_server),
+#ifdef HAS_FFMPEG
     DESC("rtmpsrc",  "RTMP Source",      "Source/Network","Receives audio/video from an RTMP endpoint",                                                                          g_builtin_rtmpsrc_props,        sizeof(g_builtin_rtmpsrc_props) / sizeof(g_builtin_rtmpsrc_props[0]), g_pad_rtmp_src),
     DESC("rtmpsink", "RTMP Sink",        "Sink/Network", "Publishes audio/video to an RTMP endpoint",                                                                             g_builtin_rtmpsink_props,       sizeof(g_builtin_rtmpsink_props) / sizeof(g_builtin_rtmpsink_props[0]), g_pad_rtmp_sink),
+#endif
+#ifdef HAS_SRT
     DESC("srtsrc",   "SRT Source",       "Source/Network","Receives buffers over Secure Reliable Transport (SRT)",                                                                 g_builtin_srtsrc_props,         sizeof(g_builtin_srtsrc_props) / sizeof(g_builtin_srtsrc_props[0]), g_pad_src),
     DESC("srtsink",  "SRT Sink",         "Sink/Network", "Sends buffers over Secure Reliable Transport (SRT)",                                                                   g_builtin_srtsink_props,        sizeof(g_builtin_srtsink_props) / sizeof(g_builtin_srtsink_props[0]), g_pad_sink),
+#endif
+#ifdef HAS_FFMPEG
     DESC("tsmux",    "MPEG-TS Muxer",    "Muxer/File",   "Muxes encoded audio/video into MPEG-TS (.ts)",                                                                         g_builtin_tsmux_props,          sizeof(g_builtin_tsmux_props) / sizeof(g_builtin_tsmux_props[0]), g_pad_tsmux),
     DESC("tsdemux",  "MPEG-TS Demuxer",  "Demuxer",      "Demuxes MPEG-TS (.ts) into encoded audio/video",                                                                       g_builtin_tsdemux_props,        sizeof(g_builtin_tsdemux_props) / sizeof(g_builtin_tsdemux_props[0]), g_pad_tsdemux),
     DESC("mp4demux", "MP4 Demuxer",      "Demuxer/File", "Demuxes MP4 (.mp4/.mov/.m4a/.m4v) into encoded audio/video",                                                             g_builtin_mp4demux_props,       sizeof(g_builtin_mp4demux_props) / sizeof(g_builtin_mp4demux_props[0]), g_pad_mp4demux),
+#endif
     DESC("nvvideoscaler", "NVIDIA V4L2 Video Scaler", "Filter/Video", "Hardware video scaler and format converter using NV V4L2 extensions",                                    NULL,                           0, g_pad_video_filter)
 };
 
@@ -493,6 +593,7 @@ zst_register_builtin_elements(void)
 {
     zst_result_t ret;
 
+#ifdef HAS_FFMPEG
 #if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(58, 9, 100)
     static int ffmpeg_initialized = 0;
     if (!ffmpeg_initialized) {
@@ -500,6 +601,7 @@ zst_register_builtin_elements(void)
         av_register_all();
         ffmpeg_initialized = 1;
     }
+#endif
 #endif
 
     ret = zst_plugin_registry_init();

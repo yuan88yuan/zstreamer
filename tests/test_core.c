@@ -954,6 +954,7 @@ test_bin_eos_convergence(void)
     PASS();
 }
 
+#ifdef HAS_X264
 static void
 test_bin_use_case_capture_bin(void)
 {
@@ -1008,6 +1009,7 @@ test_bin_use_case_capture_bin(void)
     zst_pipeline_destroy(pipe);
     PASS();
 }
+#endif
 
 static zst_result_t
 mock_muxer_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
@@ -3150,21 +3152,28 @@ test_element_factory_refcounting(void)
     assert(fakesink->plugin != NULL);
     assert(strcmp(fakesink->ops->name, "fakesink") == 0);
     
+#ifdef HAS_V4L2
     zst_element_t* v4l2source = zst_element_factory_make("v4l2src");
     assert(v4l2source != NULL);
     assert(v4l2source->plugin != NULL);
     assert(strcmp(v4l2source->ops->name, "v4l2src") == 0);
+#endif
     
+#ifdef HAS_ALSA
     zst_element_t* alsasource = zst_element_factory_make("alsasrc");
     assert(alsasource != NULL);
     assert(alsasource->plugin != NULL);
     assert(strcmp(alsasource->ops->name, "alsasrc") == 0);
+#endif
     
+#ifdef HAS_X264
     zst_element_t* x264encoder = zst_element_factory_make("x264enc");
     assert(x264encoder != NULL);
     assert(x264encoder->plugin != NULL);
     assert(strcmp(x264encoder->ops->name, "x264enc") == 0);
+#endif
     
+#ifdef HAS_FFMPEG
     zst_element_t* h265encoder = zst_element_factory_make("h265enc");
     assert(h265encoder != NULL);
     assert(h265encoder->plugin != NULL);
@@ -3218,12 +3227,14 @@ test_element_factory_refcounting(void)
     assert(audioresampler != NULL);
     assert(audioresampler->plugin != NULL);
     assert(strcmp(audioresampler->ops->name, "audioresampler") == 0);
+#endif
 
     zst_element_t* audiotestsrc = zst_element_factory_make("audiotestsrc");
     assert(audiotestsrc != NULL);
     assert(audiotestsrc->plugin != NULL);
     assert(strcmp(audiotestsrc->ops->name, "audiotestsrc") == 0);
 
+#ifdef HAS_FFMPEG
     zst_element_t* h264decoder = zst_element_factory_make("h264dec");
     assert(h264decoder != NULL);
     assert(h264decoder->plugin != NULL);
@@ -3233,7 +3244,9 @@ test_element_factory_refcounting(void)
     assert(aacdecoder != NULL);
     assert(aacdecoder->plugin != NULL);
     assert(strcmp(aacdecoder->ops->name, "aacdec") == 0);
+#endif
 
+#ifdef HAS_SRT
     zst_element_t* srtsrc = zst_element_factory_make("srtsrc");
     assert(srtsrc != NULL);
     assert(srtsrc->plugin != NULL);
@@ -3243,6 +3256,7 @@ test_element_factory_refcounting(void)
     assert(srtsink != NULL);
     assert(srtsink->plugin != NULL);
     assert(strcmp(srtsink->ops->name, "srtsink") == 0);
+#endif
 
     zst_plugin_t* filesink_plugin = filesink->plugin;
     assert(filesink_plugin->refcount == 2);
@@ -3255,20 +3269,32 @@ test_element_factory_refcounting(void)
     zst_element_destroy(fakesink);
     assert(fakesink_plugin->refcount == 1);
 
+#ifdef HAS_V4L2
     zst_element_destroy(v4l2source);
+#endif
+#ifdef HAS_ALSA
     zst_element_destroy(alsasource);
+#endif
+#ifdef HAS_X264
     zst_element_destroy(x264encoder);
+#endif
+#ifdef HAS_FFMPEG
     zst_element_destroy(h265encoder);
     zst_element_destroy(h265decoder);
     zst_element_destroy(aacencoder);
     zst_element_destroy(mp4muxer);
     zst_element_destroy(videoscaler);
     zst_element_destroy(audioresampler);
+#endif
     zst_element_destroy(audiotestsrc);
+#ifdef HAS_FFMPEG
     zst_element_destroy(h264decoder);
     zst_element_destroy(aacdecoder);
+#endif
+#ifdef HAS_SRT
     zst_element_destroy(srtsrc);
     zst_element_destroy(srtsink);
+#endif
     
     zst_plugin_registry_deinit();
     
@@ -3486,6 +3512,7 @@ test_element_factory_introspection_and_typed_properties(void)
     assert(ats_vol == 0.5);
     zst_element_destroy(cfg_ats);
 
+#ifdef HAS_FREETYPE
     zst_text_overlay_config_t to_cfg = {
         .struct_size = sizeof(zst_text_overlay_config_t),
         .text = "Hello Config",
@@ -3513,7 +3540,9 @@ test_element_factory_introspection_and_typed_properties(void)
     assert(zst_element_get_property_int(cfg_to, "y", &to_y) == ZST_OK);
     assert(to_y == 50);
     zst_element_destroy(cfg_to);
+#endif
 
+#ifdef HAS_FFMPEG
     zst_mp4_muxer_config_t mux_cfg = {
         .struct_size = sizeof(zst_mp4_muxer_config_t),
         .width = 1920,
@@ -3540,6 +3569,7 @@ test_element_factory_introspection_and_typed_properties(void)
     assert(zst_element_get_property_string(cfg_mux, "location", mux_loc, sizeof(mux_loc)) == ZST_OK);
     assert(strcmp(mux_loc, "config_output.mp4") == 0);
     zst_element_destroy(cfg_mux);
+#endif
 
     zst_plugin_registry_deinit();
 
@@ -3606,6 +3636,7 @@ decoder_capture_create(decoder_capture_t* capture)
     return el;
 }
 
+#ifdef HAS_FFMPEG
 static void
 decoder_test_buf_free(zst_buffer_t* buf)
 {
@@ -4082,6 +4113,7 @@ test_audio_resampler(void)
 
     PASS();
 }
+#endif
 
 /* ═══════════════════════════════════════════════════════════════
    Logging tests (Phase 3.5)
@@ -5049,6 +5081,7 @@ test_fakesink(void)
     PASS();
 }
 
+#ifdef HAS_V4L2
 static void
 test_v4l2sink_mock(void)
 {
@@ -5085,7 +5118,9 @@ test_v4l2sink_mock(void)
     /* zst_plugin_registry_deinit() removes all plugins, causing subsequent tests to fail if they try to use factory */
     PASS();
 }
+#endif
 
+#ifdef HAS_ALSA
 static void
 test_alsasink_mock(void)
 {
@@ -5139,6 +5174,7 @@ test_alsasink_mock(void)
 
     PASS();
 }
+#endif
 
 /* ═══════════════════════════════════════════════════════════════
    Video Test Source
@@ -5326,6 +5362,7 @@ test_audio_test_src(void)
     PASS();
 }
 
+#ifdef HAS_FREETYPE
 static void
 test_text_source(void)
 {
@@ -5454,6 +5491,7 @@ test_text_source_factory(void)
 
     PASS();
 }
+#endif
 
 static void
 test_file_source(void)
@@ -5678,6 +5716,7 @@ static void test_buffer_free_destructor(zst_buffer_t* buf) {
     }
 }
 
+#ifdef HAS_SRT
 static void test_srt_elements(void)
 {
     TEST("SRT source and sink properties and loopback transmission");
@@ -5745,7 +5784,9 @@ static void test_srt_elements(void)
 
     PASS();
 }
+#endif
 
+#if defined(HAS_FFMPEG) && defined(HAS_X264)
 static int g_ts_video_received = 0;
 static int g_ts_audio_received = 0;
 static uint64_t g_ts_video_pts = 0;
@@ -5948,9 +5989,11 @@ static void test_mpegts_elements(void)
 
     PASS();
 }
+#endif
 
 /* ── MP4 demuxer test helpers ──────────────────────────────────────────── */
 
+#if defined(HAS_FFMPEG) && defined(HAS_X264)
 static int g_mp4_video_received = 0;
 static int g_mp4_audio_received = 0;
 static uint64_t g_mp4_video_pts = 0;
@@ -6154,7 +6197,9 @@ static void test_mp4_demuxer_elements(void)
 
     PASS();
 }
+#endif
 
+#ifdef HAS_FFMPEG
 static void test_mp4_demuxer_properties(void)
 {
     TEST("MP4 demuxer properties and factory");
@@ -6209,7 +6254,9 @@ static void test_mp4_demuxer_properties(void)
 
     PASS();
 }
+#endif
 
+#ifdef HAS_FFMPEG
 static void test_rtmp_elements(void)
 {
     TEST("rtmp/rtsp source/sink properties and caps");
@@ -6323,6 +6370,7 @@ static void test_rtmp_elements(void)
     zst_element_destroy(rtspsink);
     PASS();
 }
+#endif
 
 static zst_result_t my_mount_callback(zst_element_t* server, const char* session_name, void* user_data) {
     int* called = (int*)user_data;
@@ -6407,6 +6455,7 @@ static void test_rtsp_server_media_on_demand(void) {
     PASS();
 }
 
+#ifdef HAS_FFMPEG
 static zst_pad_probe_return_t bunny_probe(zst_pad_t* pad, zst_buffer_t* buf, zst_pad_probe_type_t type, void* user_data) {
     (void)pad;
     (void)type;
@@ -6522,6 +6571,7 @@ static void test_rtsp_source_bunny_verification(void) {
 
     PASS();
 }
+#endif
 
 
 
@@ -6661,7 +6711,11 @@ int main(void)
     test_bin_eos_passthrough();
     test_bin_eos_convergence();
     test_bin_ghost_pad_push();
+#ifdef HAS_X264
     test_bin_use_case_capture_bin();
+#else
+    printf("  [SKIP] x264 disabled\n");
+#endif
     test_bin_use_case_muxer_bin();
     test_bin_use_case_scheduling();
 
@@ -6713,14 +6767,22 @@ int main(void)
 
     /* ── Conversion Elements (Phase 4g/4h) ── */
     printf("[conversion elements]\n");
+#ifdef HAS_FFMPEG
     test_video_scaler();
     test_audio_resampler();
+#else
+    printf("  [SKIP] FFmpeg disabled\n");
+#endif
 
     /* ── Decoders (Phase 4v/4y) ── */
     printf("[decoders]\n");
+#ifdef HAS_FFMPEG
     test_h264_decoder_roundtrip();
     test_h265_decoder_roundtrip();
     test_aac_decoder_roundtrip();
+#else
+    printf("  [SKIP] FFmpeg disabled\n");
+#endif
 
     /* ── Allocator (Phase 8a) ── */
     printf("[allocator]\n");
@@ -6750,8 +6812,12 @@ int main(void)
     /* ── Text Overlay (Phase 11a) ── */
     printf("[text overlay]\n");
     test_srt_parser();
+#ifdef HAS_FREETYPE
     test_text_overlay();
     test_text_overlay_multiline();
+#else
+    printf("  [SKIP] Freetype disabled\n");
+#endif
 
     printf("[fakesink]\n");
     test_fakesink();
@@ -6771,27 +6837,49 @@ int main(void)
     test_file_source();
 
     printf("[text source]\n");
+#ifdef HAS_FREETYPE
     test_text_source();
     test_text_source_factory();
+#else
+    printf("  [SKIP] Freetype disabled\n");
+#endif
 
     printf("[rtmp source/sink]\n");
+#ifdef HAS_FFMPEG
     test_rtmp_elements();
+#else
+    printf("  [SKIP] FFmpeg disabled\n");
+#endif
 
     printf("[rtsp server media-on-demand]\n");
+#ifdef HAS_FFMPEG
     test_rtsp_server_media_on_demand();
     test_rtsp_source_bunny_verification();
+#else
+    printf("  [SKIP] FFmpeg disabled\n");
+#endif
 
     printf("[srt source/sink]\n");
+#ifdef HAS_SRT
     test_srt_elements();
-
-
+#else
+    printf("  [SKIP] SRT disabled\n");
+#endif
 
     printf("[mpegts muxer/demuxer]\n");
+#ifdef HAS_FFMPEG
     test_mpegts_elements();
+#else
+    printf("  [SKIP] FFmpeg disabled\n");
+#endif
 
     printf("[mp4 demuxer]\n");
+#ifdef HAS_FFMPEG
     test_mp4_demuxer_properties();
     test_mp4_demuxer_elements();
+#else
+    printf("  [SKIP] FFmpeg disabled\n");
+#endif
 
 
 #ifdef ENABLE_JETSON
