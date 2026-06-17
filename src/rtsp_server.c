@@ -412,7 +412,7 @@ static int send_rtcp_sr(rtsp_client_t* cl, int is_video) {
     frame[3] = (uint8_t)(slen & 0xff);
     memcpy(frame + 4, buf, slen);
 
-    return (write(cl->fd, frame, 4 + slen) == 4 + slen) ? 0 : -1;
+    return (send(cl->fd, frame, 4 + slen, MSG_NOSIGNAL) == 4 + slen) ? 0 : -1;
 }
 
 /*===========================================================================
@@ -612,7 +612,7 @@ static int send_reply(rtsp_client_t* cl, int code,
         n += snprintf(reply + n, sizeof(reply) - n, "Content-Length: 0\r\n\r\n");
     }
 
-    int r = write(cl->fd, reply, n);
+    int r = send(cl->fd, reply, n, MSG_NOSIGNAL);
     return (r == n) ? 0 : -1;
 }
 

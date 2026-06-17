@@ -392,7 +392,7 @@ static int tcp_connect(const char* host, int port) {
     Send RTSP request and receive response
 ===========================================================================*/
 static int send_rtsp(rtsp_client_t* cl, const char* req, int req_len) {
-    int r = write(cl->fd, req, req_len);
+    int r = send(cl->fd, req, req_len, MSG_NOSIGNAL);
     if (r < 0) return -1;
     return 0;
 }
@@ -1563,7 +1563,7 @@ reconnect_start:
             "Session: %s\r\n"
             "Content-Length: 0\r\n\r\n",
             cl->path, cl->cseq++, cl->session_id);
-        (void)write(cl->fd, tear, tear_len);
+        (void)send(cl->fd, tear, tear_len, MSG_NOSIGNAL);
     }
 
     close(cl->fd);

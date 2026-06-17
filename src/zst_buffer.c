@@ -12,6 +12,24 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct {
+    zst_allocator_t* allocator;
+    void* ptr;
+} zst_buffer_alloc_ctx_t;
+
+static void
+zst_buffer_alloc_release(void* priv)
+{
+    zst_buffer_alloc_ctx_t* ctx = (zst_buffer_alloc_ctx_t*)priv;
+    if (!ctx) return;
+
+    if (ctx->allocator && ctx->ptr) {
+        zst_allocator_free(ctx->allocator, ctx->ptr);
+        zst_allocator_unref(ctx->allocator);
+    }
+    free(ctx);
+}
+
 #if defined(_MSC_VER)
 #define zst_aligned_alloc(al, sz) _aligned_malloc(sz, al)
 #define zst_aligned_free(ptr) _aligned_free(ptr)
@@ -40,17 +58,27 @@ zst_buffer_t* zst_buffer_create_with_allocator(
     if (!buf) return NULL;
 
     if (allocator && size > 0) {
-        /* Allocate payload conforming to backend allocator signatures */
         void* data = zst_allocator_alloc(allocator, size);
         if (!data) {
             zst_aligned_free(buf);
             return NULL;
         }
+
+        zst_buffer_alloc_ctx_t* ctx = calloc(1, sizeof(*ctx));
+        if (!ctx) {
+            zst_allocator_free(allocator, data);
+            zst_aligned_free(buf);
+            return NULL;
+        }
+
+        ctx->allocator = zst_allocator_ref(allocator);
+        ctx->ptr = data;
+
         buf->memory.type = ZST_MEMORY_CPU;
         buf->memory.data = data;
         buf->memory.size = size;
-        buf->memory.priv = allocator;
-        buf->memory.release = (void (*)(void*))zst_allocator_free;
+        buf->memory.priv = ctx;
+        buf->memory.release = zst_buffer_alloc_release;
     }
     return buf;
 }
@@ -58,8 +86,7 @@ zst_buffer_t* zst_buffer_create_with_allocator(
 zst_buffer_t* zst_buffer_create_with_pool(struct zst_buffer_pool* pool) {
     if (!pool) return NULL;
     zst_buffer_t* buf = NULL;
-    /* Use the standard multi-argument acquire signature with timeout and params */
-    if (zst_buffer_pool_acquire(pool, &buf, -1, 0) == ZST_OK) {
+    if (zst_buffer_pool_acquire(pool, &buf, 0, 0) == ZST_OK) {
         return buf;
     }
     return NULL;
@@ -84,10 +111,6 @@ void zst_buffer_unref(zst_buffer_t* buf) {
             buf->destroy(buf);
         }
 
-        if (buf->payload) {
-            zst_aligned_free(buf->payload);
-        }
-        
         zst_aligned_free(buf);
     }
 }
