@@ -29,6 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libv4l-dev \
     libx264-dev \
+    libx265-dev \
     libavformat-dev \
     libavcodec-dev \
     libavutil-dev \
