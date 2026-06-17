@@ -25,7 +25,7 @@
 #include "zst_caps.h"
 
 /* Extern element constructors from the project */
-zst_element_t* zst_h264_encoder_create(void);
+zst_element_t* zst_x264_encoder_create(void);
 zst_element_t* zst_aac_encoder_create(void);
 zst_element_t* zst_video_test_src_create(void);
 zst_element_t* zst_audio_test_src_create(void);
@@ -141,7 +141,7 @@ test_h264_encode_basic(void)
     TEST("h264 encoder produces valid H.264 bitstream");
 
     zst_element_t* src = create_video_source(320, 240, 30, "gradient");
-    zst_element_t* enc = zst_h264_encoder_create();
+    zst_element_t* enc = zst_x264_encoder_create();
     assert(enc != NULL);
     zst_element_set_state(enc, ZST_STATE_READY);
 
@@ -232,7 +232,7 @@ test_h264_encode_multiple_resolutions(void)
 {
     TEST("h264 encoder handles different resolutions");
 
-    zst_element_t* enc = zst_h264_encoder_create();
+    zst_element_t* enc = zst_x264_encoder_create();
     assert(enc != NULL);
 
     /* Test small, medium, and larger resolutions */
@@ -296,7 +296,7 @@ test_h264_encode_decode_roundtrip(void)
     TEST("h264 encode->decode roundtrip (dimensions)");
 
     zst_element_t* src = create_video_source(320, 240, 30, "bars");
-    zst_element_t* enc = zst_h264_encoder_create();
+    zst_element_t* enc = zst_x264_encoder_create();
     assert(enc != NULL);
     zst_element_set_state(enc, ZST_STATE_READY);
 
@@ -589,7 +589,7 @@ test_h264_pipeline_integration(void)
     zst_element_t* src = create_video_source(352, 288, 30, "color-bars");
 
     /* Encoder */
-    zst_element_t* enc = zst_h264_encoder_create();
+    zst_element_t* enc = zst_x264_encoder_create();
     zst_element_set_state(enc, ZST_STATE_READY);
     zst_pad_t* enc_src_pad = zst_element_get_pad(enc, "src");
 
@@ -658,7 +658,7 @@ test_h264_file_output(void)
     TEST("h264 encoder produces playable .h264 file (5 sec @ 30fps)");
 
     zst_element_t* src = create_video_source(352, 288, 30, "gradient");
-    zst_element_t* enc = zst_h264_encoder_create();
+    zst_element_t* enc = zst_x264_encoder_create();
     assert(enc != NULL);
     zst_element_set_state(enc, ZST_STATE_READY);
 
@@ -777,13 +777,13 @@ test_aac_file_output(void)
 static void
 test_mp4_muxer_integration(void)
 {
-    TEST("mp4 muxer integration: src -> h264enc -> mp4 mux -> collector");
+    TEST("mp4 muxer integration: src -> x264enc -> mp4 mux -> collector");
 
     /* Use 640x480 to match muxer's hardcoded stream parameters */
     zst_element_t* src = create_video_source(640, 480, 30, "gradient");
 
     /* Encoder */
-    zst_element_t* enc = zst_h264_encoder_create();
+    zst_element_t* enc = zst_x264_encoder_create();
     assert(enc != NULL);
     zst_element_set_state(enc, ZST_STATE_READY);
     zst_pad_t* enc_src = zst_element_get_pad(enc, "src");
@@ -883,7 +883,7 @@ test_mp4_muxer_av(void)
     zst_element_t* asrc = create_audio_source(44100, 2, "sine", 440.0);
 
     /* ── Encoders ── */
-    zst_element_t* venc = zst_h264_encoder_create();
+    zst_element_t* venc = zst_x264_encoder_create();
     assert(venc != NULL);
     zst_element_set_state(venc, ZST_STATE_READY);
 

@@ -9,7 +9,7 @@
       - zst_element_set_property_string()  typed string properties
 
     Pipeline:
-      videotestsrc → textoverlay → h264enc ─┐
+      videotestsrc → textoverlay → x264enc ─┐
                                              ├→ mp4mux → [file]
       audiotestsrc → aacenc ────────────────┘
 
@@ -86,14 +86,14 @@ int main(int argc, char** argv)
     ──────────────────────────────────────────────────────────────────────*/
     video_src = zst_element_factory_make("videotestsrc");
     overlay   = zst_element_factory_make("textoverlay");
-    h264      = zst_element_factory_make("h264enc");
+    h264      = zst_element_factory_make("x264enc");
     audio_src = zst_element_factory_make("audiotestsrc");
     aac       = zst_element_factory_make("aacenc");
     mux       = zst_element_factory_make("mp4mux");
 
     CHECK_PTR(video_src, "factory make videotestsrc");
     CHECK_PTR(overlay,   "factory make textoverlay");
-    CHECK_PTR(h264,      "factory make h264enc");
+    CHECK_PTR(h264,      "factory make x264enc");
     CHECK_PTR(audio_src, "factory make audiotestsrc");
     CHECK_PTR(aac,       "factory make aacenc");
     CHECK_PTR(mux,       "factory make mp4mux");
@@ -147,7 +147,7 @@ int main(int argc, char** argv)
     CHECK_OK(zst_pipeline_add(pipe, aac),       "add aac");
     CHECK_OK(zst_pipeline_add(pipe, mux),       "add mux");
 
-    /* Video: videotestsrc → textoverlay → h264enc → mp4mux.video */
+    /* Video: videotestsrc → textoverlay → x264enc → mp4mux.video */
     CHECK_OK(zst_pad_link(zst_element_get_pad(video_src, "src"),
                           zst_element_get_pad(overlay,   "sink")), "link video_src→overlay");
     CHECK_OK(zst_pad_link(zst_element_get_pad(overlay, "src"),

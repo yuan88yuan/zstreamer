@@ -42,7 +42,7 @@ zst_element_t* zst_v4l2_source_create(void);
 zst_element_t* zst_v4l2_sink_create(void);
 zst_element_t* zst_alsa_source_create(void);
 zst_element_t* zst_alsa_sink_create(void);
-zst_element_t* zst_h264_encoder_create(void);
+zst_element_t* zst_x264_encoder_create(void);
 zst_element_t* zst_h264_decoder_create(void);
 zst_element_t* zst_h265_encoder_create(void);
 zst_element_t* zst_h265_decoder_create(void);
@@ -86,7 +86,7 @@ static const zst_pad_template_t g_pad_video_src[]    = { { "src", ZST_PAD_SRC, "
 static const zst_pad_template_t g_pad_audio_src[]    = { { "src", ZST_PAD_SRC, "audio/x-raw" } };
 static const zst_pad_template_t g_pad_srt_parser[]   = { { "src", ZST_PAD_SRC, "text/x-raw" } };
 
-static const zst_pad_template_t g_pad_h264enc[] = {
+static const zst_pad_template_t g_pad_x264enc[] = {
     { "sink", ZST_PAD_SINK, "video/x-raw" }, { "src", ZST_PAD_SRC, "video/x-h264" }
 };
 static const zst_pad_template_t g_pad_h264dec[] = {
@@ -398,7 +398,7 @@ create_builtin_element(const char* name)
     if (strcmp(name, "v4l2sink") == 0)     return zst_v4l2_sink_create();
     if (strcmp(name, "alsasrc") == 0)      return zst_alsa_source_create();
     if (strcmp(name, "alsasink") == 0)     return zst_alsa_sink_create();
-    if (strcmp(name, "h264enc") == 0)      return zst_h264_encoder_create();
+    if (strcmp(name, "x264enc") == 0)      return zst_x264_encoder_create();
     if (strcmp(name, "h264dec") == 0)      return zst_h264_decoder_create();
     if (strcmp(name, "h265enc") == 0)      return zst_h265_encoder_create();
     if (strcmp(name, "h265dec") == 0)      return zst_h265_decoder_create();
@@ -448,7 +448,7 @@ static const zst_element_desc_t g_builtin_descs[] = {
     DESC("v4l2sink", "V4L2 Sink",       "Sink/Video",   "Outputs video to a V4L2 device",                                                                                       NULL,                           0, g_pad_sink),
     DESC("alsasrc", "ALSA Source",      "Source/Audio", "Captures audio from ALSA",                                                                                             NULL,                           0, g_pad_audio_src),
     DESC("alsasink", "ALSA Sink",       "Sink/Audio",   "Outputs audio to ALSA",                                                                                                NULL,                           0, g_pad_sink),
-    DESC("h264enc", "H.264 Encoder",    "Codec/Encoder","Encodes raw video to H.264",                                                                                           NULL,                           0, g_pad_h264enc),
+    DESC("x264enc", "H.264 Encoder",    "Codec/Encoder","Encodes raw video to H.264",                                                                                           NULL,                           0, g_pad_x264enc),
     DESC("h264dec", "H.264 Decoder",    "Codec/Decoder","Decodes H.264 video frames",                                                                                           NULL,                           0, g_pad_h264dec),
     DESC("h265enc", "H.265 Encoder",    "Codec/Encoder","Encodes raw video to H.265",                                                                                           g_builtin_h265enc_props,        sizeof(g_builtin_h265enc_props) / sizeof(g_builtin_h265enc_props[0]), g_pad_h265enc),
     DESC("h265dec", "H.265 Decoder",    "Codec/Decoder","Decodes H.265 video frames",                                                                                           NULL,                           0, g_pad_h265dec),

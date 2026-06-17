@@ -123,7 +123,7 @@ A first-class `zst_element` subclass wrapping `zst_queue_t`. Unlike internal que
 - A **worker thread** that pops from the queue and pushes via `zst_pad_push()`
 
 ```
-v4l2src → queue → h264enc → queue → mp4mux → queue → filesink
+v4l2src → queue → x264enc → queue → mp4mux → queue → filesink
 ```
 
 Every queue element is a threading boundary: upstream runs in its thread, downstream runs in the queue's thread.
@@ -146,7 +146,7 @@ All six pipeline elements are fully implemented with real hardware/codec integra
 |-----------------|--------------------|--------|
 | V4L2 Source     | `libv4l2`          | ✅ Real device + synthetic mock fallback |
 | ALSA Source     | `libasound`        | ✅ Real device + synthetic mock fallback |
-| H.264 Encoder   | `libx264`          | ✅ ultrafast preset, CRF rate control |
+| H.264 Encoder (x264enc)   | `libx264`          | ✅ ultrafast preset, CRF rate control |
 | AAC Encoder     | `libavcodec`       | ✅ FFmpeg AAC, S16→FLTP conversion |
 | MP4 Muxer       | `libavformat`      | ✅ Fragmented MP4, custom AVIO, EOS tracking |
 | File Sink       | stdio `FILE*`      | ✅ fwrite of buffer data |
@@ -164,7 +164,7 @@ Dynamic element loading via `dlopen()`:
 
 ```
 ┌──────────┐    ┌───────────┐    ┌──────────┐    ┌───────────┐    ┌──────────┐    ┌───────────┐    ┌──────────┐
-│ v4l2src  │───→│ queue_el  │───→│ h264enc  │───→│ queue_el  │───→│ mp4mux   │───→│ queue_el  │───→│ filesink │
+│ v4l2src  │───→│ queue_el  │───→│ x264enc  │───→│ queue_el  │───→│ mp4mux   │───→│ queue_el  │───→│ filesink │
 └──────────┘    └───────────┘    └──────────┘    └───────────┘    └──────────┘    └───────────┘    └──────────┘
 
 ┌──────────┐    ┌───────────┐    ┌──────────┐    ┌───────────┐      ┆

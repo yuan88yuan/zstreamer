@@ -8,7 +8,7 @@ sink pads (video + audio).
 
 ```
 Pipeline:
-  v4l2src → queue → h264enc ───────────────────────┐
+  v4l2src → queue → x264enc ───────────────────────┐
                                                       │
   alsasrc → queue → aacenc ───────────────────────┐  │
                                                     │  │

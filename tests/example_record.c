@@ -12,7 +12,7 @@
 zst_element_t* zst_v4l2_source_create(void);
 zst_element_t* zst_alsa_source_create(void);
 
-zst_element_t* zst_h264_encoder_create(void);
+zst_element_t* zst_x264_encoder_create(void);
 zst_element_t* zst_aac_encoder_create(void);
 
 zst_element_t* zst_mp4_muxer_create(void);
@@ -64,7 +64,7 @@ int main(void)
     q_audio_enc = zst_queue_element_create(NULL);
     q_mux       = zst_queue_element_create(NULL);
 
-    h264_enc = zst_h264_encoder_create();
+    h264_enc = zst_x264_encoder_create();
     aac_enc = zst_aac_encoder_create();
 
     mux = zst_mp4_muxer_create();

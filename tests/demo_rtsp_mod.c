@@ -121,7 +121,7 @@ static zst_result_t on_demand_mount(zst_element_t* server, const char* name, voi
         // 2. Create elements
         zst_element_t* video_src = zst_element_factory_make("videotestsrc");
         zst_element_t* overlay   = zst_element_factory_make("textoverlay");
-        zst_element_t* h264      = zst_element_factory_make("h264enc");
+        zst_element_t* h264      = zst_element_factory_make("x264enc");
         zst_element_t* audio_src = zst_element_factory_make("audiotestsrc");
         zst_element_t* aac       = zst_element_factory_make("aacenc");
 
@@ -204,7 +204,7 @@ static zst_result_t on_demand_mount(zst_element_t* server, const char* name, voi
         // 2. Create elements
         zst_element_t* demux = zst_element_factory_make("mp4demux");
         zst_element_t* vdec  = zst_element_factory_make("h264dec");
-        zst_element_t* venc  = zst_element_factory_make("h264enc");
+        zst_element_t* venc  = zst_element_factory_make("x264enc");
         zst_element_t* vq    = zst_element_factory_make("queue");
 
         zst_element_t* adec  = zst_element_factory_make("aacdec");

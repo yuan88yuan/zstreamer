@@ -11,7 +11,7 @@
 /* plugin elements */
 zst_element_t* zst_v4l2_source_create(void);
 zst_element_t* zst_text_overlay_create(const char* text);
-zst_element_t* zst_h264_encoder_create(void);
+zst_element_t* zst_x264_encoder_create(void);
 zst_element_t* zst_file_sink_create(const char* path);
 
 int main(void)
@@ -40,7 +40,7 @@ int main(void)
     zst_element_set_property(text_overlay, "font_size", "64");
 
     q_video_enc = zst_queue_element_create(NULL);
-    h264_enc = zst_h264_encoder_create();
+    h264_enc = zst_x264_encoder_create();
     sink = zst_file_sink_create("output_text.h264");
 
     zst_pipeline_add(pipe, video_src);

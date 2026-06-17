@@ -6,7 +6,7 @@ Welcome to zstreamer! This tutorial will walk you through building a simple C pr
 
 In zstreamer, you build a media processing graph by creating **elements** and linking their **pads**. For this tutorial, our pipeline will look like this:
 
-`v4l2_source` → `h264_encoder` → `mp4_muxer` → `file_sink`
+`v4l2_source` → `x264_encoder` → `mp4_muxer` → `file_sink`
 
 ## Prerequisites
 
@@ -27,7 +27,7 @@ First, we need to include the necessary zstreamer headers and initialize the bui
 #include "zstreamer/zst_bus.h"
 
 int main() {
-    // Register built-in elements like v4l2src, h264enc, etc.
+    // Register built-in elements like v4l2src, x264enc, etc.
     zst_register_builtin_elements();
 
     // Create the pipeline container
@@ -48,7 +48,7 @@ Next, we instantiate our elements using `zst_element_factory_make` and configure
 ```c
     // Create elements
     zst_element_t* cam  = zst_element_factory_make("v4l2src");
-    zst_element_t* h264 = zst_element_factory_make("h264enc");
+    zst_element_t* h264 = zst_element_factory_make("x264enc");
     zst_element_t* mux  = zst_element_factory_make("mp4mux");
     zst_element_t* sink = zst_element_factory_make("filesink");
 

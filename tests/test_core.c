@@ -84,7 +84,7 @@ void* calloc(size_t nmemb, size_t size) {
 zst_element_t* zst_text_overlay_create(const char* text);
 zst_element_t* zst_text_source_create(void);
 zst_element_t* zst_audio_test_src_create(void);
-zst_element_t* zst_h264_encoder_create(void);
+zst_element_t* zst_x264_encoder_create(void);
 zst_element_t* zst_h264_decoder_create(void);
 zst_element_t* zst_h265_encoder_create(void);
 zst_element_t* zst_h265_decoder_create(void);
@@ -957,7 +957,7 @@ test_bin_eos_convergence(void)
 static void
 test_bin_use_case_capture_bin(void)
 {
-    TEST("element bin use case: reusable capture bin (videotestsrc -> queue -> h264enc)");
+    TEST("element bin use case: reusable capture bin (videotestsrc -> queue -> x264enc)");
 
     zst_plugin_registry_init();
     zst_register_builtin_elements();
@@ -969,7 +969,7 @@ test_bin_use_case_capture_bin(void)
 
     zst_element_t* vts = zst_element_factory_make("videotestsrc");
     zst_element_t* q = zst_element_factory_make("queue");
-    zst_element_t* enc = zst_element_factory_make("h264enc");
+    zst_element_t* enc = zst_element_factory_make("x264enc");
     assert(vts != NULL && q != NULL && enc != NULL);
 
     zst_element_set_property_string(vts, "num-buffers", "3");
@@ -1001,7 +1001,7 @@ test_bin_use_case_capture_bin(void)
         }
         zst_event_destroy(ev);
     }
-    // We do not assert eos_seen == 1 here because h264enc might not output anything
+    // We do not assert eos_seen == 1 here because x264enc might not output anything
     // for just 3 frames due to lookahead/b-frame buffering.
 
     assert(zst_pipeline_set_state(pipe, ZST_STATE_NULL) == ZST_OK);
@@ -3160,10 +3160,10 @@ test_element_factory_refcounting(void)
     assert(alsasource->plugin != NULL);
     assert(strcmp(alsasource->ops->name, "alsasrc") == 0);
     
-    zst_element_t* h264encoder = zst_element_factory_make("h264enc");
-    assert(h264encoder != NULL);
-    assert(h264encoder->plugin != NULL);
-    assert(strcmp(h264encoder->ops->name, "h264enc") == 0);
+    zst_element_t* x264encoder = zst_element_factory_make("x264enc");
+    assert(x264encoder != NULL);
+    assert(x264encoder->plugin != NULL);
+    assert(strcmp(x264encoder->ops->name, "x264enc") == 0);
     
     zst_element_t* h265encoder = zst_element_factory_make("h265enc");
     assert(h265encoder != NULL);
@@ -3257,7 +3257,7 @@ test_element_factory_refcounting(void)
 
     zst_element_destroy(v4l2source);
     zst_element_destroy(alsasource);
-    zst_element_destroy(h264encoder);
+    zst_element_destroy(x264encoder);
     zst_element_destroy(h265encoder);
     zst_element_destroy(h265decoder);
     zst_element_destroy(aacencoder);
@@ -3620,7 +3620,7 @@ test_h264_decoder_roundtrip(void)
 {
     TEST("H.264 decoder (Phase 4v) roundtrip and caps");
 
-    zst_element_t* enc = zst_h264_encoder_create();
+    zst_element_t* enc = zst_x264_encoder_create();
     zst_element_t* dec = zst_h264_decoder_create();
     decoder_capture_t* capture = calloc(1, sizeof(*capture));
     assert(capture != NULL);
@@ -5820,7 +5820,7 @@ static void test_mpegts_elements(void)
     g_ts_video_received = 0;
     g_ts_audio_received = 0;
     
-    zst_element_t* video_enc = zst_h264_encoder_create();
+    zst_element_t* video_enc = zst_x264_encoder_create();
     assert(video_enc != NULL);
     assert(zst_element_set_state(video_enc, ZST_STATE_READY) == ZST_OK);
     zst_buffer_t* v_buf = NULL;
@@ -6032,7 +6032,7 @@ static void test_mp4_demuxer_elements(void)
     g_mp4_audio_received = 0;
 
     /* Encode a real H.264 frame */
-    zst_element_t* video_enc = zst_h264_encoder_create();
+    zst_element_t* video_enc = zst_x264_encoder_create();
     assert(video_enc != NULL);
     assert(zst_element_set_state(video_enc, ZST_STATE_READY) == ZST_OK);
     zst_buffer_t* v_buf = NULL;

@@ -21,7 +21,7 @@ queue_element worker thread (one per queue element):
 ```
 v4l2src
     -> queue_el (worker thread)
-    -> h264enc (runs in queue's thread via default_sink_pad_push)
+    -> x264enc (runs in queue's thread via default_sink_pad_push)
     -> queue_el (worker thread)
     -> mp4mux
 
