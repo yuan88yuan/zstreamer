@@ -1,11 +1,12 @@
 /*=============================================================================
-    zst_element.c — Element lifecycle, state machine, pad management
+    zst_element.c - Element lifecycle, state machine, pad management
 =============================================================================*/
 
 #include "zst_element.h"
 #include "zst_bus.h"
 #include "zst_plugin.h"
 #include "zst_clock.h"
+#include "zst_buffer.h"
 #include "zst_element_factory.h"
 #include <errno.h>
 #include <inttypes.h>
@@ -39,6 +40,16 @@ zst_element_create(const zst_element_ops_t* ops, void* priv)
     el->clock        = NULL;
     el->pipeline     = NULL;
 
+    /* Pre-allocate the scheduling token to optimize dispatch latency.
+     * The token's base reference count is managed by the element itself. */
+    el->sched_token = zst_buffer_create(ZST_BUFFER_USER);
+    if (el->sched_token) {
+        el->sched_token->memory.priv = el;
+    } else {
+        free(el);
+        return NULL;
+    }
+
     return el;
 }
 
@@ -58,6 +69,12 @@ zst_element_destroy(zst_element_t* el)
 
     if (el->clock) {
         zst_clock_unref(el->clock);
+    }
+
+    /* Release the pre-allocated scheduling token */
+    if (el->sched_token) {
+        zst_buffer_unref(el->sched_token);
+        el->sched_token = NULL;
     }
 
     if (!zst_bin_element_destroy(el)) {

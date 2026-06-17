@@ -1,5 +1,5 @@
 /*=============================================================================
-    zst_clock.c
+    zst_clock.c - High-Precision Phase-Locked Loop (PLL) Clock Slaving
 =============================================================================*/
 
 #define _POSIX_C_SOURCE 200809L
@@ -24,7 +24,9 @@ typedef struct {
     pthread_t    thread;
     volatile int running;
 
-    double       alpha;
+    double       alpha;            /* Active scaling factor applied to reference clock */
+    double       smoothed_ratio;   /* Low-pass filtered baseline frequency ratio */
+    double       integral_error;   /* PI controller error integrator */
     zst_time_t   base_master;
     zst_time_t   base_ref;
 
@@ -50,15 +52,50 @@ slave_clock_worker(void* arg)
         if (now_master > last_master && now_ref > last_ref) {
             zst_time_t diff_master = now_master - last_master;
             zst_time_t diff_ref    = now_ref - last_ref;
+            double dt = (double)diff_ref / 1000000000.0;
 
-            double ratio = (double)diff_master / (double)diff_ref;
+            if (dt > 0.0) {
+                /* Capture the slave clock's calculated time immediately before lock updates */
+                zst_time_t current_slave_time = zst_clock_get_time(clock);
+                double freq_ratio = (double)diff_master / (double)diff_ref;
 
-            pthread_mutex_lock(&priv->lock);
-            priv->alpha = priv->alpha * 0.9 + ratio * 0.1;
+                pthread_mutex_lock(&priv->lock);
 
-            priv->base_master = now_master;
-            priv->base_ref    = now_ref;
-            pthread_mutex_unlock(&priv->lock);
+                /* 1. Track baseline physical frequency difference via a low-pass filter */
+                priv->smoothed_ratio = priv->smoothed_ratio * 0.9 + freq_ratio * 0.1;
+
+                /* 2. Calculate the phase offset (error) between the master clock and slave clock in seconds */
+                double phase_error = (double)((int64_t)now_master - (int64_t)current_slave_time) / 1000000000.0;
+
+                /* 3. Integrate phase error over time, with windup protection limits to prevent overshoot */
+                priv->integral_error += phase_error * dt;
+                if (priv->integral_error > 0.5) {
+                    priv->integral_error = 0.5;
+                } else if (priv->integral_error < -0.5) {
+                    priv->integral_error = -0.5;
+                }
+
+                /* 4. Implement PI control loop: Adjust tracking rate (alpha) based on phase and integral error */
+                double Kp = 0.15;
+                double Ki = 0.015;
+                double correction = (Kp * phase_error) + (Ki * priv->integral_error);
+
+                /* Cap maximum correction value to +/- 0.5% to maintain frequency tracking stability */
+                if (correction > 0.005) {
+                    correction = 0.005;
+                } else if (correction < -0.005) {
+                    correction = -0.005;
+                }
+
+                priv->alpha = priv->smoothed_ratio + correction;
+
+                /* 5. Advance baselines cleanly. By setting base_master to the exact current_slave_time 
+                 * calculated right before this lock, we mathematically eliminate time jumps or gaps. */
+                priv->base_master = current_slave_time;
+                priv->base_ref    = now_ref;
+
+                pthread_mutex_unlock(&priv->lock);
+            }
         }
 
         last_master = now_master;
@@ -139,8 +176,11 @@ zst_clock_slave_create(zst_clock_t* master, zst_clock_t* reference)
     priv->master = zst_clock_ref(master);
     priv->reference = zst_clock_ref(reference);
 
-    /* Initialize with 1.0 to avoid jump at 1 second */
+    /* Initialize tracking variables with safe defaults */
     priv->alpha = 1.0;
+    priv->smoothed_ratio = 1.0;
+    priv->integral_error = 0.0;
+    
     zst_time_t now_master = zst_clock_get_time(master);
     zst_time_t now_ref = zst_clock_get_time(reference);
     priv->base_master = now_master;

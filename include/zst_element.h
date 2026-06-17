@@ -96,6 +96,11 @@ struct zst_element {
     zst_time_t clock_sync_last_clock;
 
     _Atomic(bool) is_queued;
+
+    /* Pre-allocated buffer token utilized by the scheduler to eliminate high-frequency 
+     * heap allocation/deallocation overhead during task scheduling. */
+    zst_buffer_t* sched_token;
+
 };
 
 zst_element_t* zst_element_create(

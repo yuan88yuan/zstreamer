@@ -1,5 +1,5 @@
 /*=============================================================================
-    zst_scheduler.c — High-Performance Task-Driven Pipeline Orchestrator
+    zst_scheduler.c - High-Performance Task-Driven Pipeline Orchestrator
 =============================================================================*/
 
 #define _POSIX_C_SOURCE 199309L
@@ -48,9 +48,10 @@ zst_scheduler_queue_task(zst_scheduler_t* sched, zst_element_t* el)
         return;
     }
 
-    zst_buffer_t* token = zst_buffer_create(ZST_BUFFER_USER);
+    /* Bypassing high-frequency dynamic heap allocations by referencing the pre-allocated
+     * task token (`sched_token`) embedded directly within the element structure. */
+    zst_buffer_t* token = el->sched_token ? zst_buffer_ref(el->sched_token) : NULL;
     if (token) {
-        token->memory.priv = el; 
         if (zst_queue_push(p->ready_queue, token, 0) != ZST_OK) {
             zst_buffer_unref(token);
             atomic_store_explicit(&el->is_queued, false, memory_order_release);
