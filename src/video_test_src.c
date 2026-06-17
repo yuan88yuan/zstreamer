@@ -59,7 +59,7 @@ static zst_result_t video_test_src_open(zst_element_t* el)
 
     zst_buffer_pool_config_t pool_cfg = {
         .min_buffers = 4,
-        .max_buffers = 8,
+        .max_buffers = 16,
         .buffer_size = s->width * s->height * 3 / 2, // YUV420P
         .buffer_type = ZST_BUFFER_VIDEO_FRAME
     };

@@ -7,6 +7,7 @@
 #include "zst_pad.h"
 #include "zst_segment.h"
 #include <stdbool.h>
+#include <stdatomic.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -93,6 +94,8 @@ struct zst_element {
        Reset to zero when the element transitions to PLAYING. */
     zst_time_t clock_sync_last_pts;
     zst_time_t clock_sync_last_clock;
+
+    _Atomic(bool) is_queued;
 };
 
 zst_element_t* zst_element_create(
