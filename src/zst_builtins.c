@@ -580,6 +580,10 @@ static const zst_element_desc_t g_builtin_descs[] = {
     DESC("tsdemux",  "MPEG-TS Demuxer",  "Demuxer",      "Demuxes MPEG-TS (.ts) into encoded audio/video",                                                                       g_builtin_tsdemux_props,        sizeof(g_builtin_tsdemux_props) / sizeof(g_builtin_tsdemux_props[0]), g_pad_tsdemux),
     DESC("mp4demux", "MP4 Demuxer",      "Demuxer/File", "Demuxes MP4 (.mp4/.mov/.m4a/.m4v) into encoded audio/video",                                                             g_builtin_mp4demux_props,       sizeof(g_builtin_mp4demux_props) / sizeof(g_builtin_mp4demux_props[0]), g_pad_mp4demux),
 #endif
+#ifdef HAS_JETSON
+    DESC("nvenc",    "NVIDIA V4L2 Video Encoder", "Codec/Encoder","Encodes raw video to H.264/H.265 using NV V4L2 extensions",                                                              NULL,                           0, g_pad_x264enc),
+    DESC("nvdec",    "NVIDIA V4L2 Video Decoder", "Codec/Decoder","Decodes H.264/H.265 video frames using NV V4L2 extensions",                                                              NULL,                           0, g_pad_h264dec),
+#endif
     DESC("nvvideoscaler", "NVIDIA V4L2 Video Scaler", "Filter/Video", "Hardware video scaler and format converter using NV V4L2 extensions",                                    NULL,                           0, g_pad_video_filter)
 };
 

@@ -10,7 +10,7 @@ configurable scheduler.
 ## ✨ Highlights
 
 - **GStreamer-like pipeline model** — elements, pads, buffers, queues, caps negotiation
-- **24 built-in elements** — capture, encode/decode, mux, network I/O, RTSP, text overlay
+- **40 built-in elements** — capture, encode/decode, mux, network I/O, RTSP, text overlay
 - **Thread-safe design** — bounded queues, atomic ref-counting, multi-threaded scheduler
 - **Real codec support** — x264, FFmpeg (H.264/H.265/AAC encode & decode), libswscale, libswresample
 - **RTSP server & client** — multi-session server (TCP interleaved + UDP), RTSP source/sink
@@ -19,7 +19,7 @@ configurable scheduler.
 - **Clock & A/V sync** — system clock, QoS dropping, clock slaving
 - **Buffer pools** — pre-allocated buffer recycling with custom allocator interface
 - **Lightweight logging** — compile-time level filtering with custom handler support
-- **54 unit tests** — core framework, scheduler, caps, bus, plugins, conversion, clock, elements
+- **102 unit tests** — core framework, scheduler, caps, bus, plugins, conversion, clock, elements
 
 ---
 
@@ -29,10 +29,10 @@ configurable scheduler.
 .
 ├── include/              Public API headers (17 headers)
 │   └── zstreamer/
-│       └── elements/     Per-element convenience headers (24 headers)
-├── src/                  Core framework + 24 element implementations
+│       └── elements/     Per-element convenience headers (38 headers)
+├── src/                  Core framework + 40 element implementations
 ├── tests/                Unit tests, examples, demos
-│   ├── test_core.c       54 unit tests covering all core modules
+│   ├── test_core.c       102 unit tests covering all core modules
 │   ├── test_net_source.c Network source smoke test
 │   ├── test_net_sink.c   Network sink smoke test
 │   ├── example_record.c  V4L2 + ALSA → H.264/AAC → MP4 pipeline
@@ -143,7 +143,7 @@ ZST_STATE_NULL  ──open──►  ZST_STATE_READY  ──start──►  ZST_
 
 ---
 
-## 🔌 Supported Elements (24)
+## 🔌 Supported Elements (40)
 
 ### Sources
 
@@ -156,6 +156,9 @@ ZST_STATE_NULL  ──open──►  ZST_STATE_READY  ──start──►  ZST_
 | `audio_test_src` | Synthetic audio tone generator |
 | `text_source` | Timed text / subtitle source |
 | `net_source` | TCP/UDP network source (raw bytes) |
+| `http_source` | HTTP/HTTPS network source |
+| `rtmp_source` | RTMP client source |
+| `srt_source` | Secure Reliable Transport (SRT) source |
 | `rtsp_source` | RTSP client source (TCP interleaved + UDP) |
 
 ### Encoders / Decoders
@@ -167,6 +170,8 @@ ZST_STATE_NULL  ──open──►  ZST_STATE_READY  ──start──►  ZST_
 | `h265_encoder` | H.265/HEVC encoder via FFmpeg libavcodec |
 | `h265_decoder` | H.265/HEVC decoder via FFmpeg libavcodec |
 | `aac_encoder` | AAC audio encoder via FFmpeg libavcodec |
+| `nv_video_encoder` | Hardware H.264/H.265 encoder via NV V4L2 |
+| `nv_video_decoder` | Hardware H.264/H.265 decoder via NV V4L2 |
 | `aac_decoder` | AAC audio decoder via FFmpeg libavcodec |
 
 ### Filters / Converters
@@ -176,6 +181,7 @@ ZST_STATE_NULL  ──open──►  ZST_STATE_READY  ──start──►  ZST_
 | `video_scaler` | Pixel format + resolution conversion via libswscale |
 | `audio_resampler` | Sample rate + format conversion via libswresample |
 | `text_overlay` | Burn text / timecode onto video frames (FreeType) |
+| `nv_video_scaler` | Hardware video scaler via NV V4L2 |
 | `srt_parser` | SRT subtitle file parser |
 
 ### Muxers / Sinks / Servers
@@ -183,10 +189,15 @@ ZST_STATE_NULL  ──open──►  ZST_STATE_READY  ──start──►  ZST_
 | Element | Description |
 |---------|-------------|
 | `mp4_muxer` | MP4 container muxer via libavformat |
+| `mp4_demuxer` | MP4 container demuxer |
+| `mpegts_demuxer` | MPEG-TS demuxer |
 | `file_sink` | FILE* writer |
 | `fake_sink` | Null sink (for testing / benchmarks) |
 | `net_sink` | TCP/UDP network sink (raw bytes) |
 | `rtsp_sink` | RTSP client sink |
+| `rtmp_sink` | RTMP client sink |
+| `srt_sink` | Secure Reliable Transport (SRT) sink |
+| `mpegts_muxer` | MPEG-TS container muxer |
 | `rtsp_server` | Multi-session RTSP server (TCP interleaved + UDP unicast) |
 
 ---
@@ -267,7 +278,7 @@ ctest -V
 
 | Test | Description |
 |------|-------------|
-| `test_core` | 54 unit tests: buffer, pad, element, pipeline, queue, scheduler, caps, bus, plugins, logging, scaler, resampler, decoders, allocator, clock, text overlay, elements |
+| `test_core` | 102 unit tests: buffer, pad, element, pipeline, queue, scheduler, caps, bus, plugins, logging, scaler, resampler, decoders, allocator, clock, text overlay, elements |
 | `test_net_source` | Network source smoke test |
 | `test_net_sink` | Network sink smoke test |
 | `test_install` | Verifies `cmake --install` layout (headers, libs, pkg-config, plugins) |
@@ -346,7 +357,7 @@ gcc my_app.c $(pkg-config --cflags --libs zstreamer-elements) -o my_app
 |------|--------|
 | Core framework (buffer, pad, element, pipeline, queue, scheduler) | ✅ Complete |
 | Caps negotiation, event bus, dynamic plugins, logging | ✅ Complete |
-| 24 element implementations | ✅ Complete |
+| 40 element implementations | ✅ Complete |
 | Clock, A/V sync, QoS | ✅ Complete |
 | Allocator & buffer pool | ✅ Complete |
 | Element public API (factory, descriptors, typed properties) | ✅ Complete |

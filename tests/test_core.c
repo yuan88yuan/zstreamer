@@ -6822,11 +6822,15 @@ int main(void)
     printf("[fakesink]\n");
     test_fakesink();
 
+#ifdef HAS_V4L2
     printf("[v4l2sink]\n");
     test_v4l2sink_mock();
+#endif
 
+#ifdef HAS_ALSA
     printf("[alsasink]\n");
     test_alsasink_mock();
+#endif
 
     printf("[video test source]\n");
     test_video_test_src();
