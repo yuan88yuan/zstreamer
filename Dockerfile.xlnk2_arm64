@@ -1,0 +1,13 @@
+FROM yuan88yuan/xlnk2_arm64:v1
+
+# ── Copy source & build ─────────────────────────────────────────────────
+WORKDIR /workspace
+COPY . .
+
+# Use bash so we can source the environment script
+SHELL ["/bin/bash", "-c"]
+
+RUN source /opt/qcap-dev-init && \
+    mkdir -p build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF && \
+    make -j$(nproc)
