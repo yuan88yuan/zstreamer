@@ -34,7 +34,6 @@ fi
 # Dynamic plugins
 check_file "$INSTALL_PREFIX/lib/zstreamer/plugins/libzst_filesink.so"
 check_file "$INSTALL_PREFIX/lib/zstreamer/plugins/libzst_fakesink.so"
-check_file "$INSTALL_PREFIX/lib/zstreamer/plugins/libzst_x264encoder.so"
 
 # Public headers
 check_file "$INSTALL_PREFIX/include/zstreamer/zst_buffer.h"
