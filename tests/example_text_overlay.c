@@ -7,12 +7,8 @@
 #include "zst_pad.h"
 #include "zst_element.h"
 #include "zst_queue.h"
-
-/* plugin elements */
-zst_element_t* zst_v4l2_source_create(void);
-zst_element_t* zst_text_overlay_create(const char* text);
-zst_element_t* zst_x264_encoder_create(void);
-zst_element_t* zst_file_sink_create(const char* path);
+#include "zst_element_factory.h"
+#include "zst_plugin.h"
 
 int main(void)
 {
@@ -33,15 +29,20 @@ int main(void)
     pipe = zst_pipeline_create();
     sched = zst_scheduler_create(&sched_cfg);
 
-    video_src = zst_v4l2_source_create();
-    text_overlay = zst_text_overlay_create("Integration Test\\nTimestamp: 00:00:00");
-    zst_element_set_property(text_overlay, "color", "#00FF00"); // green
-    zst_element_set_property(text_overlay, "position", "bottom-right");
-    zst_element_set_property(text_overlay, "font_size", "64");
+    zst_plugin_registry_init();
+    zst_plugin_registry_scan("plugins");
+
+    video_src = zst_element_factory_make("v4l2src");
+    text_overlay = zst_element_factory_make("textoverlay");
+    zst_element_set_property_string(text_overlay, "text", "Integration Test\nTimestamp: 00:00:00");
+    zst_element_set_property_string(text_overlay, "color", "#00FF00"); // green
+    zst_element_set_property_string(text_overlay, "position", "bottom-right");
+    zst_element_set_property_string(text_overlay, "font_size", "64");
 
     q_video_enc = zst_queue_element_create(NULL);
-    h264_enc = zst_x264_encoder_create();
-    sink = zst_file_sink_create("output_text.h264");
+    h264_enc = zst_element_factory_make("x264enc");
+    sink = zst_element_factory_make("filesink");
+    zst_element_set_property_string(sink, "path", "output_text.h264");
 
     zst_pipeline_add(pipe, video_src);
     zst_pipeline_add(pipe, text_overlay);
