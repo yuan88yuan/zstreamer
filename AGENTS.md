@@ -200,6 +200,41 @@ docker run --rm -it --runtime nvidia \
 
 ---
 
+## Release & Packaging
+
+The project supports generating releases for both native x86_64 environments and cross-compiled ARM64 environments using the packaging script [package.sh](file:///home/zzlee/zstreamer/scripts/package.sh).
+
+### 1. Native x86_64 Release
+To package locally for the host architecture (x86_64):
+```bash
+./scripts/package.sh <version>
+```
+To run the packaging and publish via GitHub Releases automatically, push a tag matching `v*` (e.g. `v0.1.0`), which triggers the `.github/workflows/release.yml` pipeline.
+
+### 2. Cross-Compiled ARM64 Release
+To package for the ARM64 embedded platform (Petalinux / Xilinx SC6f0) using the cross-compilation Docker container:
+```bash
+docker run --entrypoint /bin/bash --rm \
+    -e USER=root -e HOST_UID=$(id -u) -e HOST_GID=$(id -g) \
+    -v $(pwd):/workspace \
+    yuan88yuan/xlnk2_arm64:v1 \
+    -c "source /opt/qcap-dev-init && cd /workspace && ./scripts/package.sh <version>"
+```
+
+### Generated Output (in `dist/`)
+* **x86_64/amd64**:
+  * `dist/zstreamer-<version>-linux-x86_64.tar.gz` (and `.zip`)
+  * `dist/zstreamer-elements-<version>-linux-x86_64.tar.gz` (and `.zip`)
+  * `dist/zstreamer-dev_<version>_amd64.deb`
+  * `dist/zstreamer-elements-dev_<version>_amd64.deb`
+* **ARM64**:
+  * `dist/zstreamer-<version>-linux-arm64.tar.gz` (and `.zip`)
+  * `dist/zstreamer-elements-<version>-linux-arm64.tar.gz` (and `.zip`)
+  * `dist/zstreamer-dev_<version>_arm64.deb`
+  * `dist/zstreamer-elements-dev_<version>_arm64.deb`
+
+---
+
 ## Architecture
 
 | Component      | Role                                                  |

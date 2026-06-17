@@ -49,3 +49,24 @@ This builds the `aarch64` target libraries and plugins under the cross-compiler 
 ## How to Run Tests on Target Host
 
 Since target binaries cannot be run directly inside the `amd64` container hosting the cross-compiler, they must be copied to the arm64 target device, or executed via `qemu-user-static` configuration on the host.
+
+## Packaging & Releasing
+
+To package and release the cross-compiled `zstreamer` and `zstreamer-elements` libraries, run the packaging script [package.sh](file:///home/zzlee/zstreamer/scripts/package.sh) within the `yuan88yuan/xlnk2_arm64:v1` docker cross-compilation container:
+
+```bash
+docker run --entrypoint /bin/bash --rm \
+    -e USER=root -e HOST_UID=$(id -u) -e HOST_GID=$(id -g) \
+    -v $(pwd):/workspace \
+    yuan88yuan/xlnk2_arm64:v1 \
+    -c "source /opt/qcap-dev-init && cd /workspace && ./scripts/package.sh <version>"
+```
+
+*(e.g., replacement for `<version>` could be `0.1.0-arm64`)*
+
+### Output Artifacts
+The script automatically builds both static and shared library versions, separates core and element directories, detects the cross-compilation environment, and outputs the following files in the `dist/` directory:
+- `dist/zstreamer-<version>-linux-arm64.tar.gz` (and `.zip`)
+- `dist/zstreamer-elements-<version>-linux-arm64.tar.gz` (and `.zip`)
+- `dist/zstreamer-dev_<version>_arm64.deb`
+- `dist/zstreamer-elements-dev_<version>_arm64.deb`

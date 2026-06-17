@@ -6,7 +6,15 @@ VERSION="${1:-0.1.0}"
 # Strip leading 'v' if present for debian package compatibility
 DEB_VERSION="${VERSION#v}"
 
-echo "=== Packaging zstreamer v${VERSION} (Debian version: ${DEB_VERSION}) ==="
+# Detect target architecture
+TARGET_ARCH="x86_64"
+DEB_ARCH="amd64"
+if [[ "$ARCH" == "arm64" || "$OECORE_TARGET_ARCH" == "aarch64" ]]; then
+    TARGET_ARCH="arm64"
+    DEB_ARCH="arm64"
+fi
+
+echo "=== Packaging zstreamer v${VERSION} (Debian version: ${DEB_VERSION}, Arch: ${TARGET_ARCH}/${DEB_ARCH}) ==="
 
 # Directories
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -71,16 +79,16 @@ cp -a "$STAGE_ALL/lib/zstreamer/plugins" "$STAGE_ELEMENTS/zstreamer-elements/lib
 
 # 5. Generate Tarballs and Zips
 echo "--> Generating archives..."
-tar -czf "${OUTPUT_DIR}/zstreamer-${VERSION}-linux-x86_64.tar.gz" -C "$STAGE_ZSTREAMER" zstreamer
-tar -czf "${OUTPUT_DIR}/zstreamer-elements-${VERSION}-linux-x86_64.tar.gz" -C "$STAGE_ELEMENTS" zstreamer-elements
+tar -czf "${OUTPUT_DIR}/zstreamer-${VERSION}-linux-${TARGET_ARCH}.tar.gz" -C "$STAGE_ZSTREAMER" zstreamer
+tar -czf "${OUTPUT_DIR}/zstreamer-elements-${VERSION}-linux-${TARGET_ARCH}.tar.gz" -C "$STAGE_ELEMENTS" zstreamer-elements
 
 if command -v zip >/dev/null 2>&1; then
-    (cd "$STAGE_ZSTREAMER" && zip -r "${OUTPUT_DIR}/zstreamer-${VERSION}-linux-x86_64.zip" zstreamer)
-    (cd "$STAGE_ELEMENTS" && zip -r "${OUTPUT_DIR}/zstreamer-elements-${VERSION}-linux-x86_64.zip" zstreamer-elements)
+    (cd "$STAGE_ZSTREAMER" && zip -r "${OUTPUT_DIR}/zstreamer-${VERSION}-linux-${TARGET_ARCH}.zip" zstreamer)
+    (cd "$STAGE_ELEMENTS" && zip -r "${OUTPUT_DIR}/zstreamer-elements-${VERSION}-linux-${TARGET_ARCH}.zip" zstreamer-elements)
 elif command -v python3 >/dev/null 2>&1; then
     echo "zip not found, using python3 to create zip archive..."
-    python3 -c "import shutil; shutil.make_archive('${OUTPUT_DIR}/zstreamer-${VERSION}-linux-x86_64', 'zip', '$STAGE_ZSTREAMER', 'zstreamer')"
-    python3 -c "import shutil; shutil.make_archive('${OUTPUT_DIR}/zstreamer-elements-${VERSION}-linux-x86_64', 'zip', '$STAGE_ELEMENTS', 'zstreamer-elements')"
+    python3 -c "import shutil; shutil.make_archive('${OUTPUT_DIR}/zstreamer-${VERSION}-linux-${TARGET_ARCH}', 'zip', '$STAGE_ZSTREAMER', 'zstreamer')"
+    python3 -c "import shutil; shutil.make_archive('${OUTPUT_DIR}/zstreamer-elements-${VERSION}-linux-${TARGET_ARCH}', 'zip', '$STAGE_ELEMENTS', 'zstreamer-elements')"
 else
     echo "Warning: zip command and python3 not found. Skipping zip archive generation."
 fi
@@ -100,7 +108,7 @@ Package: zstreamer-dev
 Version: ${DEB_VERSION}
 Section: devel
 Priority: optional
-Architecture: amd64
+Architecture: ${DEB_ARCH}
 Maintainer: zzlee <zzlee@github.com>
 Depends: libvulkan-dev
 Description: Lightweight modular multimedia streaming framework - Core
@@ -117,7 +125,7 @@ Package: zstreamer-elements-dev
 Version: ${DEB_VERSION}
 Section: devel
 Priority: optional
-Architecture: amd64
+Architecture: ${DEB_ARCH}
 Maintainer: zzlee <zzlee@github.com>
 Depends: zstreamer-dev (= ${DEB_VERSION}), libavformat-dev, libavcodec-dev, libavutil-dev, libx264-dev, libasound2-dev, libv4l-dev, libswscale-dev, libswresample-dev, libfreetype-dev, libsrt-gnutls-dev
 Description: Lightweight modular multimedia streaming framework - Elements
@@ -127,8 +135,8 @@ EOF2
 
 # Build Debian packages
 echo "--> Generating Debian packages..."
-dpkg-deb --build "$DEB_STAGE_ZSTREAMER" "${OUTPUT_DIR}/zstreamer-dev_${DEB_VERSION}_amd64.deb"
-dpkg-deb --build "$DEB_STAGE_ELEMENTS" "${OUTPUT_DIR}/zstreamer-elements-dev_${DEB_VERSION}_amd64.deb"
+dpkg-deb --build "$DEB_STAGE_ZSTREAMER" "${OUTPUT_DIR}/zstreamer-dev_${DEB_VERSION}_${DEB_ARCH}.deb"
+dpkg-deb --build "$DEB_STAGE_ELEMENTS" "${OUTPUT_DIR}/zstreamer-elements-dev_${DEB_VERSION}_${DEB_ARCH}.deb"
 
 echo "=== Packaging Completed! Output files in ${OUTPUT_DIR}: ==="
 ls -lh "$OUTPUT_DIR"
