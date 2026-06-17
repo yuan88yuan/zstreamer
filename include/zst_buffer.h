@@ -1,13 +1,20 @@
 /*=============================================================================
-    zst_buffer.h
+    zst_buffer.h - Thread-safe, lock-free refcounted buffers with alignment
 =============================================================================*/
 #pragma once
 
 #include "zst_types.h"
+#include <stddef.h>
+#include <stdint.h>
+#include <stdatomic.h>
+#include <stdalign.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#define ZST_CACHE_LINE_SIZE 64
+#define ZST_MEM_ALIGNMENT   32  /* Required alignment for SIMD (AVX2/AVX-512) */
 
 typedef enum {
     ZST_BUFFER_VIDEO_FRAME,
@@ -29,60 +36,45 @@ typedef enum {
 #define ZST_BUFFER_FLAG_DROP (1 << 1)
 
 typedef struct {
-
     zst_memory_type_t type;
-
-    void*  data;
+    void* data;
     size_t size;
-
     void* priv;
-
     void (*release)(void* priv);
-
 } zst_memory_t;
 
+/* Aligned for optimal cache line utilization and SIMD instruction loads using standard C11 alignment */
 typedef struct {
-
-    uint32_t width;
+    _Alignas(ZST_CACHE_LINE_SIZE) uint32_t width;
     uint32_t height;
     uint32_t format;
-
-    uint8_t* plane[4];
     uint32_t stride[4];
-
+    uint8_t* plane[4];
 } zst_video_frame_t;
 
 typedef struct {
-
-    uint32_t sample_rate;
+    _Alignas(ZST_CACHE_LINE_SIZE) uint32_t sample_rate;
     uint32_t channels;
     uint32_t format;
-
     uint32_t nb_samples;
-
     void* data;
-
 } zst_audio_frame_t;
 
 struct zst_buffer {
-
+    /* Hot path variables packed and aligned to avoid false sharing */
+    _Alignas(ZST_CACHE_LINE_SIZE) _Atomic int refcount;
     uint32_t type;
-
-    volatile int refcount;
+    uint32_t flags;
 
     zst_time_t pts;
     zst_time_t dts;
     zst_time_t duration;
 
-    uint32_t flags;
-
     zst_memory_t memory;
-
     void* payload;
     void* metadata;
 
     struct zst_buffer_pool* pool;
-
     void (*destroy)(zst_buffer_t* buf);
 };
 
@@ -96,11 +88,15 @@ zst_buffer_t* zst_buffer_create_with_allocator(
 zst_buffer_t* zst_buffer_create_with_pool(
     struct zst_buffer_pool* pool);
 
-zst_buffer_t* zst_buffer_ref(
-    zst_buffer_t* buf);
+/* High-performance inline reference counting to avoid function call overhead in hot loops */
+static inline zst_buffer_t* zst_buffer_ref(zst_buffer_t* buf) {
+    if (buf) {
+        atomic_fetch_add_explicit(&buf->refcount, 1, memory_order_relaxed);
+    }
+    return buf;
+}
 
-void zst_buffer_unref(
-    zst_buffer_t* buf);
+void zst_buffer_unref(zst_buffer_t* buf);
 
 #ifdef __cplusplus
 }

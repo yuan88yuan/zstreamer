@@ -2,7 +2,9 @@
     zst_allocator.c
 =============================================================================*/
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 
 #include "zst_allocator.h"
 #include <stdlib.h>

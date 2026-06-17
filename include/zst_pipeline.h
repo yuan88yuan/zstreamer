@@ -1,9 +1,10 @@
 /*=============================================================================
-    zst_pipeline.h - Container with state propagation & allocation tracking
+    zst_pipeline.h - Incremental rank-based topological sorting
 =============================================================================*/
 #pragma once
 
 #include <pthread.h>
+#include <stdalign.h>
 #include "zst_types.h"
 #include "zst_element.h"
 
@@ -12,78 +13,44 @@ extern "C" {
 #endif
 
 struct zst_pipeline {
-
-    zst_element_t** elements;
-
+    _Alignas(ZST_CACHE_LINE_SIZE) zst_element_t** elements;
     uint32_t nb_elements;
-
-    /* Amortized reallocation capacity to prevent high-frequency heap reallocations */
     uint32_t capacity;
 
-    zst_state_t state;
+    _Atomic(zst_state_t) state;
 
     void* priv;
-
     zst_bus_t* bus;
     zst_clock_t* clock;
 
-    /* When true (non-zero), the scheduler will wait until each buffer's PTS
-     * is reached before delivering it, enabling real-time pacing and A/V sync.
-     * Default: 0 (off) — buffers are delivered as fast as possible. */
     int clock_sync;
-
-    /* Wall-clock time (ns, CLOCK_MONOTONIC) captured when the pipeline first
-     * transitions to PLAYING.  The scheduler computes pipeline running-time as
-     * (now - base_time) and compares it against each buffer's PTS so that
-     * count-based PTS (0, 33ms, 66ms, …) works correctly regardless of how
-     * long the system has been up. */
     zst_time_t base_time;
 
-    pthread_rwlock_t elements_lock; /* Protects elements array */
+    /* Lock protecting structural topological modifications of the graph */
+    pthread_rwlock_t elements_lock;
 };
 
 zst_pipeline_t* zst_pipeline_create(void);
+void zst_pipeline_destroy(zst_pipeline_t* pipe);
 
-void zst_pipeline_destroy(
-    zst_pipeline_t* pipe);
+zst_bus_t* zst_pipeline_get_bus(zst_pipeline_t* pipe);
+void zst_pipeline_set_clock(zst_pipeline_t* pipe, zst_clock_t* clock);
+zst_clock_t* zst_pipeline_get_clock(zst_pipeline_t* pipe);
 
-zst_bus_t* zst_pipeline_get_bus(
-    zst_pipeline_t* pipe);
+zst_result_t zst_pipeline_add(zst_pipeline_t* pipe, zst_element_t* el);
+zst_result_t zst_pipeline_remove(zst_pipeline_t* pipe, zst_element_t* el);
 
-void zst_pipeline_set_clock(
-    zst_pipeline_t* pipe,
-    zst_clock_t* clock);
+zst_result_t zst_pipeline_set_state(zst_pipeline_t* pipe, zst_state_t state);
 
-zst_clock_t* zst_pipeline_get_clock(
-    zst_pipeline_t* pipe);
+zst_result_t zst_pipeline_start(zst_pipeline_t* pipe);
+zst_result_t zst_pipeline_stop(zst_pipeline_t* pipe);
 
-zst_result_t zst_pipeline_add(
-    zst_pipeline_t* pipe,
-    zst_element_t* el);
+zst_result_t zst_pipeline_set_clock_sync(zst_pipeline_t* pipe, int enabled);
+int zst_pipeline_get_clock_sync(zst_pipeline_t* pipe);
 
-zst_result_t zst_pipeline_remove(
-    zst_pipeline_t* pipe,
-    zst_element_t* el);
-
-zst_result_t zst_pipeline_set_state(
-    zst_pipeline_t* pipe,
-    zst_state_t state);
-
-zst_result_t zst_pipeline_start(
-    zst_pipeline_t* pipe);
-
-zst_result_t zst_pipeline_stop(
-    zst_pipeline_t* pipe);
-
-zst_result_t zst_pipeline_set_clock_sync(
-    zst_pipeline_t* pipe,
-    int enabled);
-
-int zst_pipeline_get_clock_sync(
-    zst_pipeline_t* pipe);
-
-void zst_pipeline_topological_sort(
-    zst_pipeline_t* pipe);
+/* Incremental rank tracking - recalulates only downstream ranks of targeted node */
+void zst_pipeline_update_ranks_from(zst_pipeline_t* pipe, zst_element_t* start_el);
+void zst_pipeline_topological_sort(zst_pipeline_t* pipe);
 
 int zst_pipeline_count_elements_of_type(
     zst_pipeline_t* pipe,

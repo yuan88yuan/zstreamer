@@ -18,6 +18,8 @@ typedef uint64_t zst_time_t;
 #define ZST_TIMEOUT    -2
 #define ZST_AGAIN      -3
 #define ZST_EOF        -4
+#define ZST_ERROR_INVALID_ARGUMENT -5
+#define ZST_ERROR_NOT_IMPLEMENTED  -6
 
 typedef struct zst_allocator   zst_allocator_t;
 typedef struct zst_clock       zst_clock_t;
