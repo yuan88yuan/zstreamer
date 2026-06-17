@@ -1,5 +1,5 @@
 /*=============================================================================
-    zst_pipeline.h
+    zst_pipeline.h - Container with state propagation & allocation tracking
 =============================================================================*/
 #pragma once
 
@@ -16,6 +16,9 @@ struct zst_pipeline {
     zst_element_t** elements;
 
     uint32_t nb_elements;
+
+    /* Amortized reallocation capacity to prevent high-frequency heap reallocations */
+    uint32_t capacity;
 
     zst_state_t state;
 

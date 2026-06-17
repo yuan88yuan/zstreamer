@@ -1,5 +1,5 @@
 /*=============================================================================
-    zst_pipeline.c — Element container with state propagation
+    zst_pipeline.c - Element container with state propagation
 =============================================================================*/
 
 #define _POSIX_C_SOURCE 200809L  /* clock_gettime */
@@ -21,6 +21,7 @@ zst_pipeline_create(void)
 
     pipe->elements    = NULL;
     pipe->nb_elements = 0;
+    pipe->capacity    = 0;
     pipe->state       = ZST_STATE_NULL;
     pipe->priv        = NULL;
     pipe->bus         = zst_bus_create();
@@ -35,9 +36,10 @@ zst_pipeline_destroy(zst_pipeline_t* pipe)
 {
     if (!pipe) return;
 
-    /* Destroy all elements (in reverse order) */
-    for (uint32_t i = pipe->nb_elements; i > 0; i--)
+    /* Destroy all elements (in reverse order to safeguard downstream elements) */
+    for (uint32_t i = pipe->nb_elements; i > 0; i--) {
         zst_element_destroy(pipe->elements[i - 1]);
+    }
 
     if (pipe->bus) {
         zst_bus_destroy(pipe->bus);
@@ -89,15 +91,20 @@ zst_pipeline_add(zst_pipeline_t* pipe, zst_element_t* el)
     if (!pipe || !el) return ZST_ERROR;
 
     pthread_rwlock_wrlock(&pipe->elements_lock);
-    zst_element_t** els = realloc(pipe->elements,
-                                 (pipe->nb_elements + 1) * sizeof(zst_element_t*));
-    if (!els) {
-        pthread_rwlock_unlock(&pipe->elements_lock);
-        return ZST_ERROR;
+
+    /* Amortized exponential dynamic resizing to reduce lock-contested heap reallocations */
+    if (pipe->nb_elements >= pipe->capacity) {
+        uint32_t new_cap = (pipe->capacity == 0) ? 8 : pipe->capacity * 2;
+        zst_element_t** els = realloc(pipe->elements, new_cap * sizeof(zst_element_t*));
+        if (!els) {
+            pthread_rwlock_unlock(&pipe->elements_lock);
+            return ZST_ERROR;
+        }
+        pipe->elements = els;
+        pipe->capacity = new_cap;
     }
 
-    els[pipe->nb_elements++] = el;
-    pipe->elements = els;
+    pipe->elements[pipe->nb_elements++] = el;
     el->bus = pipe->bus;
     el->pipeline = pipe;
     pthread_rwlock_unlock(&pipe->elements_lock);
@@ -116,8 +123,9 @@ zst_pipeline_remove(zst_pipeline_t* pipe, zst_element_t* el)
     for (uint32_t i = 0; i < pipe->nb_elements; i++) {
         if (pipe->elements[i] == el) {
             /* Shift remaining elements down */
-            for (uint32_t j = i; j < pipe->nb_elements - 1; j++)
+            for (uint32_t j = i; j < pipe->nb_elements - 1; j++) {
                 pipe->elements[j] = pipe->elements[j + 1];
+            }
             pipe->nb_elements--;
             found = 1;
             break;
@@ -292,24 +300,47 @@ zst_pipeline_set_state(zst_pipeline_t* pipe, zst_state_t state)
                         + (zst_time_t)_ts.tv_nsec;
     }
 
-    /* Propagate state to all elements */
+    /* Propagate state to all elements with direction awareness:
+     * - Upward transitions: Propagate forward (sources first, then sinks)
+     * - Downward transitions: Propagate in reverse (sinks first, then sources) */
     pthread_rwlock_rdlock(&pipe->elements_lock);
-    for (uint32_t i = 0; i < pipe->nb_elements; i++) {
-        zst_result_t r = zst_element_set_state(pipe->elements[i], state);
-        if (r != ZST_OK) {
-            /* Error rollback: revert previous elements to old_state */
-            for (uint32_t j = 0; j < i; j++) {
-                zst_element_set_state(pipe->elements[j], old_state);
+    
+    if (state > old_state) {
+        /* Upward Transition: Forward order */
+        for (uint32_t i = 0; i < pipe->nb_elements; i++) {
+            zst_result_t r = zst_element_set_state(pipe->elements[i], state);
+            if (r != ZST_OK) {
+                /* Rollback transitioned elements to previous state */
+                for (int32_t j = (int32_t)i - 1; j >= 0; j--) {
+                    zst_element_set_state(pipe->elements[j], old_state);
+                }
+                pthread_rwlock_unlock(&pipe->elements_lock);
+                if (pipe->bus) {
+                    zst_event_t* ev = zst_event_new_error(pipe->elements[i], r, "Element failed upward state transition");
+                    zst_bus_post(pipe->bus, ev);
+                }
+                return r;
             }
-            pthread_rwlock_unlock(&pipe->elements_lock);
-            /* Post ZST_EVENT_ERROR */
-            if (pipe->bus) {
-                zst_event_t* ev = zst_event_new_error(pipe->elements[i], r, "Element failed to set state");
-                zst_bus_post(pipe->bus, ev);
+        }
+    } else {
+        /* Downward Transition: Reverse order to stop sinks first */
+        for (int32_t i = (int32_t)pipe->nb_elements - 1; i >= 0; i--) {
+            zst_result_t r = zst_element_set_state(pipe->elements[i], state);
+            if (r != ZST_OK) {
+                /* Rollback transitioned elements to previous state */
+                for (uint32_t j = (uint32_t)i + 1; j < pipe->nb_elements; j++) {
+                    zst_element_set_state(pipe->elements[j], old_state);
+                }
+                pthread_rwlock_unlock(&pipe->elements_lock);
+                if (pipe->bus) {
+                    zst_event_t* ev = zst_event_new_error(pipe->elements[i], r, "Element failed downward state transition");
+                    zst_bus_post(pipe->bus, ev);
+                }
+                return r;
             }
-            return r;
         }
     }
+    
     pthread_rwlock_unlock(&pipe->elements_lock);
 
     pipe->state = state;
