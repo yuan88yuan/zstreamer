@@ -4596,6 +4596,14 @@ test_dmabuf_allocator(void)
     zst_allocator_free(alloc, ptr1);
     zst_allocator_free(alloc, ptr2);
 
+    // Buffers created with the allocator must expose DMABUF metadata for V4L2.
+    zst_buffer_t* buf = zst_buffer_create_with_allocator(ZST_BUFFER_VIDEO_FRAME, alloc, size);
+    assert(NULL != buf);
+    assert(buf->memory.type == ZST_MEMORY_DMABUF);
+    assert(buf->memory.priv != NULL);
+    assert(*(int*)buf->memory.priv >= 0);
+    zst_buffer_unref(buf);
+
     // Test destroying
     zst_allocator_unref(alloc);
 

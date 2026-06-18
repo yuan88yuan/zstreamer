@@ -105,12 +105,34 @@ zst_allocator_cpu_create(void)
 
 
 #include <sys/mman.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <string.h>
+#include <stdint.h>
+#if defined(__has_include)
+#  if __has_include(<linux/dma-heap.h>)
+#    include <linux/dma-heap.h>
+#  endif
+#endif
 
 #ifndef MFD_ALLOW_SEALING
 #define MFD_ALLOW_SEALING 0x0002U
+#endif
+
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 0
+#endif
+
+#ifndef DMA_HEAP_IOCTL_ALLOC
+struct dma_heap_allocation_data {
+    uint64_t len;
+    uint32_t fd;
+    uint32_t fd_flags;
+    uint64_t heap_flags;
+};
+#define DMA_HEAP_IOC_MAGIC 'H'
+#define DMA_HEAP_IOCTL_ALLOC _IOWR(DMA_HEAP_IOC_MAGIC, 0x0, struct dma_heap_allocation_data)
 #endif
 
 typedef struct {
@@ -185,19 +207,70 @@ dmabuf_remove_mem(zst_dmabuf_allocator_t* ctx, void* ptr, int* out_fd, size_t* o
     return 0;
 }
 
+static int
+dmabuf_alloc_heap_fd(size_t size)
+{
+    const char* env_heap = getenv("ZST_DMABUF_HEAP");
+    const char* heaps[] = {
+        env_heap,
+        "/dev/dma_heap/system",
+        "/dev/dma_heap/system-uncached",
+        "/dev/dma_heap/linux,cma",
+        "/dev/dma_heap/cma",
+        "/dev/dma_heap/reserved",
+        "/dev/dma_heap/default_cma_region"
+    };
+
+    for (size_t i = 0; i < sizeof(heaps) / sizeof(heaps[0]); i++) {
+        if (!heaps[i] || heaps[i][0] == '\0') continue;
+
+        int heap_fd = open(heaps[i], O_RDWR | O_CLOEXEC);
+        if (heap_fd < 0) continue;
+
+        struct dma_heap_allocation_data data;
+        memset(&data, 0, sizeof(data));
+        data.len = size;
+        data.fd_flags = O_RDWR | O_CLOEXEC;
+        data.heap_flags = 0;
+
+        if (ioctl(heap_fd, DMA_HEAP_IOCTL_ALLOC, &data) == 0) {
+            close(heap_fd);
+            return (int)data.fd;
+        }
+
+        close(heap_fd);
+    }
+
+    return -1;
+}
+
+static int
+dmabuf_alloc_memfd(size_t size)
+{
+    int fd = memfd_create("zst_dmabuf", MFD_ALLOW_SEALING);
+    if (fd < 0) return -1;
+
+    if (ftruncate(fd, size) < 0) {
+        close(fd);
+        return -1;
+    }
+
+    return fd;
+}
+
 static void*
 dmabuf_alloc(zst_allocator_t* allocator, size_t size)
 {
     zst_dmabuf_allocator_t* ctx = (zst_dmabuf_allocator_t*)allocator->priv;
 
-    // Try memfd_create as fallback for dma-buf
-    int fd = memfd_create("zst_dmabuf", MFD_ALLOW_SEALING);
-    if (fd < 0) return NULL;
-
-    if (ftruncate(fd, size) < 0) {
-        close(fd);
-        return NULL;
+    /* Prefer a real dma-buf heap when available so V4L2_MEMORY_DMABUF
+     * simulation tests (e.g. vivid) receive importable dma-buf fds.  Fall
+     * back to memfd for allocator unit tests on hosts without dma heaps. */
+    int fd = dmabuf_alloc_heap_fd(size);
+    if (fd < 0) {
+        fd = dmabuf_alloc_memfd(size);
     }
+    if (fd < 0) return NULL;
 
     void* ptr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     if (ptr == MAP_FAILED) {

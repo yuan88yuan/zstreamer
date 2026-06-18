@@ -40,3 +40,7 @@ jobs:
       - name: Run Docker Compose Multi-Service Integration Tests
         run: |
           ./tests/run_integration_tests.sh
+
+      - name: Run V4L2 DMABUF Simulation Test (vivid)
+        run: |
+          ./tests/run_v4l2_dmabuf_simulation.sh

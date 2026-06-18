@@ -846,6 +846,16 @@ if(BUILD_TESTS)
         target_link_libraries(test_v4l2_loopback
             PRIVATE zstreamer-elements
         )
+
+        add_executable(test_v4l2_dmabuf_sim
+            tests/test_v4l2_dmabuf_sim.c
+        )
+        target_include_directories(test_v4l2_dmabuf_sim
+            PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+        )
+        target_link_libraries(test_v4l2_dmabuf_sim
+            PRIVATE zstreamer-elements
+        )
     endif()
 
     # -- full pipeline example --

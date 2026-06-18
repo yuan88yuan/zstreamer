@@ -13,6 +13,9 @@
 #include <string.h>
 
 typedef struct {
+    /* Keep fd as the first member so ZST_MEMORY_DMABUF users can treat
+     * memory.priv as int* when passing buffers to V4L2_MEMORY_DMABUF APIs. */
+    int fd;
     zst_allocator_t* allocator;
     void* ptr;
 } zst_buffer_alloc_ctx_t;
@@ -73,8 +76,9 @@ zst_buffer_t* zst_buffer_create_with_allocator(
 
         ctx->allocator = zst_allocator_ref(allocator);
         ctx->ptr = data;
+        ctx->fd = zst_allocator_dmabuf_get_fd(allocator, data);
 
-        buf->memory.type = ZST_MEMORY_CPU;
+        buf->memory.type = (ctx->fd >= 0) ? ZST_MEMORY_DMABUF : ZST_MEMORY_CPU;
         buf->memory.data = data;
         buf->memory.size = size;
         buf->memory.priv = ctx;
