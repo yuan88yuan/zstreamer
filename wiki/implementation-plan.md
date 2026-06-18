@@ -13,6 +13,7 @@ All phases are now documented in separate files for easier maintenance.
 | Post-P0 | [RTMP Hardening](phase-rtmp-hardening.md) | ~60 | ✅ Done |
 | Post-P0 | [RTSP Media-On-Demand](phase-rtsp-mod.md) | ~70 | ✅ Done |
 | Post-P0 | [Xilinx VCU Integration](phase-xilinx-vcu.md) | ~30 | ⬜ Planned |
+| Post-P0 | [V4L2 DMA-BUF Exporter](phase-v4l2-expbuf.md) | ~110 | ⬜ Planned |
 | Cross-Compile | [ARM64 Cross-Compilation](cross-compilation.md) | ~50 | ✅ Done |
 | Bugfix  | [Clock Sync Debug](clock-sync-debug.md) | ~200 | ✅ Fixed — scheduler clock sync comparison was broken |
 
@@ -50,4 +51,11 @@ Detailed tasks and checklist for RTMP Source/Sink Hardening have been moved to a
 
 Detailed tasks and checklist for RTSP Server Media-On-Demand refactoring have been moved to a separate document:
 - [RTSP Media-On-Demand Refactoring Plan](phase-rtsp-mod.md)
+
+
+## V4L2 DMA-BUF Exporter (Post-P0)
+
+Detailed tasks and checklist for V4L2 source element DMA-BUF exporter support:
+- [V4L2 DMA-BUF Exporter Plan](phase-v4l2-expbuf.md)
+
 
