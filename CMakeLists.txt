@@ -314,6 +314,7 @@ set(CORE_SOURCES
     src/zst_bus.c
     src/zst_log.c
     src/zst_allocator.c
+    src/zst_allocator_dmabuf.c
     src/zst_allocator_cuda.c
     src/zst_clock.c
 )
