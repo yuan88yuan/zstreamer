@@ -5161,6 +5161,30 @@ test_fakesink(void)
 
 #ifdef HAS_V4L2
 static void
+test_v4l2src_mmap_export_property(void)
+{
+    TEST("v4l2src mmap-export property");
+    zst_plugin_registry_init();
+    zst_plugin_registry_scan(test_plugin_path());
+
+    zst_element_t* src = zst_element_factory_make("v4l2src");
+    assert(src != NULL);
+
+    assert(zst_element_set_property(src, "memory-type", "mmap-export") == ZST_OK);
+
+    char val[64];
+    assert(zst_element_get_property(src, "memory-type", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "mmap-export") == 0);
+
+    assert(zst_element_set_property(src, "memory-type", "invalid-mode") == ZST_ERROR);
+    assert(zst_element_get_property(src, "memory-type", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "mmap-export") == 0);
+
+    zst_element_destroy(src);
+    PASS();
+}
+
+static void
 test_v4l2sink_mock(void)
 {
     TEST("v4l2sink (mock fallback)");
@@ -6902,7 +6926,8 @@ int main(void)
     test_fakesink();
 
 #ifdef HAS_V4L2
-    printf("[v4l2sink]\n");
+    printf("[v4l2]\n");
+    test_v4l2src_mmap_export_property();
     test_v4l2sink_mock();
 #endif
 

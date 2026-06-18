@@ -27,6 +27,8 @@ typedef struct {
 static int g_frame_count = 0;
 static int g_expected_width = 640;
 static int g_expected_height = 480;
+static int g_probe_error = 0;
+static const char* g_expected_memory_type = "mmap";
 
 static zst_pad_probe_return_t
 on_frame_probe(zst_pad_t* pad, zst_buffer_t* buf, zst_pad_probe_type_t type, void* user_data)
@@ -37,8 +39,15 @@ on_frame_probe(zst_pad_t* pad, zst_buffer_t* buf, zst_pad_probe_type_t type, voi
 
     if (buf) {
         g_frame_count++;
-        // Check size: YUV420P output from v4l2src should be width * height * 3 / 2
         size_t expected_size = (size_t)g_expected_width * g_expected_height * 3 / 2;
+        if (strcmp(g_expected_memory_type, "mmap-export") == 0) {
+            expected_size = (size_t)g_expected_width * g_expected_height * 2;
+            if (buf->memory.type != ZST_MEMORY_DMABUF || !buf->memory.priv) {
+                fprintf(stderr, "[Consumer] Error: mmap-export did not produce a DMABUF-backed buffer\n");
+                g_probe_error = 1;
+                return ZST_PAD_PROBE_DROP;
+            }
+        }
         if (buf->memory.size != expected_size) {
             fprintf(stderr, "[Consumer] Warning: buffer size %zu does not match expected %zu\n",
                     buf->memory.size, expected_size);
@@ -58,6 +67,7 @@ int main(int argc, char* argv[])
     int width = 640;
     int height = 480;
     int duration = 5;
+    const char* memory_type = "mmap";
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--device") == 0 && i + 1 < argc) {
@@ -72,11 +82,13 @@ int main(int argc, char* argv[])
             height = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--duration") == 0 && i + 1 < argc) {
             duration = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--memory-type") == 0 && i + 1 < argc) {
+            memory_type = argv[++i];
         }
     }
 
     if (!mode) {
-        fprintf(stderr, "Usage: %s --mode <read|write> [--device <device>] [--frames <frames>] [--width <width>] [--height <height>]\n", argv[0]);
+        fprintf(stderr, "Usage: %s --mode <read|write> [--device <device>] [--frames <frames>] [--width <width>] [--height <height>] [--memory-type <mmap|mmap-export|userptr|dmabuf>]\n", argv[0]);
         return EXIT_FAILURE;
     }
 
@@ -88,6 +100,7 @@ int main(int argc, char* argv[])
 
     g_expected_width = width;
     g_expected_height = height;
+    g_expected_memory_type = memory_type;
 
     zst_pipeline_t* pipe = zst_pipeline_create();
     zst_scheduler_config_t sched_cfg = {
@@ -177,6 +190,7 @@ int main(int argc, char* argv[])
         zst_element_set_property(src, "device", device);
         zst_element_set_property_int(src, "width", width);
         zst_element_set_property_int(src, "height", height);
+        zst_element_set_property(src, "memory-type", memory_type);
 
         // Add probe to verify and count frames
         zst_pad_t* src_pad = zst_element_get_pad(src, "src");
@@ -222,6 +236,9 @@ int main(int argc, char* argv[])
         printf("[Consumer] Captured %d / %d expected frames.\n", g_frame_count, frames);
         if (g_frame_count < frames) {
             fprintf(stderr, "[Consumer] Error: Timeout reached before getting %d frames!\n", frames);
+            return EXIT_FAILURE;
+        }
+        if (g_probe_error) {
             return EXIT_FAILURE;
         }
 

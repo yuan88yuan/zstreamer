@@ -14,6 +14,10 @@
 #include <sys/mman.h>
 #include <linux/videodev2.h>
 
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 0
+#endif
+
 #include "zst_element.h"
 #include "zst_log.h"
 #include "zst_buffer.h"
@@ -22,7 +26,17 @@
 
 static void v4l2_buf_free(zst_buffer_t* buf);
 
+typedef struct v4l2_source v4l2_source_t;
+
 typedef struct {
+    /* Keep fd as the first member so existing downstream code that treats
+     * memory.priv as int* (for ZST_MEMORY_DMABUF) remains compatible. */
+    int fd;
+    v4l2_source_t* source;
+    uint32_t index;
+} v4l2_export_buffer_ctx_t;
+
+typedef struct v4l2_source {
     int fd;
     int is_mock;
     uint32_t width;
@@ -39,9 +53,76 @@ typedef struct {
 
     char            device[128];
     char            pixel_format[32];
-    char            memory_type[32]; // "mmap", "userptr", "dmabuf"
+    char            memory_type[32]; // "mmap", "userptr", "dmabuf", "mmap-export"
     zst_buffer_t**  pool_buffers;
+    int*            exported_fds;
+    int             streaming;
 } v4l2_source_t;
+
+static int
+v4l2_memory_type_is_valid(const char* memory_type)
+{
+    return strcmp(memory_type, "mmap") == 0 ||
+           strcmp(memory_type, "userptr") == 0 ||
+           strcmp(memory_type, "dmabuf") == 0 ||
+           strcmp(memory_type, "mmap-export") == 0;
+}
+
+static int
+v4l2_source_is_mmap_export(const v4l2_source_t* s)
+{
+    return s && strcmp(s->memory_type, "mmap-export") == 0;
+}
+
+static void
+v4l2_source_close_exported_fds(v4l2_source_t* s)
+{
+    if (!s || !s->exported_fds) return;
+
+    for (uint32_t i = 0; i < s->nb_buffers; i++) {
+        if (s->exported_fds[i] >= 0) {
+            close(s->exported_fds[i]);
+            s->exported_fds[i] = -1;
+        }
+    }
+    free(s->exported_fds);
+    s->exported_fds = NULL;
+}
+
+static zst_result_t
+v4l2_source_requeue_mmap_buffer(v4l2_source_t* s, uint32_t index)
+{
+    if (!s || s->fd < 0) return ZST_ERROR;
+
+    struct v4l2_buffer qbuf = {0};
+    qbuf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    qbuf.memory = V4L2_MEMORY_MMAP;
+    qbuf.index = index;
+
+    if (ioctl(s->fd, VIDIOC_QBUF, &qbuf) < 0) {
+        ZST_LOG_WARN("v4l2src", "VIDIOC_QBUF failed while recycling exported buffer %u.", index);
+        return ZST_ERROR;
+    }
+    return ZST_OK;
+}
+
+static void
+v4l2src_dmabuf_release_callback(void* priv)
+{
+    v4l2_export_buffer_ctx_t* ctx = priv;
+    if (!ctx) return;
+
+    v4l2_source_t* s = ctx->source;
+    if (s && s->streaming && s->fd >= 0) {
+        (void)v4l2_source_requeue_mmap_buffer(s, ctx->index);
+    }
+
+    if (ctx->fd >= 0) {
+        close(ctx->fd);
+        ctx->fd = -1;
+    }
+    free(ctx);
+}
 
 static void
 yuyv_to_yuv420p(uint32_t width, uint32_t height, const uint8_t* yuyv, uint8_t* yuv420p)
@@ -131,6 +212,8 @@ v4l2_open(zst_element_t* el)
     } else if (strcmp(s->memory_type, "dmabuf") == 0) {
         req.memory = V4L2_MEMORY_DMABUF;
     } else {
+        /* Both "mmap" and "mmap-export" use driver-allocated MMAP buffers;
+         * mmap-export additionally exports each slot with VIDIOC_EXPBUF. */
         req.memory = V4L2_MEMORY_MMAP;
     }
 
@@ -146,6 +229,16 @@ v4l2_open(zst_element_t* el)
 
     if (req.memory == V4L2_MEMORY_MMAP) {
         s->buffers = calloc(req.count, sizeof(*s->buffers));
+        if (!s->buffers) goto error;
+
+        if (v4l2_source_is_mmap_export(s)) {
+            s->exported_fds = calloc(req.count, sizeof(*s->exported_fds));
+            if (!s->exported_fds) goto error;
+            for (uint32_t i = 0; i < req.count; i++) {
+                s->exported_fds[i] = -1;
+            }
+        }
+
         for (uint32_t i = 0; i < req.count; i++) {
             struct v4l2_buffer buf = {0};
             buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -160,6 +253,19 @@ v4l2_open(zst_element_t* el)
             if (s->buffers[i].start == MAP_FAILED) {
                 ZST_LOG_ERROR("v4l2src", "mmap failed.");
                 goto error;
+            }
+
+            if (v4l2_source_is_mmap_export(s)) {
+                struct v4l2_exportbuffer expbuf = {0};
+                expbuf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+                expbuf.index = i;
+                expbuf.flags = O_RDWR | O_CLOEXEC;
+
+                if (ioctl(s->fd, VIDIOC_EXPBUF, &expbuf) < 0) {
+                    ZST_LOG_ERROR("v4l2src", "VIDIOC_EXPBUF failed for buffer %u.", i);
+                    goto error;
+                }
+                s->exported_fds[i] = expbuf.fd;
             }
         }
 
@@ -182,6 +288,7 @@ v4l2_open(zst_element_t* el)
     return ZST_OK;
 
 error:
+    v4l2_source_close_exported_fds(s);
     if (s->buffers) {
         for (uint32_t i = 0; i < s->nb_buffers; i++) {
             if (s->buffers[i].start && s->buffers[i].start != MAP_FAILED) {
@@ -206,6 +313,8 @@ v4l2_close(zst_element_t* el)
 {
     v4l2_source_t* s = el->priv;
     if (!s->is_mock && s->fd >= 0) {
+        s->streaming = 0;
+        v4l2_source_close_exported_fds(s);
         if (s->buffers) {
             for (uint32_t i = 0; i < s->nb_buffers; i++) {
                 munmap(s->buffers[i].start, s->buffers[i].length);
@@ -224,6 +333,8 @@ v4l2_close(zst_element_t* el)
         }
         close(s->fd);
         s->fd = -1;
+    } else {
+        v4l2_source_close_exported_fds(s);
     }
 
     if (s->pool) {
@@ -279,6 +390,7 @@ v4l2_start(zst_element_t* el)
             ZST_LOG_ERROR("v4l2src", "VIDIOC_STREAMON failed.");
             return ZST_ERROR;
         }
+        s->streaming = 1;
     }
     return ZST_OK;
 }
@@ -290,6 +402,7 @@ v4l2_stop(zst_element_t* el)
     if (!s->is_mock && s->fd >= 0) {
         enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         ioctl(s->fd, VIDIOC_STREAMOFF, &type);
+        s->streaming = 0;
     }
     return ZST_OK;
 }
@@ -300,6 +413,7 @@ v4l2_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     (void)in;
     v4l2_source_t* s = el->priv;
     zst_buffer_t* buf = NULL;
+    int mmap_export = v4l2_source_is_mmap_export(s);
 
     if (s->is_mock) {
         buf = zst_buffer_create_with_pool(s->pool);
@@ -366,7 +480,37 @@ v4l2_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
             memset(buf->memory.data, 16, buf->memory.size);
             is_fallback = 1;
         } else {
-            if (vbuf.memory == V4L2_MEMORY_MMAP) {
+            if (vbuf.memory == V4L2_MEMORY_MMAP && mmap_export) {
+                buf = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
+                if (!buf) {
+                    (void)v4l2_source_requeue_mmap_buffer(s, vbuf.index);
+                    return ZST_ERROR;
+                }
+
+                v4l2_export_buffer_ctx_t* ctx = calloc(1, sizeof(*ctx));
+                if (!ctx) {
+                    zst_buffer_unref(buf);
+                    (void)v4l2_source_requeue_mmap_buffer(s, vbuf.index);
+                    return ZST_ERROR;
+                }
+
+                int exported_fd = (s->exported_fds && vbuf.index < s->nb_buffers) ? s->exported_fds[vbuf.index] : -1;
+                ctx->fd = exported_fd >= 0 ? dup(exported_fd) : -1;
+                if (ctx->fd < 0) {
+                    free(ctx);
+                    zst_buffer_unref(buf);
+                    (void)v4l2_source_requeue_mmap_buffer(s, vbuf.index);
+                    return ZST_ERROR;
+                }
+                ctx->source = s;
+                ctx->index = vbuf.index;
+
+                buf->memory.type = ZST_MEMORY_DMABUF;
+                buf->memory.data = s->buffers[vbuf.index].start;
+                buf->memory.size = vbuf.bytesused ? vbuf.bytesused : s->buffers[vbuf.index].length;
+                buf->memory.priv = ctx;
+                buf->memory.release = v4l2src_dmabuf_release_callback;
+            } else if (vbuf.memory == V4L2_MEMORY_MMAP) {
                 buf = zst_buffer_create_with_pool(s->pool);
                 if (!buf) return ZST_ERROR;
 
@@ -428,8 +572,8 @@ v4l2_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
             int is_yuv420 = 0;
             if (strcmp(s->pixel_format, "YUV420P") == 0 || strcmp(s->pixel_format, "I420") == 0) {
                 is_yuv420 = 1;
-            } else if (vbuf.memory == V4L2_MEMORY_MMAP || is_fallback) {
-                /* mmap and mock fallback paths convert to/generate YUV420P regardless of s->pixel_format */
+            } else if ((vbuf.memory == V4L2_MEMORY_MMAP && !mmap_export) || is_fallback) {
+                /* plain mmap and mock fallback paths convert to/generate YUV420P regardless of s->pixel_format */
                 is_yuv420 = 1;
             }
 
@@ -507,6 +651,9 @@ v4l2_set_property(zst_element_t* el, const char* name, const char* value)
         snprintf(s->pixel_format, sizeof(s->pixel_format), "%s", value);
         return ZST_OK;
     } else if (strcmp(name, "memory-type") == 0) {
+        if (!v4l2_memory_type_is_valid(value)) {
+            return ZST_ERROR;
+        }
         snprintf(s->memory_type, sizeof(s->memory_type), "%s", value);
         return ZST_OK;
     }
@@ -581,6 +728,14 @@ static const zst_pad_template_t g_v4l2src_pads[] = {
     { "src", ZST_PAD_SRC, "video/x-raw" }
 };
 
+static const zst_property_spec_t g_v4l2src_props[] = {
+    { "device", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "/dev/video0", "V4L2 capture device path" },
+    { "width", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "640", "Capture width" },
+    { "height", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "480", "Capture height" },
+    { "pixel-format", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "YUYV", "Capture pixel format (YUYV, YUV420P/I420)" },
+    { "memory-type", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "mmap", "V4L2 memory mode: mmap, userptr, dmabuf, mmap-export" }
+};
+
 static const zst_element_desc_t g_v4l2src_elements[] = {
     {
         .name = "v4l2src",
@@ -588,8 +743,8 @@ static const zst_element_desc_t g_v4l2src_elements[] = {
         .category = "Source/Video",
         .description = "Captures video from a V4L2 device",
         .author = "zstreamer",
-        .properties = NULL,
-        .nb_properties = 0,
+        .properties = g_v4l2src_props,
+        .nb_properties = sizeof(g_v4l2src_props) / sizeof(g_v4l2src_props[0]),
         .pads = g_v4l2src_pads,
         .nb_pads = sizeof(g_v4l2src_pads) / sizeof(g_v4l2src_pads[0]),
         .create = NULL

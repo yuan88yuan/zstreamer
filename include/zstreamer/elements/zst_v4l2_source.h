@@ -15,6 +15,7 @@ extern "C" {
 #define ZST_V4L2_SOURCE_PROP_WIDTH    "width"
 #define ZST_V4L2_SOURCE_PROP_HEIGHT   "height"
 #define ZST_V4L2_SOURCE_PROP_PIXEL_FORMAT "pixel-format"
+#define ZST_V4L2_SOURCE_PROP_MEMORY_TYPE  "memory-type"
 
 zst_element_t* zst_v4l2_source_create(void);
 

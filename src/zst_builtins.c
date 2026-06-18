@@ -235,6 +235,16 @@ static const zst_property_spec_t g_builtin_fakesink_props[] = {
     { "total-bytes", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE, "0", "Number of bytes received since open" }
 };
 
+#ifdef HAS_V4L2
+static const zst_property_spec_t g_builtin_v4l2src_props[] = {
+    { "device", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "/dev/video0", "V4L2 capture device path" },
+    { "width", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "640", "Capture width" },
+    { "height", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "480", "Capture height" },
+    { "pixel-format", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "YUYV", "Capture pixel format (YUYV, YUV420P/I420)" },
+    { "memory-type", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "mmap", "V4L2 memory mode: mmap, userptr, dmabuf, mmap-export" }
+};
+#endif
+
 #ifdef HAS_FFMPEG
 static const zst_property_spec_t g_builtin_rtmpsrc_props[] = {
     { "url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "RTMP Endpoint URL (supports rtmp://user:pass@host/app/stream)" },
@@ -530,7 +540,7 @@ static const zst_element_desc_t g_builtin_descs[] = {
     DESC("filesink", "File Sink",       "Sink/File",    "Writes incoming buffers to a local file",                                                                              g_builtin_filesink_props,       sizeof(g_builtin_filesink_props) / sizeof(g_builtin_filesink_props[0]), g_pad_sink),
     DESC("fakesink", "Fake Sink",       "Sink/Test",    "Consumes buffers and records simple statistics",                                                                       g_builtin_fakesink_props,       sizeof(g_builtin_fakesink_props) / sizeof(g_builtin_fakesink_props[0]), g_pad_sink),
 #ifdef HAS_V4L2
-    DESC("v4l2src", "V4L2 Source",      "Source/Video", "Captures video from a V4L2 device",                                                                                    NULL,                           0, g_pad_video_src),
+    DESC("v4l2src", "V4L2 Source",      "Source/Video", "Captures video from a V4L2 device",                                                                                    g_builtin_v4l2src_props,        sizeof(g_builtin_v4l2src_props) / sizeof(g_builtin_v4l2src_props[0]), g_pad_video_src),
     DESC("v4l2sink", "V4L2 Sink",       "Sink/Video",   "Outputs video to a V4L2 device",                                                                                       NULL,                           0, g_pad_sink),
 #endif
 #ifdef HAS_ALSA

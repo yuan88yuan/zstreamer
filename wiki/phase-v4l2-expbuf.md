@@ -114,9 +114,9 @@ During shutdown (`v4l2_stop` and `v4l2_close`):
 
 ## 5. Task Checklist
 
-- [ ] Add `"mmap-export"` support to `"memory-type"` property validation and documentation.
-- [ ] Add `exported_fds` tracking array to `v4l2_source_t` private struct.
-- [ ] Implement `VIDIOC_EXPBUF` query logic inside the buffer setup loop in `v4l2_start()`.
-- [ ] Implement custom buffer lifecycle recycling handler to return finished frames back to the driver queue.
-- [ ] Update `v4l2_stop` and `v4l2_close` to safely close exported file descriptors.
-- [ ] Implement unit tests validating exported DMABUF behavior using `v4l2loopback`.
+- [x] Add `"mmap-export"` support to `"memory-type"` property validation and documentation.
+- [x] Add `exported_fds` tracking array to `v4l2_source_t` private struct.
+- [x] Implement `VIDIOC_EXPBUF` query logic inside the MMAP buffer setup loop.
+- [x] Implement custom buffer lifecycle recycling handler to return finished frames back to the driver queue.
+- [x] Update `v4l2_stop` and `v4l2_close` to safely close exported file descriptors.
+- [x] Implement hardware/integration test hooks validating exported DMABUF behavior using `v4l2loopback`/`vivid` (`test_v4l2_loopback --memory-type mmap-export`).
