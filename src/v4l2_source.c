@@ -39,6 +39,8 @@ typedef struct {
 
     char            device[128];
     char            pixel_format[32];
+    char            memory_type[32]; // "mmap", "userptr", "dmabuf"
+    zst_buffer_t**  pool_buffers;
 } v4l2_source_t;
 
 static void
@@ -62,6 +64,8 @@ yuyv_to_yuv420p(uint32_t width, uint32_t height, const uint8_t* yuyv, uint8_t* y
     }
 }
 
+#include "zst_allocator.h"
+
 static zst_result_t
 v4l2_open(zst_element_t* el)
 {
@@ -69,31 +73,46 @@ v4l2_open(zst_element_t* el)
 
     if (s->width == 0)  s->width = 640;
     if (s->height == 0) s->height = 480;
+    if (s->memory_type[0] == '\0') strcpy(s->memory_type, "mmap");
     s->frame_count = 0;
 
-    zst_buffer_pool_config_t pool_cfg = {
-        .min_buffers = 4,
-        .max_buffers = 8,
-        .buffer_size = s->width * s->height * 3 / 2, // YUV420P
-        .buffer_type = ZST_BUFFER_VIDEO_FRAME
-    };
-    s->pool = zst_buffer_pool_create(NULL, &pool_cfg);
-
-    const char* dev_path = s->device[0] ? s->device : "/dev/video0";
-    s->fd = open(dev_path, O_RDWR | O_NONBLOCK);
-    if (s->fd < 0) {
-        ZST_LOG_WARN("v4l2src", "Failed to open /dev/video0. Falling back to synthetic source.");
-        s->is_mock = 1;
-        return ZST_OK;
-    }
-
-    /* Configure format YUYV */
     struct v4l2_format fmt = {0};
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     fmt.fmt.pix.width = s->width;
     fmt.fmt.pix.height = s->height;
-    fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
     fmt.fmt.pix.field = V4L2_FIELD_NONE;
+
+    if (strcmp(s->pixel_format, "YUV420P") == 0 || strcmp(s->pixel_format, "I420") == 0) {
+        fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUV420;
+    } else {
+        fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
+    }
+
+    size_t frame_size = (fmt.fmt.pix.pixelformat == V4L2_PIX_FMT_YUV420) ?
+                        (s->width * s->height * 3 / 2) :
+                        (s->width * s->height * 2);
+
+    zst_buffer_pool_config_t pool_cfg = {
+        .min_buffers = 4,
+        .max_buffers = 8,
+        .buffer_size = frame_size,
+        .buffer_type = ZST_BUFFER_VIDEO_FRAME
+    };
+
+    zst_allocator_t* alloc = NULL;
+    if (strcmp(s->memory_type, "dmabuf") == 0) {
+        alloc = zst_allocator_dmabuf_create();
+    }
+    s->pool = zst_buffer_pool_create(alloc, &pool_cfg);
+
+    const char* dev_path = s->device[0] ? s->device : "/dev/video0";
+    s->fd = open(dev_path, O_RDWR | O_NONBLOCK);
+    if (s->fd < 0) {
+        ZST_LOG_WARN("v4l2src", "Failed to open %s. Falling back to synthetic source.", dev_path);
+        s->is_mock = 1;
+        return ZST_OK;
+    }
+
     if (ioctl(s->fd, VIDIOC_S_FMT, &fmt) < 0) {
         ZST_LOG_WARN("v4l2src", "VIDIOC_S_FMT failed. Falling back to synthetic source.");
         close(s->fd);
@@ -106,7 +125,15 @@ v4l2_open(zst_element_t* el)
     struct v4l2_requestbuffers req = {0};
     req.count = 4;
     req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    req.memory = V4L2_MEMORY_MMAP;
+
+    if (strcmp(s->memory_type, "userptr") == 0) {
+        req.memory = V4L2_MEMORY_USERPTR;
+    } else if (strcmp(s->memory_type, "dmabuf") == 0) {
+        req.memory = V4L2_MEMORY_DMABUF;
+    } else {
+        req.memory = V4L2_MEMORY_MMAP;
+    }
+
     if (ioctl(s->fd, VIDIOC_REQBUFS, &req) < 0) {
         ZST_LOG_WARN("v4l2src", "VIDIOC_REQBUFS failed. Falling back to synthetic source.");
         close(s->fd);
@@ -115,36 +142,40 @@ v4l2_open(zst_element_t* el)
         return ZST_OK;
     }
 
-    s->buffers = calloc(req.count, sizeof(*s->buffers));
     s->nb_buffers = req.count;
 
-    for (uint32_t i = 0; i < req.count; i++) {
-        struct v4l2_buffer buf = {0};
-        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        buf.memory = V4L2_MEMORY_MMAP;
-        buf.index = i;
-        if (ioctl(s->fd, VIDIOC_QUERYBUF, &buf) < 0) {
-            ZST_LOG_ERROR("v4l2src", "VIDIOC_QUERYBUF failed.");
-            goto error;
+    if (req.memory == V4L2_MEMORY_MMAP) {
+        s->buffers = calloc(req.count, sizeof(*s->buffers));
+        for (uint32_t i = 0; i < req.count; i++) {
+            struct v4l2_buffer buf = {0};
+            buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+            buf.memory = V4L2_MEMORY_MMAP;
+            buf.index = i;
+            if (ioctl(s->fd, VIDIOC_QUERYBUF, &buf) < 0) {
+                ZST_LOG_ERROR("v4l2src", "VIDIOC_QUERYBUF failed.");
+                goto error;
+            }
+            s->buffers[i].length = buf.length;
+            s->buffers[i].start = mmap(NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, s->fd, buf.m.offset);
+            if (s->buffers[i].start == MAP_FAILED) {
+                ZST_LOG_ERROR("v4l2src", "mmap failed.");
+                goto error;
+            }
         }
-        s->buffers[i].length = buf.length;
-        s->buffers[i].start = mmap(NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, s->fd, buf.m.offset);
-        if (s->buffers[i].start == MAP_FAILED) {
-            ZST_LOG_ERROR("v4l2src", "mmap failed.");
-            goto error;
-        }
-    }
 
-    /* Queue all buffers */
-    for (uint32_t i = 0; i < s->nb_buffers; i++) {
-        struct v4l2_buffer buf = {0};
-        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        buf.memory = V4L2_MEMORY_MMAP;
-        buf.index = i;
-        if (ioctl(s->fd, VIDIOC_QBUF, &buf) < 0) {
-            ZST_LOG_ERROR("v4l2src", "VIDIOC_QBUF failed.");
-            goto error;
+        /* Queue all buffers */
+        for (uint32_t i = 0; i < s->nb_buffers; i++) {
+            struct v4l2_buffer buf = {0};
+            buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+            buf.memory = V4L2_MEMORY_MMAP;
+            buf.index = i;
+            if (ioctl(s->fd, VIDIOC_QBUF, &buf) < 0) {
+                ZST_LOG_ERROR("v4l2src", "VIDIOC_QBUF failed.");
+                goto error;
+            }
         }
+    } else {
+        s->pool_buffers = calloc(req.count, sizeof(*s->pool_buffers));
     }
 
     s->is_mock = 0;
@@ -159,6 +190,10 @@ error:
         }
         free(s->buffers);
         s->buffers = NULL;
+    }
+    if (s->pool_buffers) {
+        free(s->pool_buffers);
+        s->pool_buffers = NULL;
     }
     close(s->fd);
     s->fd = -1;
@@ -178,6 +213,15 @@ v4l2_close(zst_element_t* el)
             free(s->buffers);
             s->buffers = NULL;
         }
+        if (s->pool_buffers) {
+            for (uint32_t i = 0; i < s->nb_buffers; i++) {
+                if (s->pool_buffers[i]) {
+                    zst_buffer_unref(s->pool_buffers[i]);
+                }
+            }
+            free(s->pool_buffers);
+            s->pool_buffers = NULL;
+        }
         close(s->fd);
         s->fd = -1;
     }
@@ -195,6 +239,41 @@ v4l2_start(zst_element_t* el)
 {
     v4l2_source_t* s = el->priv;
     if (!s->is_mock && s->fd >= 0) {
+        if (strcmp(s->memory_type, "userptr") == 0 || strcmp(s->memory_type, "dmabuf") == 0) {
+            for (uint32_t i = 0; i < s->nb_buffers; i++) {
+                zst_buffer_t* buf = zst_buffer_create_with_pool(s->pool);
+                if (!buf) {
+                    ZST_LOG_ERROR("v4l2src", "Failed to get pool buffer for queuing.");
+                    return ZST_ERROR;
+                }
+                s->pool_buffers[i] = buf;
+
+                struct v4l2_buffer vbuf = {0};
+                vbuf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+                vbuf.index = i;
+
+                if (strcmp(s->memory_type, "userptr") == 0) {
+                    vbuf.memory = V4L2_MEMORY_USERPTR;
+                    vbuf.m.userptr = (unsigned long)buf->memory.data;
+                    vbuf.length = buf->memory.size;
+                } else {
+                    vbuf.memory = V4L2_MEMORY_DMABUF;
+                    if (buf->memory.type == ZST_MEMORY_DMABUF && buf->memory.priv) {
+                        vbuf.m.fd = *(int*)buf->memory.priv;
+                        vbuf.length = buf->memory.size;
+                    } else {
+                        ZST_LOG_ERROR("v4l2src", "Expected dmabuf buffer from pool.");
+                        return ZST_ERROR;
+                    }
+                }
+
+                if (ioctl(s->fd, VIDIOC_QBUF, &vbuf) < 0) {
+                    ZST_LOG_ERROR("v4l2src", "VIDIOC_QBUF failed.");
+                    return ZST_ERROR;
+                }
+            }
+        }
+
         enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         if (ioctl(s->fd, VIDIOC_STREAMON, &type) < 0) {
             ZST_LOG_ERROR("v4l2src", "VIDIOC_STREAMON failed.");
@@ -220,38 +299,31 @@ v4l2_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
 {
     (void)in;
     v4l2_source_t* s = el->priv;
-
-    zst_buffer_t* buf = zst_buffer_create_with_pool(s->pool);
-    if (!buf) {
-        return ZST_ERROR;
-    }
-
-    size_t yuv_size = s->width * s->height * 3 / 2;
-    uint8_t* raw_data = buf->memory.data;
-
-    zst_video_frame_t* frame = buf->payload;
-    if (!frame) {
-        frame = calloc(1, sizeof(*frame));
-        if (!frame) {
-            zst_buffer_unref(buf);
-            return ZST_ERROR;
-        }
-        buf->payload = frame;
-        buf->destroy = v4l2_buf_free;
-    }
-
-    frame->width = s->width;
-    frame->height = s->height;
-    frame->format = 0; // YUV420P
-    frame->plane[0] = raw_data;
-    frame->plane[1] = raw_data + s->width * s->height;
-    frame->plane[2] = raw_data + s->width * s->height + (s->width * s->height) / 4;
-    frame->stride[0] = s->width;
-    frame->stride[1] = s->width / 2;
-    frame->stride[2] = s->width / 2;
+    zst_buffer_t* buf = NULL;
 
     if (s->is_mock) {
-        /* Generate synthetic YUV420P frame (moving vertical bar) */
+        buf = zst_buffer_create_with_pool(s->pool);
+        if (!buf) return ZST_ERROR;
+
+        uint8_t* raw_data = buf->memory.data;
+        zst_video_frame_t* frame = buf->payload;
+        if (!frame) {
+            frame = calloc(1, sizeof(*frame));
+            if (!frame) { zst_buffer_unref(buf); return ZST_ERROR; }
+            buf->payload = frame;
+            buf->destroy = v4l2_buf_free;
+        }
+
+        frame->width = s->width;
+        frame->height = s->height;
+        frame->format = 0; // YUV420P
+        frame->plane[0] = raw_data;
+        frame->plane[1] = raw_data + s->width * s->height;
+        frame->plane[2] = raw_data + s->width * s->height + (s->width * s->height) / 4;
+        frame->stride[0] = s->width;
+        frame->stride[1] = s->width / 2;
+        frame->stride[2] = s->width / 2;
+
         uint8_t* y = raw_data;
         uint8_t* u = raw_data + s->width * s->height;
         uint8_t* v = raw_data + s->width * s->height + (s->width * s->height) / 4;
@@ -263,44 +335,137 @@ v4l2_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
         int bar_pos = (s->frame_count * 8) % s->width;
         for (uint32_t r = 0; r < s->height; r++) {
             for (uint32_t c = bar_pos; c < bar_pos + 20 && c < s->width; c++) {
-                y[r * s->width + c] = 235; // Bright white vertical bar
+                y[r * s->width + c] = 235;
             }
         }
 
-        /* Simulate 30 fps */
         struct timespec ts = { .tv_sec = 0, .tv_nsec = 33333333 };
         nanosleep(&ts, NULL);
     } else {
-        /* Real V4L2 capture */
         struct pollfd pfd = { .fd = s->fd, .events = POLLIN };
         int res = poll(&pfd, 1, 200); // 200ms timeout
-        if (res <= 0 || !(pfd.revents & POLLIN)) {
-            /* Timeout or error, generate a blank/fallback frame */
-            memset(raw_data, 16, yuv_size); // Black
+
+        struct v4l2_buffer vbuf = {0};
+        vbuf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+        if (strcmp(s->memory_type, "userptr") == 0) {
+            vbuf.memory = V4L2_MEMORY_USERPTR;
+        } else if (strcmp(s->memory_type, "dmabuf") == 0) {
+            vbuf.memory = V4L2_MEMORY_DMABUF;
         } else {
-            struct v4l2_buffer vbuf = {0};
-            vbuf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
             vbuf.memory = V4L2_MEMORY_MMAP;
-            if (ioctl(s->fd, VIDIOC_DQBUF, &vbuf) < 0) {
-                memset(raw_data, 16, yuv_size);
-            } else {
-                /* Convert YUYV to YUV420P */
-                yuyv_to_yuv420p(s->width, s->height, s->buffers[vbuf.index].start, raw_data);
+        }
+
+        int is_fallback = 0;
+        if (res <= 0 || !(pfd.revents & POLLIN) || ioctl(s->fd, VIDIOC_DQBUF, &vbuf) < 0) {
+            /* Timeout or error, generate a fallback frame.
+             * But we need a buffer first. */
+            buf = zst_buffer_create_with_pool(s->pool);
+            if (!buf) return ZST_ERROR;
+            // Best effort black frame fallback
+            memset(buf->memory.data, 16, buf->memory.size);
+            is_fallback = 1;
+        } else {
+            if (vbuf.memory == V4L2_MEMORY_MMAP) {
+                buf = zst_buffer_create_with_pool(s->pool);
+                if (!buf) return ZST_ERROR;
+
+                uint8_t* raw_data = buf->memory.data;
+                if (strcmp(s->pixel_format, "YUV420P") == 0 || strcmp(s->pixel_format, "I420") == 0) {
+                    /* If we somehow configured the camera to YUV420P directly */
+                    memcpy(raw_data, s->buffers[vbuf.index].start, buf->memory.size);
+                } else {
+                    /* Convert YUYV to YUV420P */
+                    yuyv_to_yuv420p(s->width, s->height, s->buffers[vbuf.index].start, raw_data);
+                }
                 ioctl(s->fd, VIDIOC_QBUF, &vbuf);
+            } else {
+                /* USERPTR or DMABUF */
+                buf = s->pool_buffers[vbuf.index];
+
+                /* Now we need to queue a new buffer to keep V4L2 going */
+                zst_buffer_t* new_buf = zst_buffer_create_with_pool(s->pool);
+                if (new_buf) {
+                    struct v4l2_buffer qbuf = {0};
+                    qbuf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+                    qbuf.memory = vbuf.memory;
+                    qbuf.index = vbuf.index;
+
+                    if (qbuf.memory == V4L2_MEMORY_USERPTR) {
+                        qbuf.m.userptr = (unsigned long)new_buf->memory.data;
+                        qbuf.length = new_buf->memory.size;
+                    } else {
+                        qbuf.m.fd = *(int*)new_buf->memory.priv;
+                        qbuf.length = new_buf->memory.size;
+                    }
+
+                    if (ioctl(s->fd, VIDIOC_QBUF, &qbuf) >= 0) {
+                        s->pool_buffers[vbuf.index] = new_buf;
+                    } else {
+                        /* If queuing fails, we might just unref it and fail later */
+                        zst_buffer_unref(new_buf);
+                        s->pool_buffers[vbuf.index] = NULL;
+                    }
+                } else {
+                    s->pool_buffers[vbuf.index] = NULL;
+                }
+            }
+        }
+
+        if (buf) {
+            zst_video_frame_t* frame = buf->payload;
+            if (!frame) {
+                frame = calloc(1, sizeof(*frame));
+                if (!frame) { zst_buffer_unref(buf); return ZST_ERROR; }
+                buf->payload = frame;
+                buf->destroy = v4l2_buf_free;
+            }
+
+            frame->width = s->width;
+            frame->height = s->height;
+            uint8_t* raw_data = buf->memory.data;
+
+            int is_yuv420 = 0;
+            if (strcmp(s->pixel_format, "YUV420P") == 0 || strcmp(s->pixel_format, "I420") == 0) {
+                is_yuv420 = 1;
+            } else if (vbuf.memory == V4L2_MEMORY_MMAP || is_fallback) {
+                /* mmap and mock fallback paths convert to/generate YUV420P regardless of s->pixel_format */
+                is_yuv420 = 1;
+            }
+
+            if (is_yuv420) {
+                frame->format = 0; // YUV420P
+                frame->plane[0] = raw_data;
+                frame->plane[1] = raw_data + s->width * s->height;
+                frame->plane[2] = raw_data + s->width * s->height + (s->width * s->height) / 4;
+                frame->stride[0] = s->width;
+                frame->stride[1] = s->width / 2;
+                frame->stride[2] = s->width / 2;
+            } else {
+                frame->format = 1; // Assuming 1 is YUYV
+                frame->plane[0] = raw_data;
+                frame->plane[1] = NULL;
+                frame->plane[2] = NULL;
+                frame->stride[0] = s->width * 2;
+                frame->stride[1] = 0;
+                frame->stride[2] = 0;
             }
         }
     }
 
-    if (el->clock) {
-        buf->pts = zst_clock_get_time(el->clock);
-    } else {
-        buf->pts = s->frame_count * 33333333ULL; // 30 fps in nanoseconds
+    if (buf) {
+        if (el->clock) {
+            buf->pts = zst_clock_get_time(el->clock);
+        } else {
+            buf->pts = s->frame_count * 33333333ULL; // 30 fps in nanoseconds
+        }
+        buf->duration = 33333333ULL;
+        s->frame_count++;
+        *out = buf;
+        return ZST_OK;
     }
-    buf->duration = 33333333ULL;
-    s->frame_count++;
 
-    *out = buf;
-    return ZST_OK;
+    return ZST_ERROR;
 }
 
 static void
@@ -341,6 +506,9 @@ v4l2_set_property(zst_element_t* el, const char* name, const char* value)
     } else if (strcmp(name, "pixel-format") == 0) {
         snprintf(s->pixel_format, sizeof(s->pixel_format), "%s", value);
         return ZST_OK;
+    } else if (strcmp(name, "memory-type") == 0) {
+        snprintf(s->memory_type, sizeof(s->memory_type), "%s", value);
+        return ZST_OK;
     }
     return ZST_ERROR;
 }
@@ -359,6 +527,8 @@ v4l2_get_property(zst_element_t* el, const char* name, char* value_out, size_t m
         snprintf(value_out, max_len, "%u", s->height);
     } else if (strcmp(name, "pixel-format") == 0) {
         snprintf(value_out, max_len, "%s", s->pixel_format);
+    } else if (strcmp(name, "memory-type") == 0) {
+        snprintf(value_out, max_len, "%s", s->memory_type);
     } else {
         return ZST_ERROR;
     }
