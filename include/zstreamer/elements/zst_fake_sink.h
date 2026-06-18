@@ -13,6 +13,9 @@ extern "C" {
 #define ZST_FAKE_SINK_PROP_DROP_PROBABILITY      "drop-probability"
 #define ZST_FAKE_SINK_PROP_TOTAL_BUFFERS         "total-buffers"
 #define ZST_FAKE_SINK_PROP_TOTAL_BYTES           "total-bytes"
+#define ZST_FAKE_SINK_PROP_BITS_PER_SECOND       "bits-per-second"
+#define ZST_FAKE_SINK_PROP_LOG_PERIOD            "log-period"
+#define ZST_FAKE_SINK_PROP_PUSH_PER_SECOND       "push-per-second"
 
 typedef struct {
     size_t struct_size;

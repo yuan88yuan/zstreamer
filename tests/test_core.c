@@ -5112,8 +5112,26 @@ test_fakesink(void)
     char val[64];
     zst_element_get_property(fakesink, "drop-probability", val, sizeof(val));
     assert(atof(val) == 0.0);
+    zst_element_get_property(fakesink, "bits-per-second", val, sizeof(val));
+    assert(strcmp(val, "false") == 0);
+    zst_element_get_property(fakesink, "push-per-second", val, sizeof(val));
+    assert(strcmp(val, "false") == 0);
+    zst_element_get_property(fakesink, "log-period", val, sizeof(val));
+    assert(strcmp(val, "1") == 0);
 
     zst_element_set_property(fakesink, "drop-probability", "0.0");
+    assert(zst_element_set_property_bool(fakesink, "bits-per-second", true) == ZST_OK);
+    assert(zst_element_set_property_bool(fakesink, "push-per-second", true) == ZST_OK);
+    assert(zst_element_set_property_uint(fakesink, "log-period", 2) == ZST_OK);
+    bool stats_enabled = false;
+    uint64_t log_period = 0;
+    assert(zst_element_get_property_bool(fakesink, "bits-per-second", &stats_enabled) == ZST_OK);
+    assert(stats_enabled);
+    assert(zst_element_get_property_bool(fakesink, "push-per-second", &stats_enabled) == ZST_OK);
+    assert(stats_enabled);
+    assert(zst_element_get_property_uint(fakesink, "log-period", &log_period) == ZST_OK);
+    assert(log_period == 2);
+    assert(zst_element_set_property(fakesink, "log-period", "0") == ZST_ERROR);
 
     zst_pad_t* sink_pad = zst_element_get_pad(fakesink, "sink");
     assert(sink_pad != NULL);

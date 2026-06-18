@@ -232,7 +232,10 @@ static const zst_property_spec_t g_builtin_filesink_props[] = {
 static const zst_property_spec_t g_builtin_fakesink_props[] = {
     { "drop-probability", ZST_PROPERTY_DOUBLE, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "0.0", "Probability in [0.0, 1.0] of dropping a buffer without counting it" },
     { "total-buffers", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE, "0", "Number of buffers received since open" },
-    { "total-bytes", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE, "0", "Number of bytes received since open" }
+    { "total-bytes", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE, "0", "Number of bytes received since open" },
+    { "bits-per-second", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE | ZST_PROPERTY_RUNTIME, "false", "Log received bitrate statistics every log-period seconds" },
+    { "log-period", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE | ZST_PROPERTY_RUNTIME, "1", "Statistics log period in seconds" },
+    { "push-per-second", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE | ZST_PROPERTY_RUNTIME, "false", "Log received buffer push-rate statistics every log-period seconds" }
 };
 
 #ifdef HAS_V4L2
