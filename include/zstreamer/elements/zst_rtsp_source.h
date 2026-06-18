@@ -15,7 +15,7 @@ extern "C" {
 #define ZST_RTSP_SOURCE_PROP_RTSP_URL               "rtsp_url"
 #define ZST_RTSP_SOURCE_PROP_USERNAME               "username"
 #define ZST_RTSP_SOURCE_PROP_PASSWORD               "password"
-#define ZST_RTSP_SOURCE_PROP_TRANSPORT              "transport"
+#define ZST_RTSP_SOURCE_PROP_TRANSPORT              "transport"  /* tcp, udp, or multicast */
 #define ZST_RTSP_SOURCE_PROP_BUFFER_SIZE            "buffer-size"
 #define ZST_RTSP_SOURCE_PROP_RECONNECT              "reconnect"
 #define ZST_RTSP_SOURCE_PROP_RECONNECT_DELAY_MS     "reconnect-delay-ms"

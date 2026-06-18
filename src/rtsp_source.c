@@ -8,7 +8,7 @@
       - State machine: INIT → DESCRIBE → SETUP → PLAY → STREAMING
       - SDP parsing to extract media tracks and codec info
       - RTP transport: TCP interleaved ($ + channel + len + data) or
-        UDP unicast (RFC 3550 even/odd port pairs)
+        UDP unicast/multicast (RFC 3550 even/odd port pairs)
       - RTP depacketization: H.264 (RFC 3984), AAC (RFC 3640 MPEG4-Generic)
       - Basic/Digest authentication
       - Worker thread for continuous streaming
@@ -16,7 +16,8 @@
     Transport negotiation (RFC 2326 §12.39):
       - SETUP with Transport: RTP/AVP/TCP;interleaved=...   (TCP mode)
       - SETUP with Transport: RTP/AVP;unicast;client_port=.. (UDP mode)
-      - Server echoes back server_port for RTCP reports
+      - SETUP with Transport: RTP/AVP;multicast              (multicast mode)
+      - Server echoes back server_port/port for RTCP reports
 
     References:
       - RFC 2326 (RTSP)
@@ -83,8 +84,9 @@ typedef struct {
 #define H264_NAL_PPS          8
 
 /* Transport type */
-#define RTSP_SOURCE_TRANSPORT_TCP  0
-#define RTSP_SOURCE_TRANSPORT_UDP  1
+#define RTSP_SOURCE_TRANSPORT_TCP        0
+#define RTSP_SOURCE_TRANSPORT_UDP        1
+#define RTSP_SOURCE_TRANSPORT_MULTICAST  2
 
 /*===========================================================================
     Track info from SDP
@@ -105,6 +107,9 @@ typedef struct {
     uint16_t client_rtcp_port;  /* our (client) RTCP port */
     uint16_t server_rtp_port;   /* server RTP port (from SETUP response) */
     uint16_t server_rtcp_port;  /* server RTCP port (from SETUP response) */
+    int      is_multicast;
+    char     multicast_addr[64];
+    int      multicast_ttl;
     /* RTCP SR state for NTP/RTP timestamp correlation */
     int      has_sr;
     uint64_t last_ntp_time;
@@ -763,6 +768,31 @@ static int bind_udp_pair(int* rtp_fd, int* rtcp_fd, uint16_t* out_rtp_port, uint
     return -1;
 }
 
+static int bind_multicast_socket(int fd, const char* group, uint16_t port) {
+    if (fd < 0 || !group || !*group || port == 0) return -1;
+
+    int opt = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+#ifdef SO_REUSEPORT
+    setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
+#endif
+
+    struct sockaddr_in a;
+    memset(&a, 0, sizeof(a));
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = INADDR_ANY;
+    a.sin_port = htons(port);
+    if (bind(fd, (struct sockaddr*)&a, sizeof(a)) < 0) return -1;
+
+    struct ip_mreq mreq;
+    memset(&mreq, 0, sizeof(mreq));
+    mreq.imr_multiaddr.s_addr = inet_addr(group);
+    mreq.imr_interface.s_addr = INADDR_ANY;
+    if (mreq.imr_multiaddr.s_addr == INADDR_NONE) return -1;
+    if (setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0) return -1;
+    return 0;
+}
+
 /*===========================================================================
     RTSP state machine operations
 ===========================================================================*/
@@ -864,6 +894,11 @@ static int do_setup(rtsp_client_t* cl, int idx, const char* transport_mode) {
 
         ZST_LOG_INFO("rtspsrc", "track %d UDP: client_port=%hu-%hu",
                      idx, tr->client_rtp_port, tr->client_rtcp_port);
+    } else if (transport_mode && strcasecmp(transport_mode, "multicast") == 0) {
+        /* Multicast transport: server chooses/echoes destination and port. */
+        snprintf(transport_hdr, sizeof(transport_hdr),
+            "Transport: RTP/AVP;multicast\r\n");
+        ZST_LOG_INFO("rtspsrc", "track %d multicast SETUP", idx);
     } else {
         /* TCP interleaved transport */
         snprintf(transport_hdr, sizeof(transport_hdr),
@@ -900,24 +935,77 @@ static int handle_setup_reply(rtsp_client_t* cl, const char* transport_mode) {
     /* Get session ID */
     get_header_value(resp, "Session", cl->session_id, sizeof(cl->session_id));
 
-    /* Parse server_port from Transport response (UDP mode) */
+    /* Parse Transport response for UDP unicast or multicast */
     int idx = cl->setup_progress;
-    if (transport_mode && strcasecmp(transport_mode, "udp") == 0) {
-        /* Find Transport header in response */
+    if (transport_mode && (strcasecmp(transport_mode, "udp") == 0 ||
+                           strcasecmp(transport_mode, "multicast") == 0)) {
+        track_info_t* tr = &cl->tracks[idx];
         const char* transport_val = strstr(resp, "Transport: ");
         if (transport_val) {
             transport_val += 11; /* skip "Transport: " */
-            /* Parse server_port=XXX-XXX */
-            const char* sp = strstr(transport_val, "server_port=");
-            if (sp) {
-                sp += 12;
-                unsigned long sp1 = strtoul(sp, NULL, 10);
-                const char* dash = strchr(sp, '-');
-                unsigned long sp2 = dash ? strtoul(dash + 1, NULL, 10) : sp1 + 1;
-                cl->tracks[idx].server_rtp_port  = (uint16_t)sp1;
-                cl->tracks[idx].server_rtcp_port = (uint16_t)sp2;
-                ZST_LOG_INFO("rtspsrc", "track %d server_port=%lu-%lu",
-                             idx, sp1, sp2);
+
+            if (strcasecmp(transport_mode, "udp") == 0) {
+                const char* sp = strstr(transport_val, "server_port=");
+                if (sp) {
+                    sp += 12;
+                    unsigned long sp1 = strtoul(sp, NULL, 10);
+                    const char* dash = strchr(sp, '-');
+                    unsigned long sp2 = dash ? strtoul(dash + 1, NULL, 10) : sp1 + 1;
+                    tr->server_rtp_port  = (uint16_t)sp1;
+                    tr->server_rtcp_port = (uint16_t)sp2;
+                    ZST_LOG_INFO("rtspsrc", "track %d server_port=%lu-%lu",
+                                 idx, sp1, sp2);
+                }
+            } else {
+                char group[64] = "";
+                const char* dst = strstr(transport_val, "destination=");
+                if (dst) {
+                    dst += 12;
+                    const char* end = strpbrk(dst, ";\r\n");
+                    size_t len = end ? (size_t)(end - dst) : strlen(dst);
+                    if (len >= sizeof(group)) len = sizeof(group) - 1;
+                    memcpy(group, dst, len);
+                    group[len] = '\0';
+                }
+
+                const char* pp = strstr(transport_val, "port=");
+                if (pp) {
+                    pp += 5;
+                    unsigned long p1 = strtoul(pp, NULL, 10);
+                    const char* dash = strchr(pp, '-');
+                    unsigned long p2 = dash ? strtoul(dash + 1, NULL, 10) : p1 + 1;
+                    tr->server_rtp_port = (uint16_t)p1;
+                    tr->server_rtcp_port = (uint16_t)p2;
+                }
+                const char* ttlp = strstr(transport_val, "ttl=");
+                if (ttlp) tr->multicast_ttl = atoi(ttlp + 4);
+
+                if (group[0] == '\0' || tr->server_rtp_port == 0) {
+                    ZST_LOG_ERROR("rtspsrc", "multicast SETUP missing destination or port for track %d", idx);
+                    return -1;
+                }
+
+                strncpy(tr->multicast_addr, group, sizeof(tr->multicast_addr) - 1);
+                tr->multicast_addr[sizeof(tr->multicast_addr) - 1] = '\0';
+                tr->client_rtp_port = tr->server_rtp_port;
+                tr->client_rtcp_port = tr->server_rtcp_port;
+                tr->is_multicast = 1;
+
+                tr->udp_rtp_fd = create_udp_socket();
+                tr->udp_rtcp_fd = create_udp_socket();
+                if (tr->udp_rtp_fd < 0 || tr->udp_rtcp_fd < 0 ||
+                    bind_multicast_socket(tr->udp_rtp_fd, tr->multicast_addr, tr->server_rtp_port) < 0 ||
+                    bind_multicast_socket(tr->udp_rtcp_fd, tr->multicast_addr, tr->server_rtcp_port) < 0) {
+                    if (tr->udp_rtp_fd >= 0) close(tr->udp_rtp_fd);
+                    if (tr->udp_rtcp_fd >= 0) close(tr->udp_rtcp_fd);
+                    tr->udp_rtp_fd = tr->udp_rtcp_fd = -1;
+                    ZST_LOG_ERROR("rtspsrc", "failed to join multicast %s:%hu-%hu for track %d",
+                                  tr->multicast_addr, tr->server_rtp_port, tr->server_rtcp_port, idx);
+                    return -1;
+                }
+                ZST_LOG_INFO("rtspsrc", "track %d multicast: %s:%hu-%hu ttl=%d",
+                             idx, tr->multicast_addr, tr->server_rtp_port,
+                             tr->server_rtcp_port, tr->multicast_ttl);
             }
         }
     }
@@ -1359,10 +1447,14 @@ reconnect_start:
     if (srv->password[0]) strncpy(cl->password, srv->password, sizeof(cl->password) - 1);
 
     int is_udp = (strcasecmp(srv->transport, "udp") == 0);
-    cl->transport_type = is_udp ? RTSP_SOURCE_TRANSPORT_UDP : RTSP_SOURCE_TRANSPORT_TCP;
+    int is_multicast = (strcasecmp(srv->transport, "multicast") == 0);
+    int is_datagram = is_udp || is_multicast;
+    cl->transport_type = is_multicast ? RTSP_SOURCE_TRANSPORT_MULTICAST :
+                         (is_udp ? RTSP_SOURCE_TRANSPORT_UDP : RTSP_SOURCE_TRANSPORT_TCP);
 
     ZST_LOG_INFO("rtspsrc", "connecting to rtsp://%s:%d%s transport=%s",
-                 cl->host, cl->port, cl->path, is_udp ? "UDP" : "TCP");
+                 cl->host, cl->port, cl->path,
+                 is_multicast ? "MULTICAST" : (is_udp ? "UDP" : "TCP"));
 
     /* Connect */
     cl->fd = tcp_connect(cl->host, cl->port);
@@ -1455,11 +1547,12 @@ reconnect_start:
     }
 
     /* Phase 4: Streaming */
-    ZST_LOG_INFO("rtspsrc", "streaming started (%s)", is_udp ? "UDP" : "TCP interleaved");
+    ZST_LOG_INFO("rtspsrc", "streaming started (%s)",
+                 is_multicast ? "UDP multicast" : (is_udp ? "UDP unicast" : "TCP interleaved"));
     srv->running = 1;
 
-    if (is_udp) {
-        /* UDP mode: poll TCP for RTSP + all UDP RTP sockets */
+    if (is_datagram) {
+        /* UDP unicast/multicast mode: poll TCP for RTSP + all UDP RTP sockets */
         int max_fds = 1 + cl->track_count;
         struct pollfd* pfds = malloc(sizeof(struct pollfd) * (size_t)max_fds);
         if (!pfds) { close(cl->fd); srv->running = 0; return NULL; }
@@ -1880,7 +1973,7 @@ static const zst_property_spec_t g_rtspsrc_properties[] = {
     { "rtsp_url", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Alias for url" },
     { "username", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "RTSP username" },
     { "password", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "RTSP password" },
-    { "transport", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "tcp", "RTSP transport: tcp or udp" },
+    { "transport", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "tcp", "RTSP transport: tcp, udp, or multicast" },
     { "buffer-size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "16384", "Receive buffer size" },
     { "reconnect", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Reconnect on transport loss" },
     { "reconnect-delay-ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "500", "Delay between reconnect attempts" },

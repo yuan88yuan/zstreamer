@@ -6513,8 +6513,13 @@ static void test_rtsp_server_media_on_demand(void) {
     zst_element_t* server = zst_rtsp_server_create();
     assert(server != NULL);
 
-    // Set port to 8555
+    // Set port to 8555 and verify the TCP-interleaved transport override.
     assert(zst_element_set_property_int(server, "listen-port", 8555) == ZST_OK);
+    assert(zst_element_set_property_bool(server, "force-tcp", true) == ZST_OK);
+    bool force_tcp = false;
+    assert(zst_element_get_property_bool(server, "force-tcp", &force_tcp) == ZST_OK);
+    assert(force_tcp);
+    assert(zst_element_set_property_bool(server, "force-tcp", false) == ZST_OK);
 
     // Set mount callback
     int callback_called = 0;
@@ -6572,6 +6577,27 @@ static void test_rtsp_server_media_on_demand(void) {
     assert(strstr(response, "RTSP/1.0 200 OK") != NULL);
     // Check that Content-Base header exists and matches our dynamic mount
     assert(strstr(response, "Content-Base: rtsp://127.0.0.1:8555/dynamic_mount/") != NULL);
+    // VLC/live555 expects server-originated SDP to advertise sendonly media,
+    // and AAC MPEG4-GENERIC needs AudioSpecificConfig in fmtp.
+    assert(strstr(response, "a=sendonly") != NULL);
+    assert(strstr(response, "config=1210") != NULL);
+
+    // Verify multicast transport negotiation for track SETUP.
+    const char* setup_request =
+        "SETUP rtsp://127.0.0.1:8555/dynamic_mount/trackID=0 RTSP/1.0\r\n"
+        "CSeq: 2\r\n"
+        "Transport: RTP/AVP;multicast\r\n"
+        "\r\n";
+    sent = send(fd, setup_request, strlen(setup_request), 0);
+    assert(sent == (int)strlen(setup_request));
+    memset(response, 0, sizeof(response));
+    received = recv(fd, response, sizeof(response) - 1, 0);
+    assert(received > 0);
+    assert(strstr(response, "RTSP/1.0 200 OK") != NULL);
+    assert(strstr(response, "Transport: RTP/AVP;multicast") != NULL);
+    assert(strstr(response, "destination=239.255.42.42") != NULL);
+    assert(strstr(response, "port=56000-56001") != NULL);
+    assert(strstr(response, "ttl=16") != NULL);
 
     close(fd);
 

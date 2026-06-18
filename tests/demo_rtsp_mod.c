@@ -323,8 +323,12 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Configure port
+    // Configure port. Force RTP/RTSP over TCP so the demo works reliably when
+    // run from Docker with only the RTSP TCP port published (cvlc defaults to
+    // UDP otherwise, which cannot be routed back to external clients through
+    // Docker port mapping).
     zst_element_set_property_int(server, "listen-port", port);
+    // zst_element_set_property_bool(server, "force-tcp", true);
 
     // Set dynamic mount callback
     zst_rtsp_server_set_mount_callback(server, on_demand_mount, pipe);

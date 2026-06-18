@@ -4,13 +4,14 @@
     Serves multiple RTSP streams on a single port, each with its own
     mount point (URI path). Each mount point maps to a named pair of
     sink pads (video/audio). Connected clients DESCRIBE/SETUP/PLAY
-    and receive RTP over TCP interleaved or UDP unicast transport.
+    and receive RTP over TCP interleaved, UDP unicast, or UDP multicast transport.
 
     Architecture inspired by ireader/media-server:
       - rtsp_server_listen() → per-client rtsp_server_t
       - URI-based routing in ondescribe/onsetup handlers
       - RTP over RTSP interleaved binary framing ($ + channel + len + data)
       - UDP transport (RFC 3550): RTP on even port, RTCP on next odd port
+      - Multicast transport: RTP/AVP;multicast with destination/port/ttl
 
     Transport negotiation (RFC 2326 §12.39):
       - Client requests transport in SETUP via Transport header
@@ -152,6 +153,10 @@ typedef struct {
     struct sockaddr_in      client_rtcp_addr;
     uint16_t                client_rtp_port;
     uint16_t                client_rtcp_port;
+
+    /* Multicast transport state (destination group/TTL announced in SETUP) */
+    char                    multicast_destination[64];
+    int                     multicast_ttl;
 } rtp_stream_state_t;
 
 /*===========================================================================
@@ -243,6 +248,12 @@ typedef struct rtsp_server_priv_s {
 
     zst_rtsp_server_mount_cb_t mount_callback;
     void*                      mount_user_data;
+
+    int                        force_tcp; /* Ignore UDP client_port and use RTP/RTSP interleaved */
+
+    char                       multicast_address[64];
+    uint16_t                   multicast_port_base;
+    int                        multicast_ttl;
 } rtsp_server_priv_t;
 
 
@@ -270,6 +281,35 @@ static uint64_t now_us(void) {
 static int make_nonblock(int fd) {
     int fl = fcntl(fd, F_GETFL, 0);
     return fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+}
+
+static int annexb_cache_contains_nal(const uint8_t* cache, int cache_size,
+                                     const uint8_t* nal, int nal_len) {
+    if (!cache || cache_size <= 0 || !nal || nal_len <= 0) return 0;
+    int i = 0;
+    while (i + 4 + nal_len <= cache_size) {
+        if (cache[i] == 0 && cache[i + 1] == 0 &&
+            cache[i + 2] == 0 && cache[i + 3] == 1) {
+            int nal_start = i + 4;
+            int nal_end = cache_size;
+            for (int j = nal_start; j + 3 < cache_size; j++) {
+                if (cache[j] == 0 && cache[j + 1] == 0 &&
+                    (cache[j + 2] == 1 ||
+                     (j + 4 < cache_size && cache[j + 2] == 0 && cache[j + 3] == 1))) {
+                    nal_end = j;
+                    break;
+                }
+            }
+            if (nal_end - nal_start == nal_len &&
+                memcmp(cache + nal_start, nal, nal_len) == 0) {
+                return 1;
+            }
+            i = nal_end;
+        } else {
+            i++;
+        }
+    }
+    return 0;
 }
 
 static int create_tcp_listener(int port) {
@@ -356,7 +396,6 @@ static int aac_packetize(rtp_stream_state_t* st,
                           const uint8_t* aac, int aac_len,
                           packet_sink_t sink, void* ctx)
 {
-    int total = 4 + aac_len;
     uint8_t pkt[RTP_MTU];
     build_rtp_hdr(pkt, st, 1);
     int off = 12;
@@ -396,8 +435,9 @@ static int send_rtcp_sr(rtsp_client_t* cl, int is_video) {
 
     int slen = (int)sizeof(buf); /* 28 bytes */
 
-    if (cl->transport_type == RTSP_TRANSPORT_UDP && st->udp_rtcp_fd >= 0) {
-        /* Send RTCP SR via UDP */
+    if ((cl->transport_type == RTSP_TRANSPORT_UDP ||
+         cl->transport_type == RTSP_TRANSPORT_MULTICAST) && st->udp_rtcp_fd >= 0) {
+        /* Send RTCP SR via UDP unicast/multicast */
         int n = sendto(st->udp_rtcp_fd, buf, slen, 0,
                        (struct sockaddr*)&st->client_rtcp_addr,
                        sizeof(st->client_rtcp_addr));
@@ -510,7 +550,7 @@ static int make_sdp(rtsp_server_session_t* sess, char* out, int cap) {
         "c=IN IP4 0.0.0.0\r\n"
         "t=0 0\r\n"
         "a=range:npt=0-\r\n"
-        "a=recvonly\r\n"
+        "a=sendonly\r\n"
         "a=control:*\r\n",
         (unsigned long long)now, (unsigned long long)now, sess->name);
 
@@ -552,13 +592,26 @@ static int make_sdp(rtsp_server_session_t* sess, char* out, int cap) {
     if (sess->has_audio) {
         int sr = sess->sample_rate > 0 ? sess->sample_rate : 44100;
         int ch = sess->channels > 0 ? sess->channels : 2;
+        static const int rates[] = { 96000, 88200, 64000, 48000, 44100, 32000,
+                                     24000, 22050, 16000, 12000, 11025, 8000,
+                                     7350 };
+        int freq_idx = 4; /* 44100 Hz */
+        for (int i = 0; i < (int)(sizeof(rates) / sizeof(rates[0])); i++) {
+            if (rates[i] == sr) { freq_idx = i; break; }
+        }
+        if (ch < 1) ch = 1;
+        if (ch > 7) ch = 2;
+        int object_type = 2; /* AAC LC */
+        uint8_t asc0 = (uint8_t)((object_type << 3) | (freq_idx >> 1));
+        uint8_t asc1 = (uint8_t)(((freq_idx & 1) << 7) | (ch << 3));
         n += snprintf(out + n, cap - n,
             "m=audio 0 RTP/AVP %d\r\n"
             "a=rtpmap:%d MPEG4-GENERIC/%d/%d\r\n"
             "a=fmtp:%d streamtype=5;profile-level-id=1;"
-            "mode=AAC-hbr;sizelength=13;indexlength=3;indexdeltalength=3\r\n"
+            "mode=AAC-hbr;config=%02X%02X;"
+            "sizelength=13;indexlength=3;indexdeltalength=3\r\n"
             "a=control:trackID=1\r\n",
-            RTP_PT_AAC, RTP_PT_AAC, sr, ch, RTP_PT_AAC);
+            RTP_PT_AAC, RTP_PT_AAC, sr, ch, RTP_PT_AAC, asc0, asc1);
     }
     return n;
 }
@@ -702,6 +755,42 @@ static int extract_mount_clean(const char* uri, char* out, int max_len) {
     return len > 0;
 }
 
+static rtsp_server_session_t* find_session_locked(rtsp_server_priv_t* srv, const char* mount) {
+    for (int i = 0; i < srv->session_count; i++) {
+        if (strcmp(srv->sessions[i].name, mount) == 0) {
+            return &srv->sessions[i];
+        }
+    }
+    return NULL;
+}
+
+static rtsp_server_session_t* find_or_mount_session(rtsp_client_t* cl, const char* mount) {
+    rtsp_server_priv_t* srv = cl->server;
+    rtsp_server_session_t* sess = NULL;
+
+    pthread_mutex_lock(&srv->lock);
+    sess = find_session_locked(srv, mount);
+
+    if (!sess && srv->mount_callback) {
+        zst_rtsp_server_mount_cb_t cb = srv->mount_callback;
+        void* ud = srv->mount_user_data;
+        zst_element_t* server_el = srv->self;
+
+        pthread_mutex_unlock(&srv->lock);
+
+        ZST_LOG_INFO("rtsp_server", "triggering dynamic mount callback for session /%s", mount);
+        zst_result_t res = cb(server_el, mount, ud);
+
+        pthread_mutex_lock(&srv->lock);
+        if (res == ZST_OK) {
+            sess = find_session_locked(srv, mount);
+        }
+    }
+
+    pthread_mutex_unlock(&srv->lock);
+    return sess;
+}
+
 
 /*===========================================================================
     Transport header parser (RFC 2326 §12.39)
@@ -715,12 +804,14 @@ static int extract_mount_clean(const char* uri, char* out, int max_len) {
 static int parse_transport_header(const char* field,
                                    int* transport_type,
                                    uint16_t* client_port1, uint16_t* client_port2,
+                                   uint16_t* port1, uint16_t* port2,
                                    int* interleaved1, int* interleaved2,
                                    int* multicast, char* destination, int* ttl)
 {
     const char* p = field;
     *transport_type = RTSP_TRANSPORT_TCP;
     *client_port1 = *client_port2 = 0;
+    *port1 = *port2 = 0;
     *interleaved1 = *interleaved2 = -1;
     *multicast = 0;
     *ttl = 0;
@@ -753,6 +844,11 @@ static int parse_transport_header(const char* field,
             if (*client_port2 == 0) *client_port2 = *client_port1 + 1;
             *client_port1 = (*client_port1 / 2) * 2; /* even */
             *client_port2 = *client_port1 + 1;
+        }
+        else if (sscanf(tok, "port=%hu-%hu", port1, port2) >= 1) {
+            if (*port2 == 0) *port2 = *port1 + 1;
+            *port1 = (*port1 / 2) * 2; /* even */
+            *port2 = *port1 + 1;
         }
         else if (sscanf(tok, "interleaved=%d-%d", interleaved1, interleaved2) >= 1) {
             if (*interleaved2 < 0) *interleaved2 = *interleaved1 + 1;
@@ -789,6 +885,17 @@ static int create_udp_socket(void) {
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     make_nonblock(fd);
     return fd;
+}
+
+static int configure_multicast_sender(int fd, int ttl) {
+    if (fd < 0) return -1;
+    if (ttl <= 0) ttl = 16;
+    if (ttl > 255) ttl = 255;
+    unsigned char ttl_uc = (unsigned char)ttl;
+    unsigned char loop = 1;
+    setsockopt(fd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl_uc, sizeof(ttl_uc));
+    setsockopt(fd, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, sizeof(loop));
+    return 0;
 }
 
 static int bind_udp_port(int fd, uint16_t port) {
@@ -853,37 +960,7 @@ static int on_describe(rtsp_client_t* cl) {
     }
 
     rtsp_server_priv_t* srv = cl->server;
-    pthread_mutex_lock(&srv->lock);
-    rtsp_server_session_t* sess = NULL;
-    for (int i = 0; i < srv->session_count; i++) {
-        if (strcmp(srv->sessions[i].name, mount) == 0) {
-            sess = &srv->sessions[i];
-            break;
-        }
-    }
-
-    if (!sess && srv->mount_callback) {
-        zst_rtsp_server_mount_cb_t cb = srv->mount_callback;
-        void* ud = srv->mount_user_data;
-        zst_element_t* server_el = srv->self;
-
-        pthread_mutex_unlock(&srv->lock);
-
-        ZST_LOG_INFO("rtsp_server", "triggering dynamic mount callback for session /%s", mount);
-        zst_result_t res = cb(server_el, mount, ud);
-
-        pthread_mutex_lock(&srv->lock);
-
-        if (res == ZST_OK) {
-            for (int i = 0; i < srv->session_count; i++) {
-                if (strcmp(srv->sessions[i].name, mount) == 0) {
-                    sess = &srv->sessions[i];
-                    break;
-                }
-            }
-        }
-    }
-    pthread_mutex_unlock(&srv->lock);
+    rtsp_server_session_t* sess = find_or_mount_session(cl, mount);
 
     if (!sess) return reply_simple(cl, 404);
 
@@ -925,9 +1002,17 @@ static int on_describe(rtsp_client_t* cl) {
 
 
 static int on_setup(rtsp_client_t* cl) {
-    if (!cl->session) return reply_simple(cl, 454);
+    if (!cl->session) {
+        char mount[128];
+        if (!extract_mount_clean(cl->uri, mount, sizeof(mount))) {
+            return reply_simple(cl, 454);
+        }
+        cl->session = find_or_mount_session(cl, mount);
+        if (!cl->session) return reply_simple(cl, 454);
+    }
 
     rtsp_server_session_t* sess = cl->session;
+    rtsp_server_priv_t* srv = cl->server;
 
     /* Determine which track is being set up from the URI */
     const char* track = strstr(cl->uri, "trackID=");
@@ -938,14 +1023,19 @@ static int on_setup(rtsp_client_t* cl) {
         if (tid == 0) is_video_track = 1;
         else if (tid == 1) is_audio_track = 1;
     } else {
-        /* No track ID — set up both on first SETUP */
-        is_video_track = sess->has_video;
-        is_audio_track = sess->has_audio;
+        /* No track ID: treat this as an aggregate SETUP request and bind the
+           first available media stream.  Generic RTSP clients normally SETUP
+           each a=control track URL separately; accepting the aggregate URL
+           here keeps clients that send SETUP before DESCRIBE from failing
+           with 454 while avoiding an invalid one-Transport/two-stream setup. */
+        if (sess->has_video) is_video_track = 1;
+        else if (sess->has_audio) is_audio_track = 1;
     }
 
     /* Parse Transport header */
     int transport_type_parsed = RTSP_TRANSPORT_TCP;
     uint16_t cport1 = 0, cport2 = 0;
+    uint16_t port1 = 0, port2 = 0;
     int il1 = -1, il2 = -1;
     int multicast = 0;
     char destination[64];
@@ -957,8 +1047,15 @@ static int on_setup(rtsp_client_t* cl) {
         parse_transport_header(cl->transport_hdr,
                                 &transport_type_parsed,
                                 &cport1, &cport2,
+                                &port1, &port2,
                                 &il1, &il2,
                                 &multicast, destination, &ttl);
+    }
+
+    if (srv->force_tcp) {
+        transport_type_parsed = RTSP_TRANSPORT_TCP;
+        cport1 = cport2 = 0;
+        multicast = 0;
     }
 
     /* If this is the first SETUP, establish the transport */
@@ -967,11 +1064,10 @@ static int on_setup(rtsp_client_t* cl) {
         snprintf(cl->session_id, sizeof(cl->session_id), "%08x", rand32());
 
         if (multicast) {
-            /* Multicast not fully implemented; fall back to TCP */
-            ZST_LOG_WARN("rtsp_server", "multicast not supported, falling back to TCP");
-            cl->transport_type = RTSP_TRANSPORT_TCP;
-            cl->interleaved_rtp  = 0;
-            cl->interleaved_rtcp = 1;
+            /* Client requested RTP/AVP multicast.  The server sends to the
+               requested destination/port when supplied, otherwise to its
+               configured multicast-address/port-base. */
+            cl->transport_type = RTSP_TRANSPORT_MULTICAST;
         } else if (transport_type_parsed == RTSP_TRANSPORT_TCP ||
                    (transport_type_parsed == RTSP_TRANSPORT_UDP && cport1 == 0 && has_transport)) {
             /* Client requested TCP interleaved, or UDP without client_port — use TCP */
@@ -1065,6 +1161,50 @@ static int on_setup(rtsp_client_t* cl) {
                      is_audio_track ? "audio" : "video");
     }
 
+    /* Set up multicast sockets for this track if using multicast transport */
+    if (cl->transport_type == RTSP_TRANSPORT_MULTICAST) {
+        rtp_stream_state_t* st = is_audio_track ? &cl->astream : &cl->vstream;
+        const char* group = destination[0] ? destination : srv->multicast_address;
+        int effective_ttl = ttl > 0 ? ttl : srv->multicast_ttl;
+        uint16_t base_port = port1 ? port1 : (uint16_t)(srv->multicast_port_base + (is_audio_track ? 2 : 0));
+        uint16_t rtcp_port = port2 ? port2 : (uint16_t)(base_port + 1);
+        base_port = (uint16_t)((base_port / 2) * 2);
+        rtcp_port = (uint16_t)(base_port + 1);
+
+        st->udp_rtp_fd = create_udp_socket();
+        st->udp_rtcp_fd = create_udp_socket();
+        if (st->udp_rtp_fd < 0 || st->udp_rtcp_fd < 0) {
+            if (st->udp_rtp_fd >= 0) close(st->udp_rtp_fd);
+            if (st->udp_rtcp_fd >= 0) close(st->udp_rtcp_fd);
+            st->udp_rtp_fd = st->udp_rtcp_fd = -1;
+            return reply_simple(cl, 500);
+        }
+        configure_multicast_sender(st->udp_rtp_fd, effective_ttl);
+        configure_multicast_sender(st->udp_rtcp_fd, effective_ttl);
+
+        memset(&st->client_rtp_addr, 0, sizeof(st->client_rtp_addr));
+        st->client_rtp_addr.sin_family = AF_INET;
+        st->client_rtp_addr.sin_addr.s_addr = inet_addr(group);
+        st->client_rtp_addr.sin_port = htons(base_port);
+
+        memset(&st->client_rtcp_addr, 0, sizeof(st->client_rtcp_addr));
+        st->client_rtcp_addr.sin_family = AF_INET;
+        st->client_rtcp_addr.sin_addr.s_addr = inet_addr(group);
+        st->client_rtcp_addr.sin_port = htons(rtcp_port);
+
+        st->server_rtp_port = base_port;
+        st->server_rtcp_port = rtcp_port;
+        st->client_rtp_port = base_port;
+        st->client_rtcp_port = rtcp_port;
+        strncpy(st->multicast_destination, group, sizeof(st->multicast_destination) - 1);
+        st->multicast_destination[sizeof(st->multicast_destination) - 1] = '\0';
+        st->multicast_ttl = effective_ttl;
+
+        ZST_LOG_INFO("rtsp_server", "multicast transport: destination %s:%hu-%hu ttl=%d (track=%s)",
+                     st->multicast_destination, st->server_rtp_port, st->server_rtcp_port,
+                     st->multicast_ttl, is_audio_track ? "audio" : "video");
+    }
+
     /* Build Transport response header */
     char extra[256];
     if (cl->transport_type == RTSP_TRANSPORT_UDP) {
@@ -1075,6 +1215,14 @@ static int on_setup(rtsp_client_t* cl) {
             "server_port=%hu-%hu\r\n",
             st->client_rtp_port, st->client_rtcp_port,
             st->server_rtp_port, st->server_rtcp_port);
+    } else if (cl->transport_type == RTSP_TRANSPORT_MULTICAST) {
+        rtp_stream_state_t* st = is_audio_track ? &cl->astream : &cl->vstream;
+        snprintf(extra, sizeof(extra),
+            "Transport: RTP/AVP;multicast;"
+            "destination=%s;port=%hu-%hu;ttl=%d\r\n",
+            st->multicast_destination[0] ? st->multicast_destination : srv->multicast_address,
+            st->server_rtp_port, st->server_rtcp_port,
+            st->multicast_ttl > 0 ? st->multicast_ttl : srv->multicast_ttl);
     } else {
         /* Use per-track interleaved channels */
         int rtp_ch  = is_audio_track ? ((il1 >= 0) ? il1 : cl->interleaved_rtp + 2)
@@ -1159,11 +1307,12 @@ static int dispatch_rtsp(rtsp_client_t* cl) {
 }
 
 /*===========================================================================
-    RTP packet send — TCP interleaved or UDP unicast
+    RTP packet send — TCP interleaved, UDP unicast, or UDP multicast
 ===========================================================================*/
 static void write_rtp_packet(rtsp_client_t* cl, rtp_stream_state_t* st, const uint8_t* data, int len) {
-    if (cl->transport_type == RTSP_TRANSPORT_UDP && st->udp_rtp_fd >= 0) {
-        /* Send raw RTP packet via UDP */
+    if ((cl->transport_type == RTSP_TRANSPORT_UDP ||
+         cl->transport_type == RTSP_TRANSPORT_MULTICAST) && st->udp_rtp_fd >= 0) {
+        /* Send raw RTP packet via UDP unicast/multicast */
         sendto(st->udp_rtp_fd, data, len, 0,
                (struct sockaddr*)&st->client_rtp_addr,
                sizeof(st->client_rtp_addr));
@@ -1254,8 +1403,14 @@ static void session_deliver(rtsp_server_priv_t* srv,
                 int nal_len = nal_end - nal_start;
                 if (nal_len > 0) {
                     uint8_t nal_type = d[nal_start] & 0x1f;
-                    if (nal_type == H264_NAL_SPS || nal_type == H264_NAL_PPS) {
-                        /* Cache with 4-byte start code prefix */
+                    if ((nal_type == H264_NAL_SPS || nal_type == H264_NAL_PPS) &&
+                        !annexb_cache_contains_nal(sess->sps_pps_cache,
+                                                   sess->sps_pps_cache_size,
+                                                   d + nal_start, nal_len)) {
+                        /* Cache with 4-byte start code prefix.  Avoid duplicate
+                           SPS/PPS entries because encoders may repeat headers on
+                           every keyframe; sending a huge parameter-set burst can
+                           confuse strict RTSP clients such as VLC/live555. */
                         int full_len = 4 + nal_len;
                         uint8_t* new_cache = (uint8_t*)realloc(
                             sess->sps_pps_cache,
@@ -1280,11 +1435,24 @@ static void session_deliver(rtsp_server_priv_t* srv,
     }
 
     /*=== Phase 2: Deliver data to clients ===*/
+    struct { uint32_t addr; uint16_t port; } multicast_sent[32];
+    int multicast_sent_count = 0;
     for (rtsp_client_t* cl = srv->clients; cl; cl = cl->next) {
         if (cl->session != sess || cl->play_state != 1) continue;
 
         rtp_stream_state_t* st = is_video ? &cl->vstream : &cl->astream;
         if (st->codec == 0) continue;
+        if (cl->transport_type == RTSP_TRANSPORT_MULTICAST) {
+            int already_sent = 0;
+            for (int i = 0; i < multicast_sent_count; i++) {
+                if (multicast_sent[i].addr == st->client_rtp_addr.sin_addr.s_addr &&
+                    multicast_sent[i].port == st->client_rtp_addr.sin_port) {
+                    already_sent = 1;
+                    break;
+                }
+            }
+            if (already_sent) continue;
+        }
 
         /* Initialize base PTS on first data */
         if (st->base_pts == 0) {
@@ -1443,6 +1611,12 @@ static void session_deliver(rtsp_server_priv_t* srv,
         } else if (is_audio && st->codec == 3) {
             aac_packetize(st, buf->memory.data, (int)buf->memory.size,
                           packet_send_cb, &sc);
+        }
+
+        if (cl->transport_type == RTSP_TRANSPORT_MULTICAST && multicast_sent_count < 32) {
+            multicast_sent[multicast_sent_count].addr = st->client_rtp_addr.sin_addr.s_addr;
+            multicast_sent[multicast_sent_count].port = st->client_rtp_addr.sin_port;
+            multicast_sent_count++;
         }
     }
 
@@ -1741,6 +1915,31 @@ static zst_result_t el_set_prop(zst_element_t* el, const char* name,
         if (srv->listen_port <= 0) srv->listen_port = RTSP_DEFAULT_PORT;
         return ZST_OK;
     }
+    if (strcmp(name, "force-tcp") == 0 || strcmp(name, "force_tcp") == 0) {
+        srv->force_tcp = (strcmp(value, "1") == 0 ||
+                          strcasecmp(value, "true") == 0 ||
+                          strcasecmp(value, "yes") == 0 ||
+                          strcasecmp(value, "on") == 0);
+        return ZST_OK;
+    }
+    if (strcmp(name, "multicast-address") == 0 || strcmp(name, "multicast_address") == 0) {
+        strncpy(srv->multicast_address, value, sizeof(srv->multicast_address) - 1);
+        srv->multicast_address[sizeof(srv->multicast_address) - 1] = '\0';
+        return ZST_OK;
+    }
+    if (strcmp(name, "multicast-port-base") == 0 || strcmp(name, "multicast_port_base") == 0) {
+        int port = atoi(value);
+        if (port <= 0) port = 56000;
+        port = (port / 2) * 2;
+        srv->multicast_port_base = (uint16_t)port;
+        return ZST_OK;
+    }
+    if (strcmp(name, "multicast-ttl") == 0 || strcmp(name, "multicast_ttl") == 0) {
+        srv->multicast_ttl = atoi(value);
+        if (srv->multicast_ttl <= 0) srv->multicast_ttl = 16;
+        if (srv->multicast_ttl > 255) srv->multicast_ttl = 255;
+        return ZST_OK;
+    }
     return ZST_ERROR;
 }
 
@@ -1760,6 +1959,22 @@ static zst_result_t el_get_prop(zst_element_t* el, const char* name,
     }
     if (strcmp(name, "client_count") == 0) {
         snprintf(out, max, "%d", srv->client_count);
+        return ZST_OK;
+    }
+    if (strcmp(name, "force-tcp") == 0 || strcmp(name, "force_tcp") == 0) {
+        snprintf(out, max, "%d", srv->force_tcp ? 1 : 0);
+        return ZST_OK;
+    }
+    if (strcmp(name, "multicast-address") == 0 || strcmp(name, "multicast_address") == 0) {
+        snprintf(out, max, "%s", srv->multicast_address);
+        return ZST_OK;
+    }
+    if (strcmp(name, "multicast-port-base") == 0 || strcmp(name, "multicast_port_base") == 0) {
+        snprintf(out, max, "%hu", srv->multicast_port_base);
+        return ZST_OK;
+    }
+    if (strcmp(name, "multicast-ttl") == 0 || strcmp(name, "multicast_ttl") == 0) {
+        snprintf(out, max, "%d", srv->multicast_ttl);
         return ZST_OK;
     }
     return ZST_ERROR;
@@ -1784,6 +1999,10 @@ zst_element_t* zst_rtsp_server_create(void) {
     if (!priv) return NULL;
     priv->listen_port = RTSP_DEFAULT_PORT;
     priv->listen_fd   = -1;
+    priv->force_tcp   = 0;
+    strncpy(priv->multicast_address, "239.255.42.42", sizeof(priv->multicast_address) - 1);
+    priv->multicast_port_base = 56000;
+    priv->multicast_ttl = 16;
     pthread_mutex_init(&priv->lock, NULL);
 
     zst_element_t* el = zst_element_create(&g_ops, priv);
@@ -1977,6 +2196,11 @@ static zst_element_t* plugin_create(const char* name) {
 static const zst_property_spec_t g_rtspserver_properties[] = {
     { "listen-port", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "8554", "RTSP server listen port" },
     { "listen_port", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "8554", "Alias for listen-port" },
+    { "force-tcp", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Force RTP over RTSP/TCP interleaved transport" },
+    { "force_tcp", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Alias for force-tcp" },
+    { "multicast-address", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "239.255.42.42", "Default multicast destination group" },
+    { "multicast-port-base", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "56000", "Default multicast RTP port for video; audio uses +2" },
+    { "multicast-ttl", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "16", "Default multicast IP TTL" },
     { "session_count", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE, "0", "Number of active RTSP streaming sessions" },
     { "client_count", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE, "0", "Number of connected RTSP clients" }
 };
