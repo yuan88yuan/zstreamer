@@ -41,6 +41,11 @@ zst_element_create(const zst_element_ops_t* ops, void* priv)
     el->pipeline     = NULL;
     el->graph_rank   = 0;
     atomic_init(&el->is_queued, false);
+    atomic_init(&el->pool_sizing_seen_pool, NULL);
+    atomic_init(&el->pool_sizing_seen_min_buffers, 0);
+    atomic_init(&el->pool_sizing_seen_max_buffers, 0);
+    atomic_init(&el->pool_sizing_seen_buffer_size, 0);
+    atomic_init(&el->pool_sizing_seen_buffer_type, 0);
     pthread_mutex_init(&el->state_lock, NULL);
 
     /* Pre-allocate the scheduling token to optimize dispatch latency.

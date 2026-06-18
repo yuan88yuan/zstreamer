@@ -223,6 +223,10 @@ default_sink_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
     zst_buffer_t* out_buf = NULL;
     zst_result_t ret = ZST_OK;
 
+    if (el->pipeline) {
+        zst_pipeline_update_buffer_pool_sizing_if_needed(el->pipeline, el);
+    }
+
     if (el->ops->process) {
         ret = el->ops->process(el, buf, &out_buf);
     }
@@ -243,7 +247,7 @@ default_sink_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
     }
 
     if (ret == ZST_OK && el->pipeline) {
-        zst_pipeline_update_buffer_pool_sizing(el->pipeline);
+        zst_pipeline_update_buffer_pool_sizing_if_needed(el->pipeline, el);
     }
 
     if (ret != ZST_OK && ret != ZST_EOF && ret != ZST_TIMEOUT && ret != ZST_AGAIN) {
@@ -264,6 +268,10 @@ default_src_pad_pull(zst_pad_t* pad, zst_buffer_t** out)
 
     zst_buffer_t* out_buf = NULL;
     zst_result_t ret = ZST_OK;
+
+    if (el->pipeline) {
+        zst_pipeline_update_buffer_pool_sizing_if_needed(el->pipeline, el);
+    }
 
     if (el->nb_sink_pads > 0) {
         zst_buffer_t* in_buf = NULL;
@@ -296,7 +304,7 @@ default_src_pad_pull(zst_pad_t* pad, zst_buffer_t** out)
     if (ret == ZST_OK) {
         *out = out_buf;
         if (el->pipeline) {
-            zst_pipeline_update_buffer_pool_sizing(el->pipeline);
+            zst_pipeline_update_buffer_pool_sizing_if_needed(el->pipeline, el);
         }
     } else {
         if (ret != ZST_EOF && ret != ZST_TIMEOUT && ret != ZST_AGAIN) {
@@ -405,6 +413,14 @@ zst_pad_link(zst_pad_t* src, zst_pad_t* sink)
     src->peer = sink;
     sink->peer = src;
 
+    if (src->parent && src->parent->pipeline) {
+        zst_pipeline_mark_buffer_pool_sizing_dirty(src->parent->pipeline);
+    }
+    if (sink->parent && sink->parent->pipeline &&
+        (!src->parent || sink->parent->pipeline != src->parent->pipeline)) {
+        zst_pipeline_mark_buffer_pool_sizing_dirty(sink->parent->pipeline);
+    }
+
     return ZST_OK;
 }
 
@@ -416,9 +432,19 @@ zst_pad_unlink(zst_pad_t* pad)
     zst_pad_t* peer = pad->peer;
     if (!peer) return;
 
+    zst_pipeline_t* pad_pipe = pad->parent ? pad->parent->pipeline : NULL;
+    zst_pipeline_t* peer_pipe = peer->parent ? peer->parent->pipeline : NULL;
+
     /* Break the link from both sides */
     pad->peer = NULL;
     peer->peer = NULL;
+
+    if (pad_pipe) {
+        zst_pipeline_mark_buffer_pool_sizing_dirty(pad_pipe);
+    }
+    if (peer_pipe && peer_pipe != pad_pipe) {
+        zst_pipeline_mark_buffer_pool_sizing_dirty(peer_pipe);
+    }
 }
 
 zst_result_t

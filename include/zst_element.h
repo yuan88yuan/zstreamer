@@ -89,6 +89,15 @@ struct zst_element {
     zst_clock_t* clock;
     zst_pipeline_t* pipeline;
 
+    /* Last pool snapshot seen by topology-aware sizing.  This lets the
+     * pipeline detect lazily-created/recreated pools without re-traversing the
+     * whole graph on every buffer. */
+    _Atomic(zst_buffer_pool_t*) pool_sizing_seen_pool;
+    _Atomic(uint32_t) pool_sizing_seen_min_buffers;
+    _Atomic(uint32_t) pool_sizing_seen_max_buffers;
+    _Atomic(size_t) pool_sizing_seen_buffer_size;
+    _Atomic(uint32_t) pool_sizing_seen_buffer_type;
+
     /* Isolated fine-grained mutex for state adjustments & property evaluations */
     pthread_mutex_t state_lock;
 };

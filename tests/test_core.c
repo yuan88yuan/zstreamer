@@ -478,6 +478,84 @@ test_pipeline_topology_pool_sizing(void)
     PASS();
 }
 
+static zst_result_t
+lazy_pool_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
+{
+    (void)in;
+    test_pool_priv_t* priv = el->priv;
+    if (!priv->pool) {
+        zst_buffer_pool_config_t cfg = {
+            .min_buffers = 1,
+            .max_buffers = 1,
+            .buffer_size = 64,
+            .buffer_type = ZST_BUFFER_USER
+        };
+        priv->pool = zst_buffer_pool_create(NULL, &cfg);
+        if (!priv->pool) return ZST_ERROR;
+    }
+    if (out) *out = NULL;
+    return ZST_OK;
+}
+
+static zst_element_ops_t g_lazy_pool_ops = {
+    .name = "lazy_pool",
+    .process = lazy_pool_process,
+    .close = test_pool_close,
+    .get_pool = test_pool_get_pool,
+};
+
+static void
+test_pipeline_lazy_pool_sizing(void)
+{
+    TEST("pipeline lazy buffer pool sizing");
+
+    zst_pipeline_t* pipe = zst_pipeline_create();
+    assert(pipe != NULL);
+
+    zst_element_t* upstream = zst_element_create(&g_dummy_ops, NULL);
+    test_pool_priv_t* priv = calloc(1, sizeof(*priv));
+    assert(priv != NULL);
+    zst_element_t* lazy = zst_element_create(&g_lazy_pool_ops, priv);
+    zst_element_t* q1 = zst_queue_element_create(NULL);
+    zst_element_t* q2 = zst_queue_element_create(NULL);
+    assert(upstream != NULL && lazy != NULL && q1 != NULL && q2 != NULL);
+
+    zst_pad_t* upstream_src = zst_pad_create("src", ZST_PAD_SRC);
+    zst_pad_t* lazy_sink = zst_pad_create("sink", ZST_PAD_SINK);
+    zst_pad_t* lazy_src = zst_pad_create("src", ZST_PAD_SRC);
+    assert(upstream_src != NULL && lazy_sink != NULL && lazy_src != NULL);
+    assert(zst_element_add_pad(upstream, upstream_src) == ZST_OK);
+    assert(zst_element_add_pad(lazy, lazy_sink) == ZST_OK);
+    assert(zst_element_add_pad(lazy, lazy_src) == ZST_OK);
+
+    assert(zst_pipeline_add(pipe, upstream) == ZST_OK);
+    assert(zst_pipeline_add(pipe, lazy) == ZST_OK);
+    assert(zst_pipeline_add(pipe, q1) == ZST_OK);
+    assert(zst_pipeline_add(pipe, q2) == ZST_OK);
+
+    assert(zst_pad_link(upstream_src, lazy_sink) == ZST_OK);
+    assert(zst_pad_link(lazy_src, zst_element_get_pad(q1, "sink")) == ZST_OK);
+    assert(zst_pad_link(zst_element_get_pad(q1, "src"), zst_element_get_pad(q2, "sink")) == ZST_OK);
+
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_element_get_pool(lazy) == NULL);
+
+    zst_buffer_t* trigger = zst_buffer_create(ZST_BUFFER_USER);
+    assert(trigger != NULL);
+    assert(zst_pad_push(upstream_src, trigger) == ZST_OK);
+    zst_buffer_unref(trigger);
+
+    zst_buffer_pool_t* pool = zst_element_get_pool(lazy);
+    assert(pool != NULL);
+    zst_buffer_pool_config_t cfg = zst_buffer_pool_get_config(pool);
+    assert(cfg.min_buffers == 4);
+    assert(cfg.max_buffers >= cfg.min_buffers);
+
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_NULL) == ZST_OK);
+    zst_pipeline_destroy(pipe);
+    PASS();
+}
+
 /* ═══════════════════════════════════════════════════════════════
    Queue tests
    ═══════════════════════════════════════════════════════════════ */
@@ -6690,6 +6768,7 @@ int main(void)
     test_pipeline_add_remove();
     test_pipeline_state_propagation();
     test_pipeline_topology_pool_sizing();
+    test_pipeline_lazy_pool_sizing();
     test_pipeline_topological_sort_check();
 
     /* ── Queue ── */

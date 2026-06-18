@@ -4,6 +4,7 @@
 #pragma once
 
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdalign.h>
 #include "zst_types.h"
 #include "zst_element.h"
@@ -28,6 +29,12 @@ struct zst_pipeline {
 
     /* Lock protecting structural topological modifications of the graph */
     pthread_rwlock_t elements_lock;
+
+    /* Buffer-pool sizing is topology-dependent but expensive (graph walk).
+     * Mark dirty on topology changes and coalesce updates to avoid O(N)
+     * traversal in per-frame hot paths. */
+    _Atomic(bool) buffer_pool_sizing_dirty;
+    pthread_mutex_t buffer_pool_sizing_lock;
 };
 
 zst_pipeline_t* zst_pipeline_create(void);
@@ -61,8 +68,15 @@ void zst_pipeline_foreach_element(
     void (*func)(zst_element_t*, void*),
     void* user_data);
 
+void zst_pipeline_mark_buffer_pool_sizing_dirty(
+    zst_pipeline_t* pipe);
+
 void zst_pipeline_update_buffer_pool_sizing(
     zst_pipeline_t* pipe);
+
+void zst_pipeline_update_buffer_pool_sizing_if_needed(
+    zst_pipeline_t* pipe,
+    zst_element_t* changed_el);
 
 #ifdef __cplusplus
 }

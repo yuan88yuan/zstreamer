@@ -79,9 +79,11 @@ execute_element_task(zst_scheduler_t* sched, zst_element_t* el, zst_pipeline_t* 
 
     if (el->ops && el->ops->process) {
         zst_buffer_t* out_buf = NULL;
+        zst_pipeline_update_buffer_pool_sizing_if_needed(pipe, el);
         zst_result_t ret = el->ops->process(el, NULL, &out_buf);
 
         if (ret == ZST_OK) {
+            zst_pipeline_update_buffer_pool_sizing_if_needed(pipe, el);
             if (out_buf) {
                 if (el->nb_src_pads > 0 && el->src_pads[0]) {
                     if (pipe->clock_sync && el->clock && pipe->base_time > 0
@@ -95,7 +97,6 @@ execute_element_task(zst_scheduler_t* sched, zst_element_t* el, zst_pipeline_t* 
                     
                     zst_pad_push(el->src_pads[0], out_buf);
                     zst_buffer_unref(out_buf);
-                    zst_pipeline_update_buffer_pool_sizing(pipe);
                 }
             }
             
