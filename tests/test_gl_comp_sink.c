@@ -14,6 +14,7 @@
 #include "zst_element.h"
 #include "zst_element_factory.h"
 #include "zstreamer/elements/zst_gl_comp_sink.h"
+#include "zst_clock.h"
 
 static int g_tests_run = 0;
 static int g_tests_passed = 0;
@@ -257,6 +258,49 @@ test_xvfb_gl_smoke(void)
     PASS();
 }
 
+static zst_time_t
+mock_clock_get_time(zst_clock_t* clock)
+{
+    return 100000000; /* 100ms */
+}
+
+static void
+test_qos_dropping(void)
+{
+    zst_element_t* el = make_glcompsink();
+    if (!el) FAIL("creation failed");
+
+    zst_element_set_property_uint(el, "input-count", 1);
+    zst_element_set_property_int(el, "max-lateness", 20000000); /* 20ms */
+
+    zst_clock_t* clk = zst_clock_system_create();
+    clk->get_time = mock_clock_get_time;
+    zst_element_set_clock(el, clk);
+
+    zst_element_set_state(el, ZST_STATE_PLAYING);
+
+    zst_pad_t* pad = zst_element_get_pad(el, "sink_0");
+    if (!pad) FAIL("no sink_0 pad");
+
+    zst_buffer_t* buf = zst_buffer_create(ZST_MEMORY_CPU);
+    buf->pts = 10000000; /* 10ms - late by 90ms (current=100ms, max-lateness=20ms) */
+
+    /* Simulate a direct push to the sink pad, bypassing zst_pad_push which expects a src pad */
+    zst_result_t res = pad->push(pad, buf);
+    if (res != ZST_OK) FAIL("push failed");
+
+    if (!(buf->flags & ZST_BUFFER_FLAG_DROP)) FAIL("buffer was not dropped");
+
+    char count[32];
+    zst_element_get_property(el, "frame-count", count, sizeof(count));
+    if (strcmp(count, "0") != 0) FAIL("frame count should be 0");
+
+    zst_clock_unref(clk);
+    zst_element_set_state(el, ZST_STATE_NULL);
+    zst_element_destroy(el);
+    PASS();
+}
+
 int main(void)
 {
     printf("=== glcompsink element tests ===\n\n");
@@ -271,6 +315,7 @@ int main(void)
     TEST("Request pad API");                  test_request_pad_api();
     TEST("Null-mode multi-input processing"); test_null_mode_multi_input();
     TEST("EOS per pad");                      test_eos_per_pad();
+    TEST("QoS dropping");                     test_qos_dropping();
     TEST("Xvfb GL smoke");                    test_xvfb_gl_smoke();
 
     printf("\n=== Results: %d / %d passed ===\n", g_tests_passed, g_tests_run);

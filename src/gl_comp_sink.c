@@ -30,6 +30,8 @@
 #include "zst_element_factory.h"
 #include "zstreamer/elements/zst_gl_comp_sink.h"
 #include "zst_buffer.h"
+#include "zst_clock.h"
+#include "zst_bus.h"
 #include "zst_log.h"
 #include "zst_pipeline.h"
 
@@ -129,6 +131,8 @@ struct gl_comp_sink {
     int vsync;
     int null_mode;
     int window_open;
+
+    int64_t max_lateness;
 
     Display* x_display;
     Window x_window;
@@ -708,7 +712,26 @@ comp_sink_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
     if (!pad || !buf || !pad->priv) return ZST_ERROR;
     gl_comp_input_t* in = pad->priv;
     gl_comp_sink_t* s = in->parent;
+    zst_element_t* el = pad->parent;
     zst_result_t ret = ZST_OK;
+
+    if (buf->flags & ZST_BUFFER_FLAG_DROP) {
+        return ZST_OK;
+    }
+
+    if (el && el->clock && buf->pts > 0 && !(buf->flags & ZST_BUFFER_FLAG_EOS)) {
+        zst_time_t current = zst_clock_get_time(el->clock);
+        if (current > buf->pts && (current - buf->pts) > (zst_time_t)s->max_lateness) {
+            if (current - buf->pts < 5000000000ULL) { /* 5s safeguard */
+                buf->flags |= ZST_BUFFER_FLAG_DROP;
+                if (el->bus) {
+                    zst_event_t* qos_ev = zst_event_new_warning(el, ZST_ERROR, "QoS: Frame dropped (too late)");
+                    zst_bus_post(el->bus, qos_ev);
+                }
+                return ZST_OK;
+            }
+        }
+    }
 
     pthread_mutex_lock(&s->lock);
     if (buf->flags & ZST_BUFFER_FLAG_EOS) {
@@ -929,6 +952,8 @@ glcomp_set_property(zst_element_t* el, const char* name, const char* value)
         s->fullscreen = parse_bool(value);
     } else if (strcmp(name, "vsync") == 0) {
         s->vsync = parse_bool(value);
+    } else if (strcmp(name, "max-lateness") == 0 || strcmp(name, "max_lateness") == 0) {
+        s->max_lateness = (int64_t)atoll(value);
     } else if (strcmp(name, "input-count") == 0 || strcmp(name, "inputs") == 0) {
         uint32_t n = (uint32_t)strtoul(value, NULL, 10);
         while (ret == ZST_OK && s->nb_inputs < n) {
@@ -979,6 +1004,8 @@ glcomp_get_property(zst_element_t* el, const char* name, char* out, size_t max)
         snprintf(out, max, "%s", s->fullscreen ? "true" : "false");
     } else if (strcmp(name, "vsync") == 0) {
         snprintf(out, max, "%s", s->vsync ? "true" : "false");
+    } else if (strcmp(name, "max-lateness") == 0) {
+        snprintf(out, max, "%lld", (long long)s->max_lateness);
     } else if (strcmp(name, "input-count") == 0 || strcmp(name, "inputs") == 0) {
         snprintf(out, max, "%u", s->nb_inputs);
     } else if (strcmp(name, "composite-count") == 0 || strcmp(name, "frame-count") == 0) {
@@ -1012,6 +1039,7 @@ zst_gl_comp_sink_create(void)
     priv->canvas_height = 480;
     priv->bg[0] = 0.0f; priv->bg[1] = 0.0f; priv->bg[2] = 0.0f; priv->bg[3] = 1.0f;
     priv->vsync = 1;
+    priv->max_lateness = 20000000; /* 20ms */
     pthread_mutex_init(&priv->lock, NULL);
 
     zst_element_t* el = zst_element_create(&g_glcompsink_ops, priv);
@@ -1040,6 +1068,11 @@ zst_gl_comp_sink_create_with_config(const zst_gl_comp_sink_config_t* config)
     zst_element_set_property_bool(el, "fullscreen", config->fullscreen ? true : false);
     zst_element_set_property_bool(el, "vsync", config->vsync ? true : false);
     if (config->input_count > 0) zst_element_set_property_uint(el, "input-count", config->input_count);
+    if (config->struct_size >= offsetof(zst_gl_comp_sink_config_t, max_lateness) + sizeof(int64_t)) {
+        if (config->max_lateness > 0) {
+            zst_element_set_property_int(el, "max-lateness", config->max_lateness);
+        }
+    }
     return el;
 }
 
@@ -1064,6 +1097,7 @@ static const zst_property_spec_t g_glcompsink_properties[] = {
     { "background-color",ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "#000000ff", "Canvas background color (#RRGGBB[AA] or r,g,b[,a])" },
     { "fullscreen",      ZST_PROPERTY_BOOL,   ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Fullscreen mode" },
     { "vsync",           ZST_PROPERTY_BOOL,   ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "true", "Enable VSync" },
+    { "max-lateness",    ZST_PROPERTY_INT,    ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "20000000", "Maximum frame lateness in nanoseconds before dropping" },
     { "input-count",     ZST_PROPERTY_UINT,   ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1", "Number of sink_%u input pads" }
 };
 

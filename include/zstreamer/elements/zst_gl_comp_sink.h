@@ -37,6 +37,7 @@ typedef struct {
     int fullscreen;
     int vsync;
     uint32_t input_count;
+    int64_t max_lateness;
 } zst_gl_comp_sink_config_t;
 
 zst_element_t* zst_gl_comp_sink_create(void);
