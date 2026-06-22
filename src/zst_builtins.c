@@ -109,8 +109,11 @@ zst_element_t* zst_mpegts_demuxer_create(void);
 zst_element_t* zst_mp4_demuxer_create(void);
 #endif
 zst_element_t* zst_nv_video_scaler_create(void);
-#ifdef HAS_GL
+#ifdef HAS_GLSINK
 zst_element_t* zst_gl_sink_create(void);
+#endif
+#ifdef HAS_GLCOMPSINK
+zst_element_t* zst_gl_comp_sink_create(void);
 #endif
 
 /*──────────────────────────────────────────────────────────────────────────
@@ -122,6 +125,7 @@ static const zst_pad_template_t g_pad_filter[]       = {
     { "sink", ZST_PAD_SINK, "ANY" }, { "src", ZST_PAD_SRC, "ANY" }
 };
 static const zst_pad_template_t g_pad_video_src[]    = { { "src", ZST_PAD_SRC, "video/x-raw" } };
+static const zst_pad_template_t g_pad_video_sink[]   = { { "sink_%u", ZST_PAD_SINK, "video/x-raw" } };
 static const zst_pad_template_t g_pad_audio_src[]    = { { "src", ZST_PAD_SRC, "audio/x-raw" } };
 static const zst_pad_template_t g_pad_srt_parser[]   = { { "src", ZST_PAD_SRC, "text/x-raw" } };
 
@@ -608,8 +612,11 @@ create_builtin_element(const char* name)
     if (strcmp(name, "mp4demux") == 0)     return zst_mp4_demuxer_create();
 #endif
     if (strcmp(name, "nvvideoscaler") == 0) return zst_nv_video_scaler_create();
-#ifdef HAS_GL
+#ifdef HAS_GLSINK
     if (strcmp(name, "glsink") == 0)       return zst_gl_sink_create();
+#endif
+#ifdef HAS_GLCOMPSINK
+    if (strcmp(name, "glcompsink") == 0)   return zst_gl_comp_sink_create();
 #endif
     return NULL;
 }
@@ -696,8 +703,11 @@ static const zst_element_desc_t g_builtin_descs[] = {
     DESC("vaapi_video_decoder", "VA-API Video Decoder", "Codec/Decoder", "Alias for vaapidec", g_builtin_vaapidec_props, sizeof(g_builtin_vaapidec_props) / sizeof(g_builtin_vaapidec_props[0]), g_pad_vaapidec),
 #endif
     DESC("nvvideoscaler", "NVIDIA V4L2 Video Scaler", "Filter/Video", "Hardware video scaler and format converter using NV V4L2 extensions",                                    NULL,                           0, g_pad_video_filter),
-#ifdef HAS_GL
-    DESC("glsink", "OpenGL Sink", "Sink/Video", "Displays video frames in an OpenGL window with GPU YUV\u2192RGB conversion",                                              NULL,                           0, g_pad_sink)
+#ifdef HAS_GLSINK
+    DESC("glsink", "OpenGL Sink", "Sink/Video", "Displays video frames in an OpenGL window with GPU YUV\u2192RGB conversion",                                              NULL,                           0, g_pad_sink),
+#endif
+#ifdef HAS_GLCOMPSINK
+    DESC("glcompsink", "OpenGL Compositor Sink", "Sink/Video", "Composites multiple raw video streams into one OpenGL window",                                           NULL,                           0, g_pad_video_sink)
 #endif
 };
 

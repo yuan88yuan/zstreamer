@@ -598,28 +598,38 @@ Display sink that renders raw video frames using OpenGL. The current implementat
 
 ---
 
-### 4al — OpenGL Compositor Sink (glcompsink)  (📝 Planned)
+### 4al — OpenGL Compositor Sink (glcompsink)  (✅ Initial implementation)
 
 Video compositor display sink that composites multiple raw video streams into one configurable canvas and renders the result with OpenGL. Unlike a transform compositor, `glcompsink` is a terminal sink: it owns the output window/canvas and consumes all input streams.
 
-- [ ] `glcompsink` element with dynamic request sink pads (`sink_%u`) accepting `video/x-raw` from multiple sources
-- [ ] **Canvas model**: configurable `canvas-width`, `canvas-height`, `background-color`, and optional `window-title`; render all inputs into the shared canvas
-- [ ] **Per-pad layout**: configure `x`, `y`, `width`, `height`, `z-order`, `alpha`, `visible`, `scaling` (`fit`, `stretch`, `crop`), and optional border/background per input pad
-- [ ] **Composition backend**: reuse/refactor `glsink` OpenGL context/window lifecycle and shader upload paths; draw each input as a textured quad into the canvas in z-order
-- [ ] **Format support**: accept common raw video formats supported by `glsink` first (`YUV420P`, `NV12`, `RGB`), with safe rejection or conversion for unsupported packed formats
+- [x] `glcompsink` element with dynamic request sink pads (`sink_%u`) accepting `video/x-raw` from multiple sources
+- [x] **Canvas model**: configurable `canvas-width`, `canvas-height`, `background-color`, and optional `window-title`; render all inputs into the shared canvas
+- [x] **Per-pad layout**: configure `x`, `y`, `width`, `height`, `z-order`, `alpha`, `visible`, and `scaling` (`fit`, `stretch`, `crop`) per input pad
+- [x] **Composition backend**: GLX/X11 lifecycle and shader upload paths; draw each input as a textured quad into the canvas in z-order
+- [x] **Format support**: accepts common raw video formats supported by `glsink` first (`YUV420P`, `NV12`, `RGB`), with safe rejection for unsupported layouts
 - [ ] **Synchronization**: align frames by PTS against the pipeline clock; retain the latest frame per pad and compose at a configured output/display rate
 - [ ] **Frame pacing / QoS**: configurable `max-lateness`; drop or reuse late/missing per-pad frames without blocking unrelated inputs
-- [ ] **Dynamic pads**: support adding/removing input pads during READY/PLAYING where practical; release per-pad textures and frame references safely
-- [ ] **Thread safety**: marshal GL operations to one rendering thread or otherwise enforce context ownership for the multi-thread scheduler
-- [ ] **Window/display controls**: fullscreen toggle, vsync, window close/ESC handling, resize handling, and graceful null-sink fallback when `$DISPLAY` or GL initialization is unavailable
-- [ ] **Caps negotiation**: sink pad templates advertise `video/x-raw`; negotiate per-pad dimensions/formats and validate layout against canvas bounds
-- [ ] **Properties API**: expose canvas-level typed properties and pad-level layout properties; document example layouts such as 2×2 grid, picture-in-picture, and side-by-side preview
-- [ ] **Tests**: factory/property coverage, dynamic pad creation/removal, layout validation, null-mode multi-input processing, EOS handling per pad and global EOS behavior
-- [ ] **GL validation tests**: Xvfb/Mesa smoke test composing two or more synthetic sources; add pixel readback assertions for z-order, alpha, background, and scaling modes
-- [ ] **CMake integration**: guard with `ENABLE_GLCOMPSINK` (default ON when OpenGL/X11 dependencies are available) and share GL dependency detection with `glsink`
-- [ ] **Plugin packaging**: build into `zstreamer-elements` and as dynamic plugin `libzst_glcompsink.so`
+- [x] **Dynamic pads**: supports adding input pads by `input-count`, `request-pad`, or `zst_gl_comp_sink_request_pad()`; releases per-pad textures/frame references on close/destroy
+- [x] **Thread safety**: serializes compositor state and GL context access with an element mutex for multi-pad push paths
+- [x] **Window/display controls**: vsync, window close/ESC handling, resize handling, and graceful null-sink fallback when `$DISPLAY` or GL initialization is unavailable
+- [x] **Caps metadata**: sink pad template advertises `video/x-raw` for built-in and dynamic plugin introspection
+- [x] **Properties API**: exposes canvas-level typed properties and pad-level layout properties via `sink_N::property` names; includes a public convenience API header
+- [x] **Tests**: factory/property coverage, dynamic pad creation, request-pad API, null-mode multi-input processing, EOS handling per pad and global EOS behavior
+- [x] **GL validation tests**: Xvfb/Mesa smoke test composing two synthetic inputs; pixel readback assertions still pending
+- [x] **CMake integration**: guarded with `ENABLE_GLCOMPSINK` (default ON when OpenGL/X11 dependencies are available) and shares GL dependency detection with `glsink`
+- [x] **Plugin packaging**: built into `zstreamer-elements` and as dynamic plugin `libzst_glcompsink.so`
+- [x] **Docker test environment**: `Dockerfile.gl` enables `ENABLE_GLCOMPSINK` and runs `test_gl_comp_sink` alongside `test_gl_sink` and `test_core`
 
-**Dependencies:** `libx11-dev`, `libxext-dev`, `libgl1-mesa-dev` / `libgl-dev`, `libglx-dev`, `libglu1-mesa-dev`; test environment should reuse the `Dockerfile.gl` Xvfb/Mesa setup
+**Known implementation follow-ups:**
+- Add clock-driven composition at a configured display rate and align/reuse frames by PTS.
+- Add `max-lateness`/QoS dropping and expose the property.
+- Add input pad removal/release API for READY/PLAYING, not just add/close cleanup.
+- Apply initial fullscreen mode and F11 fullscreen toggle parity with `glsink`.
+- Add stricter layout validation against canvas bounds and richer caps negotiation per pad.
+- Add pixel readback assertions for z-order, alpha, background, and scaling correctness.
+- Implement optional per-input border/background controls.
+
+**Dependencies:** `libx11-dev`, `libxext-dev`, `libgl1-mesa-dev` / `libgl-dev`, `libglx-dev`, `libglu1-mesa-dev`; test environment reuses the `Dockerfile.gl` Xvfb/Mesa setup
 
 ---
 

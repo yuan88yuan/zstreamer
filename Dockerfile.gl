@@ -45,7 +45,8 @@ RUN mkdir -p build && cd build && \
     cmake .. -DCMAKE_BUILD_TYPE=Debug \
              -DBUILD_TESTS=ON \
              -DENABLE_VULKAN=OFF \
-             -DENABLE_GLSINK=ON && \
+             -DENABLE_GLSINK=ON \
+             -DENABLE_GLCOMPSINK=ON && \
     make -j$(nproc)
 
 # ── Interactive development ────────────────────────────────────────────
@@ -63,12 +64,13 @@ ENV DISPLAY=:99
 ENV LIBGL_ALWAYS_SOFTWARE=true
 ENV GALLIUM_DRIVER=llvmpipe
 
-# Start Xvfb, run the GL tests and core tests
+# Start Xvfb, run the GL/compositor tests and core tests
 CMD Xvfb :99 -screen 0 1024x768x24 -ac & \
     sleep 0.5 && \
     export DISPLAY=:99 && \
     export LIBGL_ALWAYS_SOFTWARE=true && \
     export GALLIUM_DRIVER=llvmpipe && \
     ./test_gl_sink && \
+    ./test_gl_comp_sink && \
     ./test_core && \
     echo "--- All functional tests passed ---"
