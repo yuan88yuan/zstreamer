@@ -65,6 +65,9 @@ zst_element_t* zst_h265_decoder_create(void);
 zst_element_t* zst_nv_video_encoder_create(void);
 zst_element_t* zst_nv_video_decoder_create(void);
 #endif
+#ifdef HAS_ONEAPI_ENCODER
+zst_element_t* zst_oneapi_video_encoder_create(void);
+#endif
 #ifdef HAS_FFMPEG
 zst_element_t* zst_aac_encoder_create(void);
 zst_element_t* zst_aac_decoder_create(void);
@@ -121,6 +124,13 @@ static const zst_pad_template_t g_pad_x264enc[] = {
 #ifdef HAS_X265
 static const zst_pad_template_t g_pad_x265enc[] = {
     { "sink", ZST_PAD_SINK, "video/x-raw" }, { "src", ZST_PAD_SRC, "video/x-h265" }
+};
+#endif
+#ifdef HAS_ONEAPI_ENCODER
+static const zst_pad_template_t g_pad_oneapienc[] = {
+    { "sink", ZST_PAD_SINK, "video/x-raw" },
+    { "src", ZST_PAD_SRC, "video/x-h264" },
+    { "src", ZST_PAD_SRC, "video/x-h265" }
 };
 #endif
 #ifdef HAS_FFMPEG
@@ -293,6 +303,18 @@ static const zst_property_spec_t g_builtin_srtsink_props[] = {
     { "pbkeylen", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "16", "SRT AES key length (16, 24, 32)" },
     { "streamid", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "SRT stream ID" },
     { "payload-size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1316", "SRT packet payload size" }
+};
+#endif
+
+#ifdef HAS_ONEAPI_ENCODER
+static const zst_property_spec_t g_builtin_oneapienc_props[] = {
+    { "codec", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "h264", "h264 or h265" },
+    { "preset", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "balanced", "speed, balanced, quality" },
+    { "bitrate", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "4000000", "Target bitrate in bits/sec" },
+    { "gop-size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "30", "GOP/keyframe interval" },
+    { "profile", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "main", "Codec profile" },
+    { "level", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Codec level (reserved for backend support)" },
+    { "fps", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "30/1", "Frame rate as integer or num/den" }
 };
 #endif
 
@@ -495,6 +517,9 @@ create_builtin_element(const char* name)
     if (strcmp(name, "nvenc") == 0)        return zst_nv_video_encoder_create();
     if (strcmp(name, "nvdec") == 0)        return zst_nv_video_decoder_create();
 #endif
+#ifdef HAS_ONEAPI_ENCODER
+    if (strcmp(name, "oneapienc") == 0 || strcmp(name, "oneapi_video_encoder") == 0) return zst_oneapi_video_encoder_create();
+#endif
 #ifdef HAS_FFMPEG
     if (strcmp(name, "aacenc") == 0)       return zst_aac_encoder_create();
     if (strcmp(name, "aacdec") == 0)       return zst_aac_decoder_create();
@@ -601,6 +626,10 @@ static const zst_element_desc_t g_builtin_descs[] = {
 #ifdef HAS_JETSON
     DESC("nvenc",    "NVIDIA V4L2 Video Encoder", "Codec/Encoder","Encodes raw video to H.264/H.265 using NV V4L2 extensions",                                                              NULL,                           0, g_pad_x264enc),
     DESC("nvdec",    "NVIDIA V4L2 Video Decoder", "Codec/Decoder","Decodes H.264/H.265 video frames using NV V4L2 extensions",                                                              NULL,                           0, g_pad_h264dec),
+#endif
+#ifdef HAS_ONEAPI_ENCODER
+    DESC("oneapienc", "Intel oneAPI Video Encoder", "Codec/Encoder", "Encodes raw video to H.264/H.265 using Intel oneVPL", g_builtin_oneapienc_props, sizeof(g_builtin_oneapienc_props) / sizeof(g_builtin_oneapienc_props[0]), g_pad_oneapienc),
+    DESC("oneapi_video_encoder", "Intel oneAPI Video Encoder", "Codec/Encoder", "Alias for oneapienc", g_builtin_oneapienc_props, sizeof(g_builtin_oneapienc_props) / sizeof(g_builtin_oneapienc_props[0]), g_pad_oneapienc),
 #endif
     DESC("nvvideoscaler", "NVIDIA V4L2 Video Scaler", "Filter/Video", "Hardware video scaler and format converter using NV V4L2 extensions",                                    NULL,                           0, g_pad_video_filter)
 };

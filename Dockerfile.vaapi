@@ -1,0 +1,63 @@
+# zstreamer VA-API development and test image
+#
+# Build:
+#   docker build -f Dockerfile.vaapi -t zstreamer-vaapi .
+# Run tests:
+#   docker run --rm zstreamer-vaapi
+# Run with host GPU access for VA-API capability checks / future hardware smoke tests:
+#   docker run --rm --device /dev/dri zstreamer-vaapi \
+#       bash -lc "vainfo --display drm --device /dev/dri/renderD128 || true; ctest --output-on-failure"
+
+FROM ubuntu:24.04 AS base
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Core build dependencies, zstreamer multimedia dependencies, and VA-API
+# development/runtime packages.  mesa-va-drivers provides the radeonsi VA
+# driver used by AMD GPUs; intel-media-va-driver is included so the same image
+# can also probe Intel VA-API devices when present.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    pkg-config \
+    ca-certificates \
+    libv4l-dev \
+    libx264-dev \
+    libx265-dev \
+    libavformat-dev \
+    libavcodec-dev \
+    libavutil-dev \
+    libswscale-dev \
+    libswresample-dev \
+    libasound2-dev \
+    libfreetype-dev \
+    libsrt-gnutls-dev \
+    libgnutls28-dev \
+    nettle-dev \
+    libvulkan-dev \
+    libdrm-dev \
+    libva-dev \
+    libva-drm2 \
+    mesa-va-drivers \
+    mesa-vdpau-drivers \
+    intel-media-va-driver \
+    vainfo \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+COPY . .
+
+RUN mkdir -p build-vaapi && cd build-vaapi && \
+    cmake .. \
+        -DCMAKE_BUILD_TYPE=Debug \
+        -DBUILD_TESTS=ON && \
+    make -j$(nproc)
+
+FROM base AS dev
+WORKDIR /workspace
+CMD ["/bin/bash"]
+
+FROM base AS ci
+WORKDIR /workspace/build-vaapi
+CMD ["bash", "-lc", "ZSTREAMER_TEST_PLUGIN_PATH=/workspace/build-vaapi/plugins ctest --output-on-failure"]

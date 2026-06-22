@@ -309,6 +309,11 @@ if(HAS_SRT)
     list(APPEND ELEMENT_LIBRARIES ${SRT_LIBRARIES})
 endif()
 
+if(ENABLE_ONEAPI_ENCODER)
+    list(APPEND ELEMENT_INCLUDE_DIRS ${ONEVPL_INCLUDE_DIRS})
+    list(APPEND ELEMENT_LIBRARIES ${ONEVPL_LIBRARIES})
+endif()
+
 # ── Include directories ──────────────────────────────────────────────────
 set(ZSTREAMER_INCLUDE_DIR
     ${CMAKE_SOURCE_DIR}/include
@@ -467,6 +472,10 @@ endif()
 
 if(ENABLE_JETSON)
     list(APPEND ELEMENT_LIBRARY_SOURCES src/nv_video_encoder.c src/nv_video_decoder.c)
+endif()
+
+if(ENABLE_ONEAPI_ENCODER)
+    list(APPEND ELEMENT_LIBRARY_SOURCES src/oneapi_video_encoder.c)
 endif()
 
 if(BUILD_SHARED)
@@ -697,7 +706,17 @@ else()
     set(JETSON_PLUGINS "")
 endif()
 
-set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_rtsp_server zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_netsrc zst_netsink ${JETSON_PLUGINS})
+if(ENABLE_ONEAPI_ENCODER)
+    add_library(zst_oneapienc SHARED src/oneapi_video_encoder.c)
+    target_compile_definitions(zst_oneapienc PRIVATE BUILDING_PLUGIN)
+    target_include_directories(zst_oneapienc PRIVATE ${ONEVPL_INCLUDE_DIRS})
+    target_link_libraries(zst_oneapienc PRIVATE zstreamer ${ONEVPL_LIBRARIES})
+    set(ONEAPI_ENCODER_PLUGINS zst_oneapienc)
+else()
+    set(ONEAPI_ENCODER_PLUGINS "")
+endif()
+
+set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_rtsp_server zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_netsrc zst_netsink ${JETSON_PLUGINS} ${ONEAPI_ENCODER_PLUGINS})
 
 if(HAS_V4L2)
     list(APPEND PLUGIN_TARGETS zst_v4l2source zst_v4l2sink)
@@ -850,6 +869,19 @@ if(BUILD_TESTS)
             PRIVATE zstreamer-elements
         )
         add_test(NAME test_http_source COMMAND test_http_source)
+    endif()
+
+    if(ENABLE_ONEAPI_ENCODER)
+        add_executable(test_oneapi_encoder
+            tests/test_oneapi_encoder.c
+        )
+        target_include_directories(test_oneapi_encoder
+            PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+        )
+        target_link_libraries(test_oneapi_encoder
+            PRIVATE zstreamer-elements
+        )
+        add_test(NAME test_oneapi_encoder COMMAND test_oneapi_encoder)
     endif()
 
     if(HAS_V4L2)

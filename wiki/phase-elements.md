@@ -480,18 +480,38 @@ Reference: https://github.com/Xilinx/vcu-ctrl-sw.git
 
 Hardware-accelerated video encoder for Intel GPU pipelines using oneAPI/SYCL memory integration and Intel media acceleration APIs.
 
-- [ ] Add `oneapi_video_encoder` / `oneapienc` element with 1 sink pad (`video/x-raw`) and 1 src pad (`video/x-h264` or `video/x-h265`)
-- [ ] Select an Intel backend: oneVPL/Media SDK for encode control with oneAPI USM interop where available
-- [ ] Support H.264 (AVC) and H.265/HEVC hardware encoding
-- [ ] Implement bitrate, GOP/keyframe interval, profile, level, and preset properties
+- [x] Add `oneapi_video_encoder` / `oneapienc` element with 1 sink pad (`video/x-raw`) and 1 src pad (`video/x-h264` or `video/x-h265`)
+- [x] Select an Intel backend: oneVPL/Media SDK for encode control with oneAPI USM interop where available
+- [x] Support H.264 (AVC) and H.265/HEVC hardware encoding
+- [x] Implement bitrate, GOP/keyframe interval, profile, level, and preset properties
 - [ ] Accept `ZST_MEMORY_ONEAPI` buffers from `zst_allocator_oneapi_create()` without CPU copies when the backend supports shared device memory
-- [ ] Provide CPU/DMABUF upload fallback paths for raw frames from non-oneAPI sources
-- [ ] Preserve input PTS/duration and drain delayed encoder frames on EOS
-- [ ] Add runtime capability probing so the element is skipped gracefully when Intel GPU drivers or oneVPL are unavailable
-- [ ] Tests: property/factory coverage, unsupported-runtime skip path, and encode smoke test when hardware is available
+- [ ] Provide CPU/DMABUF upload fallback paths for raw frames from non-oneAPI sources (CPU/system-memory upload implemented; DMABUF path remains)
+- [x] Preserve input PTS/duration and drain delayed encoder frames on EOS
+- [x] Add runtime capability probing so the element is skipped gracefully when Intel GPU drivers or oneVPL are unavailable
+- [x] Tests: property/factory coverage, unsupported-runtime skip path, and encode smoke test when hardware is available
 - [x] Build and test only in a dedicated Intel oneAPI Docker image, separate from the default `zstreamer` image
 - [x] Add `Dockerfile.oneapi` based on Intel's oneAPI development image with oneVPL/media dependencies installed
 - [x] Add CMake option `ENABLE_ONEAPI_ENCODER` so oneAPI-specific code is opt-in and does not affect non-Intel builds
 - [x] Add oneAPI CI/test command: `docker build -f Dockerfile.oneapi -t zstreamer-oneapi . && docker run --rm zstreamer-oneapi`
 
 **Dependencies:** Intel oneAPI runtime, oneVPL or Intel Media SDK, compatible Intel GPU driver
+
+### 4ah — VA-API Video Encoder (📝 Planned)
+
+Hardware-accelerated video encoder for Linux GPUs exposing VA-API encode entrypoints, with initial focus on AMD Radeon GPUs via the Mesa `radeonsi` VA driver and optional Intel VA-API support where available.
+
+- [ ] Add `vaapi_video_encoder` / `vaapienc` element with 1 sink pad (`video/x-raw`) and 1 src pad (`video/x-h264` or `video/x-h265`)
+- [ ] Use `libva` encode API (`VAEntrypointEncSlice`) with DRM render node selection (`/dev/dri/renderD*`)
+- [ ] Runtime capability probing: enumerate VA profiles and skip gracefully when H.264/H.265 encode is unavailable
+- [ ] Support H.264 (AVC) and H.265/HEVC where advertised by the VA driver
+- [ ] Implement `device`, `codec`, `bitrate`, `gop-size`, `profile`, `level`, `preset`, and `rate-control` properties
+- [ ] Accept DMABUF-backed raw frames for zero-copy import when upstream allocators/exporters support it
+- [ ] Provide CPU/system-memory upload fallback for raw frames from non-VAAPI sources
+- [ ] Preserve input PTS/duration and drain delayed encoded frames on EOS
+- [ ] Output Annex-B H.264/H.265 byte-stream packets compatible with `mp4mux`, `tsmux`, `rtsp_server`, and `rtmpsink` expectations
+- [ ] Tests: property/factory coverage, unsupported-runtime skip path, and encode smoke test when VA-API hardware encode is available
+- [x] Add dedicated VA-API Docker image, separate from the default `zstreamer` image
+- [x] Build/test command: `docker build -f Dockerfile.vaapi -t zstreamer-vaapi . && docker run --rm zstreamer-vaapi`
+- [ ] Add CMake option `ENABLE_VAAPI_ENCODER` once the element implementation lands
+
+**Dependencies:** `libva-dev`, `libva-drm2`, `mesa-va-drivers` for AMD/radeonsi, a compatible DRM render node exposed via `/dev/dri`, and optionally `intel-media-va-driver` for Intel VA-API devices
