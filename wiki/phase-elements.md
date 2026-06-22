@@ -615,11 +615,12 @@ Video compositor display sink that composites multiple raw video streams into on
 - [x] **Per-pad layout**: configure `x`, `y`, `width`, `height`, `z-order`, `alpha`, `visible`, and `scaling` (`fit`, `stretch`, `crop`) per input pad
 - [x] **Composition backend**: GLX/X11 lifecycle and shader upload paths; draw each input as a textured quad into the canvas in z-order
 - [x] **Format support**: accepts common raw video formats supported by `glsink` first (`YUV420P`, `NV12`, `RGB`), with safe rejection for unsupported layouts
-- [ ] **Synchronization**: align frames by PTS against the pipeline clock; retain the latest frame per pad and compose at a configured output/display rate
+- [x] **Synchronization**: align frames by PTS against the pipeline clock; retain the latest frame per pad and compose at a configured output/display rate via worker thread
 - [x] **Frame pacing / QoS**: configurable `max-lateness`; drop or reuse late/missing per-pad frames without blocking unrelated inputs
 - [x] **Dynamic pads**: supports adding input pads by `input-count`, `request-pad`, or `zst_gl_comp_sink_request_pad()`; releases per-pad textures/frame references on close/destroy
-- [x] **Thread safety**: serializes compositor state and GL context access with an element mutex for multi-pad push paths
-- [x] **Window/display controls**: vsync, window close/ESC handling, resize handling, and graceful null-sink fallback when `$DISPLAY` or GL initialization is unavailable
+- [x] **Input pad removal**: added `zst_gl_comp_sink_release_pad()` and core `zst_element_remove_pad()` for dynamic graph changes
+- [x] **Thread safety**: serializes compositor state and GL context access with an element mutex for multi-pad push paths; dedicated rendering worker thread
+- [x] **Window/display controls**: vsync, window close/ESC handling, F11 fullscreen toggle, resize handling, and graceful null-sink fallback when `$DISPLAY` or GL initialization is unavailable
 - [x] **Caps metadata**: sink pad template advertises `video/x-raw` for built-in and dynamic plugin introspection
 - [x] **Properties API**: exposes canvas-level typed properties and pad-level layout properties via `sink_N::property` names; includes a public convenience API header
 - [x] **Tests**: factory/property coverage, dynamic pad creation, request-pad API, null-mode multi-input processing, EOS handling per pad and global EOS behavior
@@ -629,12 +630,12 @@ Video compositor display sink that composites multiple raw video streams into on
 - [x] **Docker test environment**: `Dockerfile.gl` enables `ENABLE_GLCOMPSINK` and runs `test_gl_comp_sink` alongside `test_gl_sink` and `test_core`
 
 **Known implementation follow-ups:**
-- Add clock-driven composition at a configured display rate and align/reuse frames by PTS.
-- Add input pad removal/release API for READY/PLAYING, not just add/close cleanup.
-- Apply initial fullscreen mode and F11 fullscreen toggle parity with `glsink`.
-- Add stricter layout validation against canvas bounds and richer caps negotiation per pad.
-- Add pixel readback assertions for z-order, alpha, background, and scaling correctness.
-- Implement optional per-input border/background controls.
+- [x] Add clock-driven composition at a configured display rate and align/reuse frames by PTS.
+- [x] Add input pad removal/release API for READY/PLAYING, not just add/close cleanup.
+- [x] Apply initial fullscreen mode and F11 fullscreen toggle parity with `glsink`.
+- [x] Add stricter layout validation against canvas bounds and richer caps negotiation per pad.
+- [ ] Add pixel readback assertions for z-order, alpha, background, and scaling correctness.
+- [x] Implement optional per-input border/background controls.
 
 **Dependencies:** `libx11-dev`, `libxext-dev`, `libgl1-mesa-dev` / `libgl-dev`, `libglx-dev`, `libglu1-mesa-dev`; test environment reuses the `Dockerfile.gl` Xvfb/Mesa setup
 

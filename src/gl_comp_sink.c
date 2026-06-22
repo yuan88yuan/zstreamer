@@ -72,6 +72,7 @@ static const char* g_comp_frag_nv12_src =
     "    vec2 tc = gl_TexCoord[0].st;\n"
     "    float y = texture2D(y_tex, tc).r;\n"
     "    vec2 uv = texture2D(uv_tex, tc).ra;\n"
+    "    /* For GL_LUMINANCE_ALPHA, .r is luminance (Y/U), .a is alpha (V) */\n"
     "    vec3 rgb = color_matrix * vec3(y, uv.r - 0.5, uv.g - 0.5);\n"
     "    gl_FragColor = vec4(clamp(rgb, 0.0, 1.0), alpha);\n"
     "}\n";
@@ -107,7 +108,10 @@ typedef struct {
     double alpha;
     int visible;
     char scaling[16];
+    uint32_t border_width;
+    float border_color[4];
 
+    zst_queue_t* queue;
     zst_buffer_t* latest;
     uint64_t frame_count;
     int eos;
@@ -133,6 +137,7 @@ struct gl_comp_sink {
     int window_open;
 
     int64_t max_lateness;
+    double display_rate;
 
     Display* x_display;
     Window x_window;
@@ -160,6 +165,9 @@ struct gl_comp_sink {
     uint64_t composite_count;
 
     pthread_mutex_t lock;
+    pthread_cond_t cond;
+    pthread_t worker_thread;
+    bool running;
 };
 
 /* ─── GL helpers ─────────────────────────────────────────────────────── */
@@ -237,7 +245,12 @@ comp_get_uniforms(gl_comp_sink_t* s, GLuint prog)
 static void
 comp_set_common_uniforms(gl_comp_sink_t* s, float alpha)
 {
-    /* Column-major BT.601 full-range YUV→RGB matrix for GLSL mat3. */
+    /* Column-major BT.601 full-range YUV→RGB matrix for GLSL mat3.
+     * GLSL mat3 is column-major: mat[col][row].
+     * [ 1.0   0.0      1.402 ] [ Y ]
+     * [ 1.0  -0.34414 -0.7141] [ U ]
+     * [ 1.0   1.772    0.0    ] [ V ]
+     */
     const float mat[9] = {
         1.0f, 1.0f, 1.0f,
         0.0f, -0.344f, 1.772f,
@@ -357,6 +370,24 @@ comp_draw_quad(gl_comp_sink_t* s, const gl_comp_input_t* in,
     float l, r, b, t;
     comp_pixel_rect_to_ndc(s->canvas_width, s->canvas_height, x, y, w, h, &l, &r, &b, &t);
 
+    if (in->border_width > 0) {
+        glUseProgram(0);
+        glColor4fv(in->border_color);
+        float bl, br, bb, bt;
+        float bw = (float)in->border_width;
+        comp_pixel_rect_to_ndc(s->canvas_width, s->canvas_height, x - bw, y - bw, w + 2*bw, h + 2*bw, &bl, &br, &bb, &bt);
+        glBegin(GL_QUADS);
+        glVertex2f(bl, bb); glVertex2f(br, bb); glVertex2f(br, bt); glVertex2f(bl, bt);
+        glEnd();
+        glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+    }
+
+    /* Restore program if we were using one (caller should re-glUseProgram) */
+    glcomp_fmt_t fmt = comp_detect_format(frame);
+    if (fmt == GLCOMP_FMT_YUV420P && s->program_yuv420p) glUseProgram(s->program_yuv420p);
+    else if (fmt == GLCOMP_FMT_NV12 && s->program_nv12) glUseProgram(s->program_nv12);
+    else if (fmt == GLCOMP_FMT_RGB && s->program_rgb) glUseProgram(s->program_rgb);
+
     glBegin(GL_QUADS);
     glTexCoord2f(tx0, ty0); glVertex2f(l, b);
     glTexCoord2f(tx1, ty0); glVertex2f(r, b);
@@ -368,7 +399,7 @@ comp_draw_quad(gl_comp_sink_t* s, const gl_comp_input_t* in,
 static void
 comp_upload_and_draw(gl_comp_sink_t* s, gl_comp_input_t* in)
 {
-    if (!in->latest || !in->visible || in->alpha <= 0.0) return;
+    if (!in->latest || !in->visible) return;
     zst_video_frame_t* frame = (zst_video_frame_t*)in->latest->payload;
     if (!frame || frame->width == 0 || frame->height == 0) return;
     if (comp_create_input_textures(in, frame->width, frame->height) != 0) return;
@@ -463,6 +494,23 @@ comp_input_cmp(const void* a, const void* b)
     return strcmp(ia->name, ib->name);
 }
 
+static void
+comp_apply_fullscreen(gl_comp_sink_t* s, int fullscreen)
+{
+    if (!s->x_display || !s->x_window) return;
+    XEvent xev;
+    memset(&xev, 0, sizeof(xev));
+    xev.type = ClientMessage;
+    xev.xclient.window = s->x_window;
+    xev.xclient.message_type = XInternAtom(s->x_display, "_NET_WM_STATE", False);
+    xev.xclient.format = 32;
+    xev.xclient.data.l[0] = fullscreen ? 1 : 0; /* 1=_NET_WM_STATE_ADD, 0=_NET_WM_STATE_REMOVE */
+    xev.xclient.data.l[1] = XInternAtom(s->x_display, "_NET_WM_STATE_FULLSCREEN", False);
+    xev.xclient.data.l[2] = 0;
+    XSendEvent(s->x_display, DefaultRootWindow(s->x_display), False,
+               SubstructureRedirectMask | SubstructureNotifyMask, &xev);
+}
+
 static int
 comp_check_events(gl_comp_sink_t* s)
 {
@@ -476,6 +524,10 @@ comp_check_events(gl_comp_sink_t* s)
         if (ev.type == KeyPress) {
             KeySym ks = XLookupKeysym(&ev.xkey, 0);
             if (ks == XK_Escape || ks == XK_q) return 1;
+            if (ks == XK_F11) {
+                s->fullscreen = !s->fullscreen;
+                comp_apply_fullscreen(s, s->fullscreen);
+            }
         }
         if (ev.type == ConfigureNotify) {
             s->canvas_width = (uint32_t)ev.xconfigure.width;
@@ -504,8 +556,27 @@ comp_render_locked(gl_comp_sink_t* s)
         if (sorted) {
             memcpy(sorted, s->inputs, s->nb_inputs * sizeof(*sorted));
             qsort(sorted, s->nb_inputs, sizeof(*sorted), comp_input_cmp);
+
+            zst_time_t now = 0;
+            zst_element_t* el_ptr = sorted[0]->pad->parent;
+            if (el_ptr && el_ptr->clock) now = zst_clock_get_time(el_ptr->clock);
+
             for (uint32_t i = 0; i < s->nb_inputs; i++) {
-                comp_upload_and_draw(s, sorted[i]);
+                gl_comp_input_t* in = sorted[i];
+
+        /* If input was released, it's already removed from the list but check for safety */
+        if (!in) continue;
+
+                zst_buffer_t* next = NULL;
+                while (zst_queue_pop(in->queue, &next, 0) == ZST_OK) {
+                    /* If we have a clock, we should ideally check if 'next' is too early.
+                     * But zst_queue doesn't support peeking.
+                     * For now, we just use it as 'latest'.
+                     */
+                    if (in->latest) zst_buffer_unref(in->latest);
+                    in->latest = next;
+                }
+                comp_upload_and_draw(s, in);
             }
             free(sorted);
         }
@@ -516,6 +587,50 @@ comp_render_locked(gl_comp_sink_t* s)
     s->composite_count++;
 
     return comp_check_events(s) ? ZST_EOF : ZST_OK;
+}
+
+static void*
+glcomp_worker_thread(void* arg)
+{
+    zst_element_t* el = arg;
+    gl_comp_sink_t* s = el->priv;
+
+    ZST_LOG_INFO("glcompsink", "starting compositor worker thread (rate=%.2f fps)", s->display_rate);
+
+    pthread_mutex_lock(&s->lock);
+    if (s->x_display && s->x_window && s->gl_context) {
+        glXMakeCurrent(s->x_display, s->x_window, s->gl_context);
+    }
+
+    struct timespec next_render;
+    clock_gettime(CLOCK_REALTIME, &next_render);
+
+    while (s->running) {
+        double interval = 1.0 / s->display_rate;
+        long long nsec = next_render.tv_nsec + (long long)(interval * 1000000000.0);
+        next_render.tv_sec += nsec / 1000000000LL;
+        next_render.tv_nsec = nsec % 1000000000LL;
+
+        /* Wait until it's time to render the next frame */
+        while (s->running) {
+            int res = pthread_cond_timedwait(&s->cond, &s->lock, &next_render);
+            if (res == ETIMEDOUT) break;
+            /* If signaled by new data, we still wait until the next_render time
+             * to maintain a stable display rate. */
+        }
+
+        if (!s->running) break;
+
+        if (comp_render_locked(s) == ZST_EOF) {
+            ZST_LOG_INFO("glcompsink", "worker thread detected window close");
+            /* Switch to null mode and stop trying to render to X11 */
+            s->null_mode = 1;
+        }
+    }
+    pthread_mutex_unlock(&s->lock);
+
+    ZST_LOG_INFO("glcompsink", "compositor worker thread exiting");
+    return NULL;
 }
 
 /* ─── Pad and property helpers ───────────────────────────────────────── */
@@ -556,6 +671,15 @@ comp_add_input_locked(zst_element_t* el, const char* requested_name)
     in->alpha = 1.0;
     in->visible = 1;
     snprintf(in->scaling, sizeof(in->scaling), "fit");
+    in->border_width = 0;
+    in->border_color[0] = 1.0f; in->border_color[1] = 1.0f; in->border_color[2] = 1.0f; in->border_color[3] = 1.0f;
+
+    zst_queue_config_t qcfg = {
+        .mode = ZST_QUEUE_SYNC,
+        .max_buffers = 10
+    };
+    in->queue = zst_queue_create(&qcfg);
+    if (!in->queue) { free(in); return NULL; }
 
     zst_pad_t* pad = zst_pad_create(in->name, ZST_PAD_SINK);
     if (!pad) { free(in); return NULL; }
@@ -574,11 +698,59 @@ comp_add_input_locked(zst_element_t* el, const char* requested_name)
 
     if (zst_element_add_pad(el, pad) != ZST_OK) {
         s->nb_inputs--;
+        zst_queue_destroy(in->queue);
         zst_pad_destroy(pad);
         free(in);
         return NULL;
     }
     return in;
+}
+
+static void
+comp_input_free(gl_comp_input_t* in)
+{
+    if (!in) return;
+    /* textures should be deleted in the worker thread context if possible,
+     * but for now they are leaked if we don't handle thread context here.
+     * Since pad removal is rare, we might need a better strategy.
+     * However, the worker thread is usually running. */
+    if (in->latest) zst_buffer_unref(in->latest);
+    if (in->queue) zst_queue_destroy(in->queue);
+    free(in);
+}
+
+zst_result_t
+zst_gl_comp_sink_release_pad(zst_element_t* el, zst_pad_t* pad)
+{
+    if (!el || !pad || !el->priv) return ZST_ERROR;
+    gl_comp_sink_t* s = el->priv;
+    gl_comp_input_t* in = pad->priv;
+
+    pthread_mutex_lock(&s->lock);
+
+    /* Find input in array */
+    int idx = -1;
+    for (uint32_t i = 0; i < s->nb_inputs; i++) {
+        if (s->inputs[i] == in) {
+            idx = (int)i;
+            break;
+        }
+    }
+
+    if (idx < 0) {
+        pthread_mutex_unlock(&s->lock);
+        return ZST_ERROR;
+    }
+
+    /* Remove from element and array */
+    zst_element_remove_pad(el, pad);
+    memmove(&s->inputs[idx], &s->inputs[idx + 1], (s->nb_inputs - idx - 1) * sizeof(*s->inputs));
+    s->nb_inputs--;
+
+    comp_input_free(in);
+
+    pthread_mutex_unlock(&s->lock);
+    return ZST_OK;
 }
 
 zst_pad_t*
@@ -644,10 +816,32 @@ static zst_result_t
 comp_set_pad_property(gl_comp_input_t* in, const char* prop, const char* value)
 {
     if (!in || !prop || !value) return ZST_ERROR;
-    if (strcmp(prop, "x") == 0) { in->x = atoi(value); return ZST_OK; }
-    if (strcmp(prop, "y") == 0) { in->y = atoi(value); return ZST_OK; }
-    if (strcmp(prop, "width") == 0) { in->width = (uint32_t)strtoul(value, NULL, 10); return ZST_OK; }
-    if (strcmp(prop, "height") == 0) { in->height = (uint32_t)strtoul(value, NULL, 10); return ZST_OK; }
+    if (strcmp(prop, "x") == 0) {
+        int val = atoi(value);
+        if (val < 0) val = 0;
+        if (val > (int)in->parent->canvas_width) val = (int)in->parent->canvas_width;
+        in->x = val;
+        return ZST_OK;
+    }
+    if (strcmp(prop, "y") == 0) {
+        int val = atoi(value);
+        if (val < 0) val = 0;
+        if (val > (int)in->parent->canvas_height) val = (int)in->parent->canvas_height;
+        in->y = val;
+        return ZST_OK;
+    }
+    if (strcmp(prop, "width") == 0) {
+        uint32_t val = (uint32_t)strtoul(value, NULL, 10);
+        if (val > in->parent->canvas_width) val = in->parent->canvas_width;
+        in->width = val;
+        return ZST_OK;
+    }
+    if (strcmp(prop, "height") == 0) {
+        uint32_t val = (uint32_t)strtoul(value, NULL, 10);
+        if (val > in->parent->canvas_height) val = in->parent->canvas_height;
+        in->height = val;
+        return ZST_OK;
+    }
     if (strcmp(prop, "z-order") == 0 || strcmp(prop, "z_order") == 0 || strcmp(prop, "z") == 0) {
         in->z_order = atoi(value); return ZST_OK;
     }
@@ -662,6 +856,13 @@ comp_set_pad_property(gl_comp_input_t* in, const char* prop, const char* value)
         if (strcmp(value, "fit") && strcmp(value, "stretch") && strcmp(value, "crop")) return ZST_ERROR;
         snprintf(in->scaling, sizeof(in->scaling), "%s", value);
         return ZST_OK;
+    }
+    if (strcmp(prop, "border-width") == 0) {
+        in->border_width = (uint32_t)strtoul(value, NULL, 10);
+        return ZST_OK;
+    }
+    if (strcmp(prop, "border-color") == 0) {
+        return parse_background(value, in->border_color);
     }
     return ZST_ERROR;
 }
@@ -678,6 +879,15 @@ comp_get_pad_property(gl_comp_input_t* in, const char* prop, char* out, size_t m
     if (strcmp(prop, "alpha") == 0) { snprintf(out, max, "%.17g", in->alpha); return ZST_OK; }
     if (strcmp(prop, "visible") == 0) { snprintf(out, max, "%s", in->visible ? "true" : "false"); return ZST_OK; }
     if (strcmp(prop, "scaling") == 0) { snprintf(out, max, "%s", in->scaling); return ZST_OK; }
+    if (strcmp(prop, "border-width") == 0) { snprintf(out, max, "%u", in->border_width); return ZST_OK; }
+    if (strcmp(prop, "border-color") == 0) {
+        snprintf(out, max, "#%02x%02x%02x%02x",
+                 (unsigned)(in->border_color[0] * 255.0f + 0.5f),
+                 (unsigned)(in->border_color[1] * 255.0f + 0.5f),
+                 (unsigned)(in->border_color[2] * 255.0f + 0.5f),
+                 (unsigned)(in->border_color[3] * 255.0f + 0.5f));
+        return ZST_OK;
+    }
     if (strcmp(prop, "frame-count") == 0 || strcmp(prop, "frame_count") == 0) { snprintf(out, max, "%llu", (unsigned long long)in->frame_count); return ZST_OK; }
     return ZST_ERROR;
 }
@@ -737,12 +947,16 @@ comp_sink_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
     if (buf->flags & ZST_BUFFER_FLAG_EOS) {
         in->eos = 1;
         ret = comp_all_inputs_eos(s) ? ZST_EOF : ZST_OK;
+        pthread_cond_signal(&s->cond);
     } else {
-        zst_buffer_t* ref = zst_buffer_ref(buf);
-        if (in->latest) zst_buffer_unref(in->latest);
-        in->latest = ref;
-        in->frame_count++;
-        ret = comp_render_locked(s);
+        zst_buffer_ref(buf);
+        if (zst_queue_push(in->queue, buf, 0) == ZST_OK) {
+            in->frame_count++;
+            pthread_cond_signal(&s->cond);
+        } else {
+            zst_buffer_unref(buf);
+        }
+        ret = ZST_OK;
     }
     pthread_mutex_unlock(&s->lock);
     return ret;
@@ -754,7 +968,9 @@ static void
 comp_cleanup_display(gl_comp_sink_t* s)
 {
     if (s->gl_context) {
-        glXMakeCurrent(s->x_display, s->x_window, s->gl_context);
+        if (s->x_display && s->window_open) {
+            glXMakeCurrent(s->x_display, s->x_window, s->gl_context);
+        }
         for (uint32_t i = 0; i < s->nb_inputs; i++) comp_delete_input_textures(s->inputs[i]);
         if (s->program_yuv420p) glDeleteProgram(s->program_yuv420p);
         if (s->program_nv12) glDeleteProgram(s->program_nv12);
@@ -853,6 +1069,7 @@ glcomp_open(zst_element_t* el)
     s->wm_delete_message = XInternAtom(s->x_display, "WM_DELETE_WINDOW", False);
     XSetWMProtocols(s->x_display, s->x_window, &s->wm_delete_message, 1);
     XMapWindow(s->x_display, s->x_window);
+    if (s->fullscreen) comp_apply_fullscreen(s, 1);
     XFlush(s->x_display);
 
     s->gl_context = glXCreateContext(s->x_display, s->visual_info, None, GL_TRUE);
@@ -882,6 +1099,9 @@ glcomp_open(zst_element_t* el)
         if (swapInterval) swapInterval(s->x_display, glXGetCurrentDrawable(), 1);
     }
 
+    s->running = true;
+    pthread_create(&s->worker_thread, NULL, glcomp_worker_thread, el);
+
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDisable(GL_DEPTH_TEST);
@@ -898,14 +1118,23 @@ glcomp_close(zst_element_t* el)
 {
     gl_comp_sink_t* s = el->priv;
     pthread_mutex_lock(&s->lock);
+    s->running = false;
+    pthread_cond_broadcast(&s->cond);
+    pthread_mutex_unlock(&s->lock);
+
+    if (s->worker_thread) {
+        pthread_join(s->worker_thread, NULL);
+        s->worker_thread = 0;
+    }
+
+    pthread_mutex_lock(&s->lock);
     comp_cleanup_display(s);
     for (uint32_t i = 0; i < s->nb_inputs; i++) {
-        if (s->inputs[i]->latest) {
-            zst_buffer_unref(s->inputs[i]->latest);
-            s->inputs[i]->latest = NULL;
-        }
-        s->inputs[i]->eos = 0;
+        comp_input_free(s->inputs[i]);
     }
+    free(s->inputs);
+    s->inputs = NULL;
+    s->nb_inputs = 0;
     s->null_mode = 0;
     pthread_mutex_unlock(&s->lock);
     return ZST_OK;
@@ -952,6 +1181,9 @@ glcomp_set_property(zst_element_t* el, const char* name, const char* value)
         s->fullscreen = parse_bool(value);
     } else if (strcmp(name, "vsync") == 0) {
         s->vsync = parse_bool(value);
+    } else if (strcmp(name, "display-rate") == 0 || strcmp(name, "rate") == 0) {
+        s->display_rate = atof(value);
+        if (s->display_rate <= 0.0) s->display_rate = 30.0;
     } else if (strcmp(name, "max-lateness") == 0 || strcmp(name, "max_lateness") == 0) {
         s->max_lateness = (int64_t)atoll(value);
     } else if (strcmp(name, "input-count") == 0 || strcmp(name, "inputs") == 0) {
@@ -1004,6 +1236,8 @@ glcomp_get_property(zst_element_t* el, const char* name, char* out, size_t max)
         snprintf(out, max, "%s", s->fullscreen ? "true" : "false");
     } else if (strcmp(name, "vsync") == 0) {
         snprintf(out, max, "%s", s->vsync ? "true" : "false");
+    } else if (strcmp(name, "display-rate") == 0 || strcmp(name, "rate") == 0) {
+        snprintf(out, max, "%.17g", s->display_rate);
     } else if (strcmp(name, "max-lateness") == 0) {
         snprintf(out, max, "%lld", (long long)s->max_lateness);
     } else if (strcmp(name, "input-count") == 0 || strcmp(name, "inputs") == 0) {
@@ -1040,7 +1274,9 @@ zst_gl_comp_sink_create(void)
     priv->bg[0] = 0.0f; priv->bg[1] = 0.0f; priv->bg[2] = 0.0f; priv->bg[3] = 1.0f;
     priv->vsync = 1;
     priv->max_lateness = 20000000; /* 20ms */
+    priv->display_rate = 30.0;
     pthread_mutex_init(&priv->lock, NULL);
+    pthread_cond_init(&priv->cond, NULL);
 
     zst_element_t* el = zst_element_create(&g_glcompsink_ops, priv);
     if (!el) {
@@ -1073,6 +1309,11 @@ zst_gl_comp_sink_create_with_config(const zst_gl_comp_sink_config_t* config)
             zst_element_set_property_int(el, "max-lateness", config->max_lateness);
         }
     }
+    if (config->struct_size >= offsetof(zst_gl_comp_sink_config_t, display_rate) + sizeof(double)) {
+        if (config->display_rate > 0) {
+            zst_element_set_property_double(el, "display-rate", config->display_rate);
+        }
+    }
     return el;
 }
 
@@ -1097,6 +1338,7 @@ static const zst_property_spec_t g_glcompsink_properties[] = {
     { "background-color",ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "#000000ff", "Canvas background color (#RRGGBB[AA] or r,g,b[,a])" },
     { "fullscreen",      ZST_PROPERTY_BOOL,   ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Fullscreen mode" },
     { "vsync",           ZST_PROPERTY_BOOL,   ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "true", "Enable VSync" },
+    { "display-rate",    ZST_PROPERTY_DOUBLE, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "30.0", "Composition frame rate" },
     { "max-lateness",    ZST_PROPERTY_INT,    ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "20000000", "Maximum frame lateness in nanoseconds before dropping" },
     { "input-count",     ZST_PROPERTY_UINT,   ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1", "Number of sink_%u input pads" }
 };

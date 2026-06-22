@@ -208,6 +208,36 @@ zst_element_add_pad(zst_element_t* el, zst_pad_t* pad)
     return ZST_OK;
 }
 
+zst_result_t
+zst_element_remove_pad(zst_element_t* el, zst_pad_t* pad)
+{
+    if (!el || !pad) return ZST_ERROR;
+
+    if (pad->direction == ZST_PAD_SRC) {
+        for (uint32_t i = 0; i < el->nb_src_pads; i++) {
+            if (el->src_pads[i] == pad) {
+                memmove(&el->src_pads[i], &el->src_pads[i + 1],
+                        (el->nb_src_pads - i - 1) * sizeof(zst_pad_t*));
+                el->nb_src_pads--;
+                zst_pad_destroy(pad);
+                return ZST_OK;
+            }
+        }
+    } else {
+        for (uint32_t i = 0; i < el->nb_sink_pads; i++) {
+            if (el->sink_pads[i] == pad) {
+                memmove(&el->sink_pads[i], &el->sink_pads[i + 1],
+                        (el->nb_sink_pads - i - 1) * sizeof(zst_pad_t*));
+                el->nb_sink_pads--;
+                zst_pad_destroy(pad);
+                return ZST_OK;
+            }
+        }
+    }
+
+    return ZST_ERROR;
+}
+
 void
 zst_element_set_clock(zst_element_t* el, zst_clock_t* clock)
 {

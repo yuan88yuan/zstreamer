@@ -109,6 +109,7 @@ zst_result_t zst_element_set_state(zst_element_t* el, zst_state_t state);
 
 zst_pad_t* zst_element_get_pad(zst_element_t* el, const char* name);
 zst_result_t zst_element_add_pad(zst_element_t* el, zst_pad_t* pad);
+zst_result_t zst_element_remove_pad(zst_element_t* el, zst_pad_t* pad);
 
 void zst_element_set_clock(zst_element_t* el, zst_clock_t* clock);
 

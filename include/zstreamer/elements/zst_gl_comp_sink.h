@@ -38,6 +38,7 @@ typedef struct {
     int vsync;
     uint32_t input_count;
     int64_t max_lateness;
+    double display_rate;
 } zst_gl_comp_sink_config_t;
 
 zst_element_t* zst_gl_comp_sink_create(void);
@@ -45,6 +46,7 @@ zst_element_t* zst_gl_comp_sink_create_with_config(const zst_gl_comp_sink_config
 
 /* Request a sink pad.  If name is NULL, the next sink_%u pad is created. */
 zst_pad_t* zst_gl_comp_sink_request_pad(zst_element_t* el, const char* name);
+zst_result_t zst_gl_comp_sink_release_pad(zst_element_t* el, zst_pad_t* pad);
 
 #ifdef __cplusplus
 }

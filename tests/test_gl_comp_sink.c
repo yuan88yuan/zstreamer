@@ -149,19 +149,32 @@ test_properties_and_dynamic_pads(void)
     uint64_t n = 0;
     if (zst_element_get_property_uint(el, "input-count", &n) != ZST_OK || n != 4) FAIL("get input-count failed");
 
+    /* Test new properties */
+    if (zst_element_set_property_double(el, "display-rate", 60.0) != ZST_OK) FAIL("set display-rate failed");
+    double rate = 0;
+    if (zst_element_get_property_double(el, "display-rate", &rate) != ZST_OK || rate != 60.0) FAIL("get display-rate failed");
+
+    if (zst_element_set_property_uint(el, "sink_0::border-width", 2) != ZST_OK) FAIL("set border-width failed");
+    if (zst_element_set_property_string(el, "sink_0::border-color", "#ff0000") != ZST_OK) FAIL("set border-color failed");
+
     zst_element_destroy(el);
     PASS();
 }
 
 static void
-test_request_pad_api(void)
+test_request_release_pad_api(void)
 {
     zst_element_t* el = make_glcompsink();
     if (!el) FAIL("factory make failed");
     zst_pad_t* p = zst_gl_comp_sink_request_pad(el, NULL);
     if (!p || strcmp(p->name, "sink_1") != 0) FAIL("auto request pad failed");
-    p = zst_gl_comp_sink_request_pad(el, "sink_7");
-    if (!p || strcmp(p->name, "sink_7") != 0) FAIL("named request pad failed");
+
+    zst_pad_t* p7 = zst_gl_comp_sink_request_pad(el, "sink_7");
+    if (!p7 || strcmp(p7->name, "sink_7") != 0) FAIL("named request pad failed");
+
+    if (zst_gl_comp_sink_release_pad(el, p) != ZST_OK) FAIL("release pad failed");
+    if (zst_element_get_pad(el, "sink_1") != NULL) FAIL("released pad still found");
+
     zst_element_destroy(el);
     PASS();
 }
@@ -312,7 +325,7 @@ int main(void)
 
     TEST("Factory creation");                 test_factory_create();
     TEST("Properties and dynamic pads");      test_properties_and_dynamic_pads();
-    TEST("Request pad API");                  test_request_pad_api();
+    TEST("Request and release pad API");      test_request_release_pad_api();
     TEST("Null-mode multi-input processing"); test_null_mode_multi_input();
     TEST("EOS per pad");                      test_eos_per_pad();
     TEST("QoS dropping");                     test_qos_dropping();
