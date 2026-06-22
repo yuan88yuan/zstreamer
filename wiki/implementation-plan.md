@@ -19,7 +19,7 @@ All phases are now documented in separate files for easier maintenance.
 | Post-P0 | [VA-API Video Decoder](phase-elements.md#4ai--va-api-video-decoder-vaapidec) | ~20 | ⬜ Planned |
 | Post-P0 | [X11 Sink](phase-elements.md#4aj--x11-sink-x11sink) | ~35 | ✅ Initial implementation; follow-ups tracked |
 | Post-P0 | [OpenGL Sink](phase-elements.md#4ak--opengl-sink-glsink) | ~45 | ✅ Initial implementation; review follow-ups tracked |
-| Post-P0 | [OpenGL Compositor Sink](phase-elements.md#4al--opengl-compositor-sink-glcompsink) | ~25 | ⬜ Planned |
+| Post-P0 | [OpenGL Compositor Sink](phase-elements.md#4al--opengl-compositor-sink-glcompsink) | ~25 | ✅ Initial implementation; follow-ups tracked |
 | Post-P0 | [Audio Mixer](phase-elements.md#4am--audio-mixer-audiomixer) | ~25 | ✅ Implemented (basic synchronous mixer) |
 | Post-P0 | [ASRC Drift Compensation](phase-advanced.md#asrc-drift-compensation-in-audioresampler) | ~50 | ✅ Implemented (PTS-based drift compensation in audioresampler; passthrough bypass fix for ASRC with equal nominal rates) |
 | Post-P0 | [Fractional Rate Override](phase-advanced.md#fractional-rate-override-rate-numer--rate-denom) | ~30 | ✅ Implemented (rate-numer/rate-denom properties on audioresampler for explicit fractional target rates) |
@@ -38,7 +38,7 @@ All phases are now documented in separate files for easier maintenance.
 | Scheduler (2) | ✅ Done | Topological sort, push/pull, EOS |
 | Queue Element (3) | ✅ Done | First-class queue with worker thread |
 | Logging (3.5) | ✅ Done | Compile-time log levels, thread-safe |
-| Elements (4) | ✅ Done + ongoing | 39 elements implemented (37 unique + audiomixer + continued refinements); audiomixer implemented as synchronous mixer; ASRC drift compensation + passthrough bypass fix + fractional rate override added to audioresampler; glcompsink remains planned |
+| Elements (4) | ✅ Done + ongoing | 39 elements implemented (37 unique + audiomixer + continued refinements); audiomixer implemented as synchronous mixer; ASRC drift compensation + passthrough bypass fix + fractional rate override added to audioresampler; glcompsink has initial implementation |
 | Caps Negotiation (5) | ✅ Done | Intersection, auto-negotiation |
 | Event Bus (6) | ✅ Done | Error/state/EOS notifications |
 | Dynamic Plugins (7) | ✅ Done | dlopen-based loading |
