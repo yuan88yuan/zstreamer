@@ -596,3 +596,50 @@ Display sink that renders raw video frames using OpenGL. The current implementat
 
 **Dependencies:** `libx11-dev`, `libxext-dev`, `libgl1-mesa-dev` / `libgl-dev`, `libglx-dev`, `libglu1-mesa-dev`; test environment also uses `xvfb` and Mesa software rendering (`LIBGL_ALWAYS_SOFTWARE=true`)
 
+---
+
+### 4al — OpenGL Compositor Sink (glcompsink)  (📝 Planned)
+
+Video compositor display sink that composites multiple raw video streams into one configurable canvas and renders the result with OpenGL. Unlike a transform compositor, `glcompsink` is a terminal sink: it owns the output window/canvas and consumes all input streams.
+
+- [ ] `glcompsink` element with dynamic request sink pads (`sink_%u`) accepting `video/x-raw` from multiple sources
+- [ ] **Canvas model**: configurable `canvas-width`, `canvas-height`, `background-color`, and optional `window-title`; render all inputs into the shared canvas
+- [ ] **Per-pad layout**: configure `x`, `y`, `width`, `height`, `z-order`, `alpha`, `visible`, `scaling` (`fit`, `stretch`, `crop`), and optional border/background per input pad
+- [ ] **Composition backend**: reuse/refactor `glsink` OpenGL context/window lifecycle and shader upload paths; draw each input as a textured quad into the canvas in z-order
+- [ ] **Format support**: accept common raw video formats supported by `glsink` first (`YUV420P`, `NV12`, `RGB`), with safe rejection or conversion for unsupported packed formats
+- [ ] **Synchronization**: align frames by PTS against the pipeline clock; retain the latest frame per pad and compose at a configured output/display rate
+- [ ] **Frame pacing / QoS**: configurable `max-lateness`; drop or reuse late/missing per-pad frames without blocking unrelated inputs
+- [ ] **Dynamic pads**: support adding/removing input pads during READY/PLAYING where practical; release per-pad textures and frame references safely
+- [ ] **Thread safety**: marshal GL operations to one rendering thread or otherwise enforce context ownership for the multi-thread scheduler
+- [ ] **Window/display controls**: fullscreen toggle, vsync, window close/ESC handling, resize handling, and graceful null-sink fallback when `$DISPLAY` or GL initialization is unavailable
+- [ ] **Caps negotiation**: sink pad templates advertise `video/x-raw`; negotiate per-pad dimensions/formats and validate layout against canvas bounds
+- [ ] **Properties API**: expose canvas-level typed properties and pad-level layout properties; document example layouts such as 2×2 grid, picture-in-picture, and side-by-side preview
+- [ ] **Tests**: factory/property coverage, dynamic pad creation/removal, layout validation, null-mode multi-input processing, EOS handling per pad and global EOS behavior
+- [ ] **GL validation tests**: Xvfb/Mesa smoke test composing two or more synthetic sources; add pixel readback assertions for z-order, alpha, background, and scaling modes
+- [ ] **CMake integration**: guard with `ENABLE_GLCOMPSINK` (default ON when OpenGL/X11 dependencies are available) and share GL dependency detection with `glsink`
+- [ ] **Plugin packaging**: build into `zstreamer-elements` and as dynamic plugin `libzst_glcompsink.so`
+
+**Dependencies:** `libx11-dev`, `libxext-dev`, `libgl1-mesa-dev` / `libgl-dev`, `libglx-dev`, `libglu1-mesa-dev`; test environment should reuse the `Dockerfile.gl` Xvfb/Mesa setup
+
+---
+
+### 4am — Audio Mixer (audiomixer)  (📝 Planned)
+
+Audio mixing element that accepts multiple synchronized audio frame streams and generates one mixed audio output stream. This is a transform/aggregator element, not a terminal sink: it has multiple input pads and one source pad for downstream encoders, sinks, or muxers.
+
+- [ ] `audiomixer` element with dynamic request sink pads (`sink_%u`) accepting `audio/x-raw` and one src pad producing mixed `audio/x-raw`
+- [ ] **Caps negotiation**: select a common output sample rate, channel layout/count, and sample format; require matching caps initially or insert/use `audio_resampler` for conversions later
+- [ ] **Supported formats**: start with interleaved S16LE and F32LE; mix internally in float to avoid clipping during accumulation
+- [ ] **Per-pad controls**: configurable `volume`, `mute`, `pan`/balance, `latency`, and `active` properties per input pad
+- [ ] **Synchronization**: align input frames by PTS and duration against the pipeline clock; buffer early inputs and fill missing/late inputs with silence
+- [ ] **Mixing behavior**: sum active streams, apply per-pad gain/pan, normalize or soft-limit/clamp output to prevent clipping, and preserve output PTS/duration
+- [ ] **Dynamic pads**: support adding/removing audio inputs safely during READY/PLAYING; release queued buffers on pad removal or EOS
+- [ ] **EOS handling**: track EOS per sink pad; continue mixing remaining active pads and emit downstream EOS once all pads have ended
+- [ ] **Latency/QoS**: expose configurable mix buffer duration and `max-lateness`; drop or silence late input frames without blocking unrelated sources
+- [ ] **Thread safety**: protect per-pad queues and mixer state for use with the multi-thread scheduler
+- [ ] **Tests**: factory/property coverage, dynamic pad creation/removal, mono/stereo mixing math, volume/mute/pan behavior, clipping/limiting, PTS alignment, missing-input silence fill, and EOS behavior
+- [ ] **Integration tests**: mix two `audio_test_src` elements, encode/mux or send to `fake_sink`, and verify mixed sample output against expected tones
+- [ ] **CMake integration**: build into `zstreamer-elements` and optionally as dynamic plugin `libzst_audiomixer.so`
+
+**Dependencies:** core zstreamer audio frame APIs only for the initial software mixer; optional future integration with `libswresample` for automatic format/sample-rate/channel conversion
+
