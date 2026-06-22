@@ -46,13 +46,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
+ENV ZSTREAMER_TEST_PLUGIN_PATH=/workspace/build-vaapi/plugins
 COPY . .
 
 RUN mkdir -p build-vaapi && cd build-vaapi && \
     cmake .. \
         -DCMAKE_BUILD_TYPE=Debug \
         -DBUILD_TESTS=ON \
-        -DENABLE_VAAPI_ENCODER=ON && \
+        -DENABLE_VAAPI_ENCODER=ON \
+        -DENABLE_VAAPI_DECODER=ON && \
     make -j$(nproc)
 
 FROM base AS dev

@@ -12,6 +12,7 @@ option(BUILD_SHARED    "Build core as shared library" OFF)
 option(ENABLE_PLUGINS  "Enable dlopen-based plugin loading" ON)
 option(ENABLE_ONEAPI_ENCODER "Build Intel oneAPI video encoder element" OFF)
 option(ENABLE_VAAPI_ENCODER "Build Linux VA-API video encoder element" OFF)
+option(ENABLE_VAAPI_DECODER "Build Linux VA-API video decoder element" OFF)
 
 # ── Dependencies ─────────────────────────────────────────────────────────
 find_package(Threads REQUIRED)
@@ -273,6 +274,19 @@ if(ENABLE_VAAPI_ENCODER)
     endif()
 endif()
 
+if(ENABLE_VAAPI_DECODER)
+    if(NOT HAS_FFMPEG)
+        message(FATAL_ERROR "ENABLE_VAAPI_DECODER requires FFmpeg libavcodec/libavutil development files")
+    endif()
+    pkg_check_modules(LIBVA libva libva-drm)
+    if(LIBVA_FOUND)
+        add_compile_definitions(HAS_VAAPI_DECODER=1)
+        message(STATUS "VA-API video decoder dependencies found")
+    else()
+        message(FATAL_ERROR "ENABLE_VAAPI_DECODER requires libva development files (pkg-config modules: libva libva-drm)")
+    endif()
+endif()
+
 set(ELEMENT_INCLUDE_DIRS)
 set(ELEMENT_LIBRARIES)
 
@@ -329,6 +343,11 @@ if(ENABLE_ONEAPI_ENCODER)
 endif()
 
 if(ENABLE_VAAPI_ENCODER)
+    list(APPEND ELEMENT_INCLUDE_DIRS ${LIBVA_INCLUDE_DIRS})
+    list(APPEND ELEMENT_LIBRARIES ${LIBVA_LIBRARIES})
+endif()
+
+if(ENABLE_VAAPI_DECODER)
     list(APPEND ELEMENT_INCLUDE_DIRS ${LIBVA_INCLUDE_DIRS})
     list(APPEND ELEMENT_LIBRARIES ${LIBVA_LIBRARIES})
 endif()
@@ -499,6 +518,10 @@ endif()
 
 if(ENABLE_VAAPI_ENCODER)
     list(APPEND ELEMENT_LIBRARY_SOURCES src/vaapi_video_encoder.c)
+endif()
+
+if(ENABLE_VAAPI_DECODER)
+    list(APPEND ELEMENT_LIBRARY_SOURCES src/vaapi_video_decoder.c)
 endif()
 
 if(BUILD_SHARED)
@@ -749,7 +772,17 @@ else()
     set(VAAPI_ENCODER_PLUGINS "")
 endif()
 
-set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_rtsp_server zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_netsrc zst_netsink ${JETSON_PLUGINS} ${ONEAPI_ENCODER_PLUGINS} ${VAAPI_ENCODER_PLUGINS})
+if(ENABLE_VAAPI_DECODER)
+    add_library(zst_vaapidec SHARED src/vaapi_video_decoder.c)
+    target_compile_definitions(zst_vaapidec PRIVATE BUILDING_PLUGIN)
+    target_include_directories(zst_vaapidec PRIVATE ${LIBVA_INCLUDE_DIRS})
+    target_link_libraries(zst_vaapidec PRIVATE zstreamer ${AVCODEC_LIBRARIES} ${AVUTIL_LIBRARIES} ${LIBVA_LIBRARIES})
+    set(VAAPI_DECODER_PLUGINS zst_vaapidec)
+else()
+    set(VAAPI_DECODER_PLUGINS "")
+endif()
+
+set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_rtsp_server zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_netsrc zst_netsink ${JETSON_PLUGINS} ${ONEAPI_ENCODER_PLUGINS} ${VAAPI_ENCODER_PLUGINS} ${VAAPI_DECODER_PLUGINS})
 
 if(HAS_V4L2)
     list(APPEND PLUGIN_TARGETS zst_v4l2source zst_v4l2sink)
@@ -932,6 +965,42 @@ if(BUILD_TESTS)
             PRIVATE zstreamer-elements
         )
         add_test(NAME test_vaapi_encoder COMMAND test_vaapi_encoder)
+
+        if(HAS_V4L2)
+            add_executable(test_vaapi_dmabuf_integration
+                tests/test_vaapi_dmabuf_integration.c
+            )
+            target_include_directories(test_vaapi_dmabuf_integration
+                PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+            )
+            target_link_libraries(test_vaapi_dmabuf_integration
+                PRIVATE zstreamer-elements
+            )
+            add_test(NAME test_vaapi_dmabuf_integration COMMAND test_vaapi_dmabuf_integration)
+        endif()
+
+        add_executable(bench_vaapi
+            tests/bench_vaapi.c
+        )
+        target_include_directories(bench_vaapi
+            PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+        )
+        target_link_libraries(bench_vaapi
+            PRIVATE zstreamer-elements
+        )
+    endif()
+
+    if(ENABLE_VAAPI_DECODER)
+        add_executable(test_vaapi_decoder
+            tests/test_vaapi_decoder.c
+        )
+        target_include_directories(test_vaapi_decoder
+            PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+        )
+        target_link_libraries(test_vaapi_decoder
+            PRIVATE zstreamer-elements
+        )
+        add_test(NAME test_vaapi_decoder COMMAND test_vaapi_decoder)
     endif()
 
     if(HAS_V4L2)

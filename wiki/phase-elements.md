@@ -516,3 +516,18 @@ Hardware-accelerated video encoder for Linux GPUs exposing VA-API encode entrypo
 - [x] Add CMake option `ENABLE_VAAPI_ENCODER` once the element implementation lands
 
 **Dependencies:** `libva-dev`, `libva-drm2`, `mesa-va-drivers` for AMD/radeonsi, a compatible DRM render node exposed via `/dev/dri`, and optionally `intel-media-va-driver` for Intel VA-API devices
+
+### 4ai — VA-API Video Decoder (vaapidec) (📝 Planned)
+
+Hardware-accelerated video decoder for Linux GPUs exposing VA-API decode entrypoints, supporting hardware-accelerated decoding of H.264/H.265 video streams directly into GPU surfaces/DMABUFs.
+
+- [ ] Add `vaapi_video_decoder` / `vaapidec` element with 1 sink pad (`video/x-h264` or `video/x-h265`) and 1 src pad (`video/x-raw`)
+- [ ] Use a VA-API backend (`h264_vaapi` / `hevc_vaapi` / `avcodec` VA-API decoding) with DRM render node selection (`/dev/dri/renderD*`)
+- [ ] Decode compressed H.264/H.265 streams directly into GPU surfaces (VAAPI memory / NV12 surfaces)
+- [ ] Support exporting decoded frames as DMABUFs for zero-copy downstream rendering or processing
+- [ ] Provide CPU/system-memory fallback download path for raw frames to non-VAAPI sources
+- [ ] Preserve input PTS/DTS and handle B-frame reordering
+- [ ] Caps negotiation: advertise raw pixel formats, resolution, framerate, and supported profiles
+- [ ] Add capability checking and graceful runtime skip if VA-API hardware/driver is missing
+- [ ] Tests: property/factory coverage, unsupported-runtime skip path, and decode smoke test with synthetic compressed inputs
+
