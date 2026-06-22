@@ -160,6 +160,7 @@ static const zst_pad_template_t g_pad_aacdec[] = {
     { "sink", ZST_PAD_SINK, "audio/x-aac" }, { "src", ZST_PAD_SRC, "audio/x-raw" }
 };
 #endif
+
 static const zst_pad_template_t g_pad_video_filter[] = {
     { "sink", ZST_PAD_SINK, "video/x-raw" }, { "src", ZST_PAD_SRC, "video/x-raw" }
 };
@@ -257,6 +258,8 @@ static const zst_property_spec_t g_builtin_fakesink_props[] = {
     { "log-period", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE | ZST_PROPERTY_RUNTIME, "1", "Statistics log period in seconds" },
     { "push-per-second", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE | ZST_PROPERTY_RUNTIME, "false", "Log received buffer push-rate statistics every log-period seconds" }
 };
+
+
 
 #ifdef HAS_V4L2
 static const zst_property_spec_t g_builtin_v4l2src_props[] = {

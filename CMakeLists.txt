@@ -767,6 +767,10 @@ if(HAS_X265)
     list(APPEND PLUGIN_TARGETS zst_x265encoder)
 endif()
 
+if(ENABLE_ONEAPI_ENCODER)
+    list(APPEND PLUGIN_TARGETS zst_oneapienc)
+endif()
+
 if(HAS_FFMPEG)
     list(APPEND PLUGIN_TARGETS
         zst_rtspsource
