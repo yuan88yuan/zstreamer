@@ -616,7 +616,7 @@ Video compositor display sink that composites multiple raw video streams into on
 - [x] **Composition backend**: GLX/X11 lifecycle and shader upload paths; draw each input as a textured quad into the canvas in z-order
 - [x] **Format support**: accepts common raw video formats supported by `glsink` first (`YUV420P`, `NV12`, `RGB`), with safe rejection for unsupported layouts
 - [ ] **Synchronization**: align frames by PTS against the pipeline clock; retain the latest frame per pad and compose at a configured output/display rate
-- [ ] **Frame pacing / QoS**: configurable `max-lateness`; drop or reuse late/missing per-pad frames without blocking unrelated inputs
+- [x] **Frame pacing / QoS**: configurable `max-lateness`; drop or reuse late/missing per-pad frames without blocking unrelated inputs
 - [x] **Dynamic pads**: supports adding input pads by `input-count`, `request-pad`, or `zst_gl_comp_sink_request_pad()`; releases per-pad textures/frame references on close/destroy
 - [x] **Thread safety**: serializes compositor state and GL context access with an element mutex for multi-pad push paths
 - [x] **Window/display controls**: vsync, window close/ESC handling, resize handling, and graceful null-sink fallback when `$DISPLAY` or GL initialization is unavailable
@@ -630,7 +630,6 @@ Video compositor display sink that composites multiple raw video streams into on
 
 **Known implementation follow-ups:**
 - Add clock-driven composition at a configured display rate and align/reuse frames by PTS.
-- Add `max-lateness`/QoS dropping and expose the property.
 - Add input pad removal/release API for READY/PLAYING, not just add/close cleanup.
 - Apply initial fullscreen mode and F11 fullscreen toggle parity with `glsink`.
 - Add stricter layout validation against canvas bounds and richer caps negotiation per pad.

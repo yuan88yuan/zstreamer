@@ -350,3 +350,6 @@ When working on this project, the most important files to read first:
 6. `src/zst_queue_element.c` — Queue element implementation
 7. `src/v4l2_source.c` — Real V4L2 capture (reference for HW element pattern)
 8. `src/x264_encoder.c` — Real x264 integration (reference for encoder pattern)
+
+## Development Rules
+* When implementing QoS (Quality of Service) frame dropping logic (e.g., `max-lateness`), carefully compare `zst_time_t` values. Since `zst_time_t` is unsigned, subtracting a property like `max-lateness` from the current time can cause underflow if the current time is small. Instead, use a safe check such as `if (current > buf->pts && (current - buf->pts) > max_lateness)`.
