@@ -5,7 +5,7 @@ All phases are now documented in separate files for easier maintenance.
 | Phase | Document | Lines | Status |
 |-------|----------|-------|--------|
 | 0–3   | [Core Framework](phase-core.md) | ~190 | ✅ Complete |
-| 4     | [Element Implementations](phase-elements.md) | ~450 | ✅ Done (34 implemented, including V4L2 Sink) + planned additions |
+| 4     | [Element Implementations](phase-elements.md) | ~520 | ✅ Done (33 implemented) + 5 planned additions (incl. x11sink, glsink) |
 | 5–7   | [Infrastructure](phase-infrastructure.md) | ~58 | ✅ Complete |
 | 8     | [Advanced Features](phase-advanced.md) | ~417 | 🔄 In Progress |
 | 9     | [Testing & CI](phase-testing-ci.md) | ~10 | 🔄 In Progress |
@@ -32,7 +32,7 @@ All phases are now documented in separate files for easier maintenance.
 | Scheduler (2) | ✅ Done | Topological sort, push/pull, EOS |
 | Queue Element (3) | ✅ Done | First-class queue with worker thread |
 | Logging (3.5) | ✅ Done | Compile-time log levels, thread-safe |
-| Elements (4) | ✅ Done + planned additions | 34 elements implemented; HTTP Source and V4L2 Sink done |
+| Elements (4) | ✅ Done + planned additions | 33 elements implemented; X11 sink and OpenGL sink planned |
 | Caps Negotiation (5) | ✅ Done | Intersection, auto-negotiation |
 | Event Bus (6) | ✅ Done | Error/state/EOS notifications |
 | Dynamic Plugins (7) | ✅ Done | dlopen-based loading |

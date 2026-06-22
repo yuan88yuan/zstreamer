@@ -530,3 +530,61 @@ Hardware-accelerated video decoder for Linux GPUs exposing VA-API decode entrypo
 - [ ] Add capability checking and graceful runtime skip if VA-API hardware/driver is missing
 - [ ] Tests: property/factory coverage, unsupported-runtime skip path, and decode smoke test with synthetic compressed inputs
 
+---
+
+### 4aj — X11 Sink (x11sink)  (📝 Planned)
+
+Display sink that renders raw video frames to an X11 window using the X11 core protocol and MIT-SHM extension. Provides a simple on-screen preview for pipelines without GPU dependencies.
+
+- [ ] `x11sink` element with 1 sink pad (`video/x-raw`) — accepts raw video frames for display
+- [ ] **Window management**: create an X11 window via Xlib (`XCreateWindow` / `XMapWindow`) with configurable title, initial width/height, and position (`window-x`, `window-y`)
+- [ ] **Frame upload**: draw frames using `XPutImage` for system memory or `XShmPutImage` (MIT-SHM extension) for zero-copy shared memory transfer to the X server
+- [ ] **Pixel format conversion**: accept YUV420P / NV12 input and convert to X11-compatible RGB format (XRGB8888) via built-in YUV→RGB conversion (or use libswscale when FFmpeg is available)
+- [ ] **Aspect-ratio preservation**: letterbox/pillar-box the image to maintain original aspect ratio when the window is resized; configurable `force-aspect-ratio` property
+- [ ] **Fullscreen toggle**: fullscreen mode via `_NET_WM_STATE_FULLSCREEN` (EWMH); toggle with configurable keybinding (default F11 or double-click)
+- [ ] **Event handling**: process `ClientMessage` (WM_DELETE_WINDOW) and keyboard events (ESC to quit) — propagate EOS downstream on window close
+- [ ] **Frame pacing / dropping**: track wall-clock vs. input frame timestamps; drop frames when the display refresh can't keep up (`max-lateness` property, default 20ms)
+- [ ] **Window reconfiguration**: handle `ConfigureNotify` events for window resize, reallocate internal RGB buffer on dimension changes
+- [ ] **EOS handling**: unmap window, free XImage/XShm segments, destroy window on EOS or state change to READY/NULL
+- [ ] **Caps negotiation**: advertise `video/x-raw` with negotiable formats — prefer formats with direct RGB conversion paths; request power-of-two aligned dimensions internally if needed
+- [ ] **Graceful fallback**: if DISPLAY is unset or XOpenDisplay fails, log a warning and operate as a null sink (consume and discard frames) to avoid pipeline crashes in headless environments
+- [ ] **Tests**: window open/close lifecycle in a virtual X server (Xvfb / Xdummy); pixel check on rendered surface; EOS propagation; resize handling
+- [ ] **CMake integration**: add `HAS_X11` detection (`pkg_check_modules(X11 x11 xext)`); guarded by `ENABLE_X11SINK` option (default ON when dependencies found)
+- [ ] **Plugin packaging**: build as both a static element (in `zstreamer-elements`) and a dynamic plugin (`libzst_x11sink.so`)
+
+**Dependencies:** `libx11-dev`, `libxext-dev`
+
+---
+
+### 4ak — OpenGL Sink (glsink)  (📝 Planned)
+
+Display sink that renders raw video frames using OpenGL via GLX (X11) or EGL (Wayland/KMS). Offloads pixel format conversion (YUV→RGB) to the GPU and provides V-Sync-aligned presentation.
+
+- [ ] `glsink` element with 1 sink pad (`video/x-raw`) — accepts raw video frames for GPU-accelerated display
+- [ ] **Context creation**: OpenGL context via GLX (`glXCreateContext`) on X11, with EGL (`eglCreateContext`) as a portable fallback for Wayland/KMS/DRM display backends; select backend automatically based on display server availability
+- [ ] **Window / surface management**:
+  - On X11/GLX: create an X11 window and attach a GLX drawable (can share windowing code with `x11sink`)
+  - On EGL: create an EGLNativeWindow or render off-screen to an EGL pbuffer when no native display
+  - Configurable `window-title`, `width`, `height`, `fullscreen`, `window-x`, `window-y`
+- [ ] **GPU YUV→RGB conversion**: upload raw YUV420P/NV12 planes as separate 2D textures (or a single packed texture), then apply a GLSL fragment shader (`#version 120` core) to perform colour space conversion (BT.601/BT.709 matrix) with configurable `color-matrix` property
+- [ ] **Shader pipeline**:
+  - Built-in default shaders for YUV420P (3-plane), NV12 (2-plane), and RGBx (1-plane) input
+  - Optional custom shader path: load vertex + fragment shader source from files via `vertex-shader` / `fragment-shader` properties for user-defined filtering or effects
+  - Configurable `brightness`, `contrast`, `saturation`, `hue` uniforms applied in the shader
+- [ ] **V-Sync**: enable V-Sync via `glXSwapIntervalEXT` / `eglSwapInterval`; configurable `vsync` boolean property (default ON)
+- [ ] **Scaling mode**: configurable `scaling` property with modes:
+  - `fit` — letterbox/pillar-box to fit window (default)
+  - `stretch` — fill window exactly (ignore aspect ratio)
+  - `crop` — zoom to fill window, crop edges
+- [ ] **DMABUF import** (advanced): accept `ZST_MEMORY_DMABUF` buffers via `EGL_EXT_image_dma_buf` for zero-copy GPU display when supported by the GPU driver; fall back to CPU upload path otherwise
+- [ ] **Frame pacing / QoS**: similar to x11sink — track PTS vs wall-clock, drop late frames; `max-lateness` property; support `qos` events from downstream for upstream rate adaptation
+- [ ] **Event handling**: keyboard/mouse events (ESC to quit, F11 fullscreen toggle, window close → EOS); same pattern as x11sink
+- [ ] **EOS handling**: destroy GL context, delete textures/shaders, free EGL/GLX resources on EOS or state transition to READY/NULL
+- [ ] **Caps negotiation**: advertise `video/x-raw` with negotiable formats; prefer formats directly mappable to GPU texture uploads (NV12, I420, RGBx); expose `max-resolution` for hardware texture size limits
+- [ ] **Graceful fallback**: if no display server or GL context creation fails, log a warning and operate as a null sink (safe for headless/testing environments)
+- [ ] **Tests**: lifecycle in Xvfb with `LIBGL_ALWAYS_SOFTWARE=true` (software Mesa); pixel readback after rendering; shader uniform get/set; DMABUF import test (when available); fullscreen toggle
+- [ ] **CMake integration**: add `HAS_GL` / `HAS_GLX` / `HAS_EGL` detection (`pkg_check_modules` or `find_package` for OpenGL, GLX, EGL); guarded by `ENABLE_GLSINK` option (default ON when dependencies found)
+- [ ] **Plugin packaging**: build as both a static element (in `zstreamer-elements`) and a dynamic plugin (`libzst_glsink.so`)
+
+**Dependencies:** `libgl-dev`, `libglx-dev` (or `libegl-dev`), `libglu1-mesa-dev`; optional: `libegl1-mesa-dev` for Wayland/KMS EGL backend
+
