@@ -909,13 +909,13 @@ static int bind_udp_port(int fd, uint16_t port) {
 }
 
 static int bind_udp_pair(int* rtp_fd, int* rtcp_fd, uint16_t* out_rtp_port, uint16_t* out_rtcp_port) {
-    static uint16_t next_port = 30000;
+    static uint16_t next_port = 40000;
     
     for (int i = 0; i < 500; i++) {
         uint16_t rtp_port = next_port;
         next_port += 2;
-        if (next_port >= 40000 || next_port < 30000) {
-            next_port = 30000;
+        if (next_port >= 50000 || next_port < 40000) {
+            next_port = 40000;
         }
         
         if (bind_udp_port(*rtp_fd, rtp_port) < 0) {

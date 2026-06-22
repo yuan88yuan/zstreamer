@@ -6725,6 +6725,83 @@ static void test_rtsp_source_bunny_verification(void) {
 
     PASS();
 }
+
+static void test_rtsp_source_bunny_udp_verification(void) {
+    TEST("RTSP Source verifying Bunny stream (UDP unicast)");
+
+    assert(zst_register_builtin_elements() == ZST_OK);
+
+    // 1. Create pipeline & scheduler
+    zst_pipeline_t* pipe = zst_pipeline_create();
+    assert(pipe != NULL);
+    zst_pipeline_set_clock_sync(pipe, 1);
+
+    zst_scheduler_config_t cfg = {
+        .mode = ZST_SCHEDULER_MULTI_THREAD,
+        .worker_threads = 4
+    };
+    zst_scheduler_t* sched = zst_scheduler_create(&cfg);
+    assert(sched != NULL);
+
+    // 2. Create RTSP Server on port 8557 (different from TCP test)
+    zst_element_t* server = zst_rtsp_server_create();
+    assert(server != NULL);
+    assert(zst_element_set_property_int(server, "listen-port", 8557) == ZST_OK);
+    assert(zst_rtsp_server_set_mount_callback(server, bunny_mount_cb, pipe) == ZST_OK);
+    assert(zst_pipeline_add(pipe, server) == ZST_OK);
+
+    // 3. Start Server Pipeline
+    assert(zst_scheduler_attach(sched, pipe) == ZST_OK);
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_READY) == ZST_OK);
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_scheduler_run(sched) == ZST_OK);
+
+    // Give it a moment to bind and listen
+    usleep(100000);
+
+    // 4. Create RTSP Client Source with UDP transport
+    zst_element_t* client_src = zst_rtsp_source_create("rtsp://127.0.0.1:8557/bunny");
+    assert(client_src != NULL);
+    assert(zst_element_set_property(client_src, "transport", "udp") == ZST_OK);
+
+    zst_element_t* fakesink = zst_fake_sink_create();
+    assert(fakesink != NULL);
+
+    assert(zst_pipeline_add(pipe, client_src) == ZST_OK);
+    assert(zst_pipeline_add(pipe, fakesink) == ZST_OK);
+
+    // Link client_src video to fakesink
+    zst_pad_t* src_vpad = zst_element_get_pad(client_src, "video");
+    zst_pad_t* sink_pad = zst_element_get_pad(fakesink, "sink");
+    assert(src_vpad != NULL && sink_pad != NULL);
+    assert(zst_pad_link(src_vpad, sink_pad) == ZST_OK);
+
+    int buffers_count = 0;
+    zst_pad_add_probe(src_vpad, ZST_PAD_PROBE_PRE_BUFFER, bunny_probe, &buffers_count);
+
+    zst_pipeline_topological_sort(pipe);
+
+    // Start client elements
+    assert(zst_element_set_state(client_src, ZST_STATE_READY) == ZST_OK);
+    assert(zst_element_set_state(fakesink, ZST_STATE_READY) == ZST_OK);
+    assert(zst_element_set_state(client_src, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_element_set_state(fakesink, ZST_STATE_PLAYING) == ZST_OK);
+
+    // 5. Let it stream for 3 seconds
+    printf("  [Verification] UDP streaming for 3 seconds...\n");
+    sleep(3);
+
+    // 6. Stop and assert
+    printf("  [Verification] UDP total buffers received: %d\n", buffers_count);
+    assert(buffers_count > 0);
+
+    zst_scheduler_stop(sched);
+    zst_pipeline_set_state(pipe, ZST_STATE_NULL);
+    zst_scheduler_destroy(sched);
+    zst_pipeline_destroy(pipe);
+
+    PASS();
+}
 #endif
 
 
@@ -7161,6 +7238,7 @@ int main(void)
 #ifdef HAS_FFMPEG
     test_rtsp_server_media_on_demand();
     test_rtsp_source_bunny_verification();
+    test_rtsp_source_bunny_udp_verification();
 #else
     printf("  [SKIP] FFmpeg disabled\n");
 #endif

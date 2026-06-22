@@ -1501,6 +1501,10 @@ reconnect_start:
 
     /* Phase 2: SETUP each track */
     for (int i = 0; i < cl->track_count; i++) {
+        /* handle_setup_reply chains do_setup for subsequent tracks,
+           so skip if already set up (i.e. state advanced past SETUP). */
+        if (cl->state == STATE_SETUP_DONE) break;
+
         ZST_LOG_INFO("rtspsrc", "setting up track %d (%s)", i,
                      cl->tracks[i].encoding);
         if (do_setup(cl, i, srv->transport) < 0) { close(cl->fd); return NULL; }
