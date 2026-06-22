@@ -641,23 +641,30 @@ Video compositor display sink that composites multiple raw video streams into on
 
 ---
 
-### 4am — Audio Mixer (audiomixer)  (📝 Planned)
+### 4am — Audio Mixer (audiomixer)  (✅ Basic implementation)
 
 Audio mixing element that accepts multiple synchronized audio frame streams and generates one mixed audio output stream. This is a transform/aggregator element, not a terminal sink: it has multiple input pads and one source pad for downstream encoders, sinks, or muxers.
 
-- [ ] `audiomixer` element with dynamic request sink pads (`sink_%u`) accepting `audio/x-raw` and one src pad producing mixed `audio/x-raw`
-- [ ] **Caps negotiation**: select a common output sample rate, channel layout/count, and sample format; require matching caps initially or insert/use `audio_resampler` for conversions later
-- [ ] **Supported formats**: start with interleaved S16LE and F32LE; mix internally in float to avoid clipping during accumulation
-- [ ] **Per-pad controls**: configurable `volume`, `mute`, `pan`/balance, `latency`, and `active` properties per input pad
-- [ ] **Synchronization**: align input frames by PTS and duration against the pipeline clock; buffer early inputs and fill missing/late inputs with silence
-- [ ] **Mixing behavior**: sum active streams, apply per-pad gain/pan, normalize or soft-limit/clamp output to prevent clipping, and preserve output PTS/duration
-- [ ] **Dynamic pads**: support adding/removing audio inputs safely during READY/PLAYING; release queued buffers on pad removal or EOS
-- [ ] **EOS handling**: track EOS per sink pad; continue mixing remaining active pads and emit downstream EOS once all pads have ended
-- [ ] **Latency/QoS**: expose configurable mix buffer duration and `max-lateness`; drop or silence late input frames without blocking unrelated sources
-- [ ] **Thread safety**: protect per-pad queues and mixer state for use with the multi-thread scheduler
-- [ ] **Tests**: factory/property coverage, dynamic pad creation/removal, mono/stereo mixing math, volume/mute/pan behavior, clipping/limiting, PTS alignment, missing-input silence fill, and EOS behavior
-- [ ] **Integration tests**: mix two `audio_test_src` elements, encode/mux or send to `fake_sink`, and verify mixed sample output against expected tones
-- [ ] **CMake integration**: build into `zstreamer-elements` and optionally as dynamic plugin `libzst_audiomixer.so`
+- [x] `audiomixer` element with dynamic request sink pads (`sink_%u`) accepting `audio/x-raw` and one src pad producing mixed `audio/x-raw`
+- [x] **Caps negotiation**: select a common output sample rate, channel count, and sample format; sink pads accept both S16LE and F32LE
+- [x] **Supported formats**: interleaved S16LE and F32LE; mix internally in double-precision float to avoid clipping during accumulation
+- [x] **Per-pad controls**: configurable `volume`, `mute` via pad-qualified property syntax (`pad_name::volume`, `pad_name::mute`)
+- [x] **Mixing behavior**: sum active streams with per-pad gain, clamp to [−1.0, 1.0], output in configured format
+- [x] **Dynamic pads**: request pads via `zst_audio_mixer_request_pad()`; up to 64 inputs
+- [x] **EOS handling**: track EOS per sink pad; continue mixing remaining active pads; emit downstream EOS once all pads have ended
+- [x] **Thread safety**: per-input queues protected by mutex + condvar for worker-thread mixer
+- [x] **Property access**: set/get per-pad properties via `zst_element_set_property(el, "sink_0::volume", "0.5")`
+- [x] **ASRC integration**: ASRC is handled by the separate `audioresampler` element (see [ASRC section](phase-advanced.md#asrc-drift-compensation-in-audioresampler)), not inside the mixer
+- [x] **Buffer management**: fallback allocation when no pool is available; proper `buf->destroy` cleanup
+- [x] **CMake integration**: built into `zstreamer-elements` and as dynamic plugin `libzst_audiomixer.so`
+- [x] **Factory registration**: registered in `zst_builtins.c` under factory name `"audiomixer"`
 
-**Dependencies:** core zstreamer audio frame APIs only for the initial software mixer; optional future integration with `libswresample` for automatic format/sample-rate/channel conversion
+**Dependencies:** core zstreamer audio frame APIs only.  ASRC for asynchronous inputs requires inserting `audioresampler asrc-mode=pts` upstream.
+
+**Follow-ups (not yet implemented):**
+- [ ] Per-pad `pan`/balance
+- [ ] PTS-based input alignment with silence fill for missing/late inputs
+- [ ] Latency/QoS: `max-lateness` dropping
+- [ ] Dynamic pad removal during PLAYING
+- [ ] Dedicated integration tests with `audio_test_src`
 

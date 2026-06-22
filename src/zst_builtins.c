@@ -90,6 +90,7 @@ zst_element_t* zst_text_source_create(void);
 zst_element_t* zst_srt_parser_create(const char* path);
 zst_element_t* zst_net_source_create(void);
 zst_element_t* zst_net_sink_create(void);
+zst_element_t* zst_audio_mixer_create(void);
 #ifdef HAS_FFMPEG
 zst_element_t* zst_rtsp_source_create(const char* url);
 zst_element_t* zst_rtsp_sink_create(void);
@@ -130,6 +131,10 @@ static const zst_pad_template_t g_pad_filter[]       = {
 static const zst_pad_template_t g_pad_video_src[]    = { { "src", ZST_PAD_SRC, "video/x-raw" } };
 static const zst_pad_template_t g_pad_video_sink[]   = { { "sink_%u", ZST_PAD_SINK, "video/x-raw" } };
 static const zst_pad_template_t g_pad_audio_src[]    = { { "src", ZST_PAD_SRC, "audio/x-raw" } };
+static const zst_pad_template_t g_pad_audio_mixer[] = {
+    { "src", ZST_PAD_SRC, "audio/x-raw" },
+    { "sink_%u", ZST_PAD_SINK, "audio/x-raw" }
+};
 static const zst_pad_template_t g_pad_srt_parser[]   = { { "src", ZST_PAD_SRC, "text/x-raw" } };
 
 #ifdef HAS_X264
@@ -451,6 +456,20 @@ static const zst_property_spec_t g_builtin_audiotestsrc_props[] = {
     { "real-time-pacing", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Pace generated audio buffers in real time" }
 };
 
+static const zst_property_spec_t g_builtin_audioresampler_props[] = {
+    { "sample-rate", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "0", "Target sample rate; 0 = passthrough input rate" },
+    { "channels", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "0", "Target channel count; 0 = passthrough input channels" },
+    { "format", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Target sample format (S16LE, F32LE, etc.); empty = passthrough" },
+    { "asrc-mode", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "none", "ASRC mode: 'none' (fixed SRC) or 'pts' (PTS-based drift compensation)" },
+    { "max-drift-ppm", ZST_PROPERTY_DOUBLE, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1000", "Maximum expected drift in parts per million (default: 1000 = 0.1%)" },
+    { "drift-check-interval", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "4", "Drift check interval in buffers" },
+    { "rate-numer", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "0", "Rational target rate numerator (0 = use sample-rate)" },
+    { "rate-denom", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "0", "Rational target rate denominator (0 = 1)" },
+    { "total-input-samples", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE, "0", "Total input samples processed (read-only)" },
+    { "total-output-samples", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE, "0", "Total output samples produced (read-only)" },
+    { "drift-adjust-count", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE, "0", "Number of drift adjustments performed (read-only)" }
+};
+
 #ifdef HAS_X11SINK
 static const zst_property_spec_t g_builtin_x11sink_props[] = {
     { "display",      ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "X11 display name; empty uses DISPLAY" },
@@ -597,6 +616,7 @@ create_builtin_element(const char* name)
 #endif
     if (strcmp(name, "videotestsrc") == 0) return zst_video_test_src_create();
     if (strcmp(name, "audiotestsrc") == 0) return zst_audio_test_src_create();
+    if (strcmp(name, "audiomixer") == 0)   return zst_audio_mixer_create();
 #ifdef HAS_FREETYPE
     if (strcmp(name, "textoverlay") == 0)  return zst_text_overlay_create(NULL);
     if (strcmp(name, "textsource") == 0)   return zst_text_source_create();
@@ -671,10 +691,11 @@ static const zst_element_desc_t g_builtin_descs[] = {
     DESC("aacdec",  "AAC Decoder",      "Codec/Decoder","Decodes AAC audio frames",                                                                                             NULL,                           0, g_pad_aacdec),
     DESC("mp4mux",  "MP4 Muxer",        "Muxer/File",   "Muxes encoded audio/video into MP4",                                                                                  g_builtin_mp4mux_props,         sizeof(g_builtin_mp4mux_props) / sizeof(g_builtin_mp4mux_props[0]), g_pad_mp4mux),
     DESC("videoscaler", "Video Scaler", "Filter/Video", "Converts video resolution or pixel format",                                                                            NULL,                           0, g_pad_video_filter),
-    DESC("audioresampler", "Audio Resampler", "Filter/Audio", "Converts audio sample rate, channels, or format",                                                                NULL,                           0, g_pad_audio_filter),
+    DESC("audioresampler", "Audio Resampler", "Filter/Audio", "Converts audio sample rate, channels, or format; supports optional ASRC drift compensation",                 g_builtin_audioresampler_props, sizeof(g_builtin_audioresampler_props) / sizeof(g_builtin_audioresampler_props[0]), g_pad_audio_filter),
 #endif
     DESC("videotestsrc", "Video Test Source", "Source/Test", "Generates synthetic video test patterns",                                                                         g_builtin_videotestsrc_props,   sizeof(g_builtin_videotestsrc_props) / sizeof(g_builtin_videotestsrc_props[0]), g_pad_video_src),
     DESC("audiotestsrc", "Audio Test Source", "Source/Test", "Generates synthetic audio test signals",                                                                          g_builtin_audiotestsrc_props,   sizeof(g_builtin_audiotestsrc_props) / sizeof(g_builtin_audiotestsrc_props[0]), g_pad_audio_src),
+    DESC("audiomixer", "Audio Mixer", "Filter/Audio", "Mixes multiple audio inputs into a single output stream",                                                                  NULL,                           0, g_pad_audio_mixer),
 #ifdef HAS_FREETYPE
     DESC("textoverlay", "Text Overlay", "Filter/Video", "Overlays text on video frames",                                                                                        g_builtin_textoverlay_props,    sizeof(g_builtin_textoverlay_props) / sizeof(g_builtin_textoverlay_props[0]), g_pad_textoverlay),
     DESC("textsource", "Text Source",   "Source/Video", "Generates video frames containing text",                                                                                g_builtin_textsource_props,     sizeof(g_builtin_textsource_props) / sizeof(g_builtin_textsource_props[0]), g_pad_video_src),

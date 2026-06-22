@@ -445,3 +445,130 @@ Optional official convenience API:
 zst_element_t* src = zst_file_source_create("input.h264");
 zst_element_t* sink = zst_file_sink_create("output.h264");
 ```
+
+---
+
+## ASRC Drift Compensation in audioresampler  (✅ Implemented)
+
+ASRC (Asynchronous Sample Rate Conversion) compensates for sample-clock drift
+between the upstream source and the nominal sampling rate.  This is essential
+when combining audio from independent clocks (e.g., two USB microphones, or a
+live mic and a file playback).
+
+### Design Decision: ASRC lives in audioresampler, not audiomixer
+
+ASRC is implemented as an optional mode of the standalone `audioresampler`
+element rather than being baked into `audiomixer`.  Rationale:
+
+- **Separation of concerns**: resampling is a DSP transformation; mixing is a
+  summation.  Combining them violates single responsibility.
+- **Reusability**: ASRC drift compensation is useful anywhere, not just before a
+  mixer (e.g., a resampler feeding a file sink).
+- **Pipeline composability**: users explicitly see and control where conversion
+  happens.  The audiomixer receives already-aligned buffers.
+- **Existing infrastructure**: `audioresampler` already uses `libswresample`;
+  the ASRC feature builds on the same backend.
+
+### Properties
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `asrc-mode` | String | `"none"` | `"none"` = fixed-ratio SRC; `"pts"` = PTS-based drift compensation |
+| `max-drift-ppm` | Double | `1000` | Maximum expected drift in parts per million (0.1%) |
+| `drift-check-interval` | Int | `4` | Check drift every N processed buffers |
+| `total-input-samples` | Int (R/O) | `0` | Cumulative input samples processed |
+| `total-output-samples` | Int (R/O) | `0` | Cumulative output samples produced |
+| `drift-adjust-count` | Int (R/O) | `0` | Number of drift adjustments performed |
+| `rate-numer` | Int | `0` | Explicit target rate numerator (0 = use `sample-rate`). Overrides when set with `rate-denom`. E.g. `4800001` gives ~48000.01 Hz output when combined with `rate-denom=100` |
+| `rate-denom` | Int | `0` | Explicit target rate denominator. E.g. `100` with `rate-numer=4800001` yields target rate = 4800001/100 = 48000.01 Hz |
+
+### Algorithm (`pts` mode)
+
+1. **Drift detection** — For each buffer, compare the PTS delta (`pts − last_pts`)
+   against the expected delta at the nominal input rate.  The difference (in
+   input-sample units) is the instantaneous drift.
+
+   ```c
+   expected_samples = delta_pts × rate_in / 1e9
+   drift_input = nb_samples − expected_samples
+   drift_output = drift_input × rate_out / rate_in
+   ```
+
+2. **Accumulation** — Drift is accumulated in the output-sample domain.
+
+3. **Sanity limiting** — Drift per buffer is capped at `±2 × max-drift-ppm`
+   to reject PTS discontinuities (seeks, streams).
+
+4. **Compensation** — When accumulated drift ≥ 1 output sample, call
+   `swr_set_compensation(ctx, −drift, next_out_samples)` to smoothly correct
+   the resampling ratio over the next output block.
+
+### Pipeline example
+
+```
+# ASRC-enabled resampler: handles drift from a live source at nominal 44.1kHz
+# to a mixer that expects 48kHz
+
+alasrc device=hw:0 !
+  audioresampler sample-rate=48000 asrc-mode=pts !
+  audiomixer ! filesink
+
+alasrc device=hw:1 !
+  audioresampler sample-rate=48000 asrc-mode=pts !
+  audiomixer
+```
+
+### Implementation checklist
+
+- [x] `asrc-mode` property: `"none"` (fixed SRC) / `"pts"` (drift compensation)
+- [x] `max-drift-ppm` property with default 1000 ppm (0.1%)
+- [x] `drift-check-interval` property (default: 4 buffers)
+- [x] Read-only stats: `total-input-samples`, `total-output-samples`, `drift-adjust-count`
+- [x] PTS-based drift detection with PTS-discontinuity rejection
+- [x] `swr_set_compensation()`-based ratio adjustment
+- [x] Compensation clamping (max 25% of block) to prevent audible glitches
+- [x] ASRC state reset on SwrContext reconfiguration (rate/format change)
+- [x] Property specs registered in `zst_builtins.c`
+- [x] `zst_audio_resampler_create_with_config()` convenience constructor
+- [x] Existing tests unchanged (100% pass)
+- [x] Passthrough bypass: ASRC mode and rate override now force swr engagement even when nominal integer rates match (critical for PTS drift detection with equal rates)
+- [x] `rate-numer`/`rate-denom` properties for explicit fractional target rates
+
+### Fractional Rate Override (`rate-numer` / `rate-denom`)
+
+The `audioresampler` supports explicit fractional target rates via `rate-numer` and
+`rate-denom` properties. This allows conversions where the exact rate cannot be
+expressed as an integer (e.g., 48000 → 48000.01 Hz).
+
+**How it works:**
+
+1. The target rate is computed as `target = rate-numer / rate-denom` (e.g.,
+   `4800001 / 100 = 48000.01` Hz).
+2. The nearest integer rate is used for the underlying `SwrContext` (e.g.,
+   `48001`). If this equals the input rate, it's nudged by ±1 to force swr
+   to create a resampling filter (otherwise swr uses a memcpy path that
+   ignores `swr_set_compensation()`).
+3. `swr_set_compensation()` is called before every `swr_convert()` to
+   fine-tune the ratio from the integer rate to the exact fractional target.
+   Compensation is re-applied each call so it never expires.
+4. The output buffer size (`av_rescale_rnd`) uses the true target ratio for
+   correct allocation, independent of the swr-configured integer rate.
+
+**Limitations:**
+
+- The output frame's `sample_rate` field reports the nearest integer rate,
+  not the exact fractional target. The tiny metadata error (~0.02% for
+  48000.01 vs 48001) is absorbed by PTS-based timing downstream.
+- For extremely small differences (e.g., 48000 → 48000.01, ratio ≈ 1.0000002),
+  the compensation accumulates very slowly (~1 extra sample per 4688 buffers
+  at 1024-sample frames, i.e., ~100 seconds). Prefer ASRC mode
+  (`asrc-mode=pts`) for drift-based scenarios where the clock difference
+  naturally manifests in PTS timestamps.
+- Setting `sample-rate` clears the rate override (`rate-numer` = `rate-denom` = 0).
+
+**Combining with ASRC:**
+
+`rate-numer`/`rate-denom` can be combined with `asrc-mode=pts`. The rational
+override sets the base conversion ratio, and ASRC further fine-tunes it based
+on PTS drift detection. This is useful when you know the approximate ratio
+but the clocks also drift independently.

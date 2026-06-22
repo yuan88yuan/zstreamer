@@ -280,7 +280,7 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | Core Framework              | ✅ All 8 core modules implemented|
 | Scheduler Integration       | ✅ Topological sort, push/pull, EOS, state hardening |
 | Queue Element               | ✅ First-class queue with worker thread |
-| Real Element Implementations| ✅ 36 elements: v4l2_source, v4l2_sink, alsa_source, alsa_sink, x264enc, x265enc, h264_decoder, h265_encoder, h265_decoder, aac_encoder, aac_decoder, mp4_muxer, mp4_demuxer, file_sink, file_source, fake_sink, video_scaler, audio_resampler, video_test_src, audio_test_src, text_overlay, text_source, srt_parser, net_source, net_sink, rtsp_source, rtsp_sink, rtsp_server, rtmp_source, rtmp_sink, srt_source, srt_sink, mpegts_muxer, mpegts_demuxer, http_source, glsink |
+| Real Element Implementations| ✅ 37 elements: v4l2_source, v4l2_sink, alsa_source, alsa_sink, x264enc, x265enc, h264_decoder, h265_encoder, h265_decoder, aac_encoder, aac_decoder, mp4_muxer, mp4_demuxer, file_sink, file_source, fake_sink, video_scaler, audio_resampler, video_test_src, audio_test_src, text_overlay, text_source, srt_parser, net_source, net_sink, rtsp_source, rtsp_sink, rtsp_server, rtmp_source, rtmp_sink, srt_source, srt_sink, mpegts_muxer, mpegts_demuxer, http_source, glsink, audiomixer |
 | Planned Element Additions   | 📝 x11sink, vaapidec (VA-API Video Decoder), Xilinx VCU encoder/decoder |
 | Caps Negotiation            | ✅ Done                          |
 | Event Bus                   | ✅ Done                          |
@@ -309,6 +309,9 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | SRT Transport Protocols     | ✅ Done                          |
 | MPEG-TS mux/demux           | ✅ Done                          |
 | MP4 Demuxer                 | ✅ Done                        |
+| Audio Mixer (4am)           | ✅ Done (synchronous mixer with dynamic request sink pads, per-pad volume/mute, S16LE+F32LE, worker thread) |
+| ASRC Drift Compensation     | ✅ Done (PTS-based drift detection + swr_set_compensation in audioresampler; passthrough bypass fix allows ASRC with equal nominal rates) |
+| Fractional Rate Override    | ✅ Done (rate-numer/rate-denom properties on audioresampler for explicit fractional target rates; uses swr_set_compensation for fine-grained ratio adjustment) |
 | OpenGL Sink (4ak)           | ✅ Initial implementation (GLX/X11 backend, GLSL YUV→RGB, null-mode fallback, dynamic plugin, Dockerfile.gl tests); known review follow-ups are tracked in [wiki/phase-elements.md](wiki/phase-elements.md#4ak--opengl-sink-glsink) |
 | Clock Sync Bugfix           | ✅ Fixed (frame-to-frame delta comparison in scheduler — see [wiki/clock-sync-debug.md](wiki/clock-sync-debug.md)) |
 | CI Pipeline                 | ✅ Done (GitHub Actions CI with unit and docker-run loopback integration tests) |

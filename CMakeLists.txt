@@ -506,6 +506,7 @@ set(ELEMENT_LIBRARY_SOURCES
     src/fake_sink.c
     src/video_test_src.c
     src/audio_test_src.c
+    src/audio_mixer.c
     src/srt_parser.c
     src/net_source.c
     src/net_sink.c
@@ -732,6 +733,10 @@ add_library(zst_audiotestsrc SHARED src/audio_test_src.c)
 target_compile_definitions(zst_audiotestsrc PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_audiotestsrc PRIVATE zstreamer)
 
+add_library(zst_audiomixer SHARED src/audio_mixer.c)
+target_compile_definitions(zst_audiomixer PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_audiomixer PRIVATE zstreamer)
+
 add_library(zst_filesource SHARED src/file_source.c)
 target_compile_definitions(zst_filesource PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_filesource PRIVATE zstreamer)
@@ -865,7 +870,7 @@ else()
     set(VAAPI_DECODER_PLUGINS "")
 endif()
 
-set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_rtsp_server zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_netsrc zst_netsink ${JETSON_PLUGINS} ${ONEAPI_ENCODER_PLUGINS} ${VAAPI_ENCODER_PLUGINS} ${VAAPI_DECODER_PLUGINS})
+set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_rtsp_server zst_srtparser zst_videotestsrc zst_audiotestsrc zst_audiomixer zst_filesource zst_netsrc zst_netsink ${JETSON_PLUGINS} ${ONEAPI_ENCODER_PLUGINS} ${VAAPI_ENCODER_PLUGINS} ${VAAPI_DECODER_PLUGINS})
 
 if(HAS_V4L2)
     list(APPEND PLUGIN_TARGETS zst_v4l2source zst_v4l2sink)
