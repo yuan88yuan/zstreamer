@@ -171,6 +171,7 @@ ZST_STATE_NULL  ──open──►  ZST_STATE_READY  ──start──►  ZST_
 | `h265_decoder` | H.265/HEVC decoder via FFmpeg libavcodec |
 | `aac_encoder` | AAC audio encoder via FFmpeg libavcodec |
 | `nv_video_encoder` | Hardware H.264/H.265 encoder via NV V4L2 |
+| `vaapi_video_encoder` | Hardware H.264/H.265 encoder via Linux VA-API |
 | `nv_video_decoder` | Hardware H.264/H.265 decoder via NV V4L2 |
 | `aac_decoder` | AAC audio decoder via FFmpeg libavcodec |
 
@@ -361,7 +362,7 @@ gcc my_app.c $(pkg-config --cflags --libs zstreamer-elements) -o my_app
 | Clock, A/V sync, QoS | ✅ Complete |
 | Allocator & buffer pool | ✅ Complete |
 | Intel oneAPI video encoder | 🔄 In Progress |
-| VA-API video encoder | 📝 Planned |
+| VA-API video encoder | 🔄 In Progress |
 | Element public API (factory, descriptors, typed properties) | ✅ Complete |
 | Installation (pkg-config, CMake export) | ✅ Complete |
 | RTMP source / sink | ✅ Complete |

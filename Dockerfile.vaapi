@@ -51,7 +51,8 @@ COPY . .
 RUN mkdir -p build-vaapi && cd build-vaapi && \
     cmake .. \
         -DCMAKE_BUILD_TYPE=Debug \
-        -DBUILD_TESTS=ON && \
+        -DBUILD_TESTS=ON \
+        -DENABLE_VAAPI_ENCODER=ON && \
     make -j$(nproc)
 
 FROM base AS dev

@@ -9,7 +9,7 @@ This document lists features that are still planned across all phases.
 | 4q — RTMP Source | RTMP/FLV pull client for receiving live streams | ✅ Done |
 | 4r — RTMP Sink | RTMP push client for publishing live streams | ✅ Done |
 | 4ag — Intel oneAPI Video Encoder | H.264/H.265 hardware encoder via oneVPL for Intel GPU pipelines | 🔄 In Progress |
-| 4ah — VA-API Video Encoder | H.264/H.265 hardware encoder via Linux VA-API for AMD/Intel GPU pipelines | 📝 Planned |
+| 4ah — VA-API Video Encoder | H.264/H.265 hardware encoder via Linux VA-API for AMD/Intel GPU pipelines | 🔄 In Progress |
 
 ## Allocator & Pool — Phase 8a
 

@@ -11,6 +11,7 @@ option(BUILD_TESTS     "Build test programs" ON)
 option(BUILD_SHARED    "Build core as shared library" OFF)
 option(ENABLE_PLUGINS  "Enable dlopen-based plugin loading" ON)
 option(ENABLE_ONEAPI_ENCODER "Build Intel oneAPI video encoder element" OFF)
+option(ENABLE_VAAPI_ENCODER "Build Linux VA-API video encoder element" OFF)
 
 # ── Dependencies ─────────────────────────────────────────────────────────
 find_package(Threads REQUIRED)
@@ -259,6 +260,19 @@ if(ENABLE_ONEAPI_ENCODER)
     endif()
 endif()
 
+if(ENABLE_VAAPI_ENCODER)
+    if(NOT HAS_FFMPEG)
+        message(FATAL_ERROR "ENABLE_VAAPI_ENCODER requires FFmpeg libavcodec/libavutil development files")
+    endif()
+    pkg_check_modules(LIBVA libva libva-drm)
+    if(LIBVA_FOUND)
+        add_compile_definitions(HAS_VAAPI_ENCODER=1)
+        message(STATUS "VA-API video encoder dependencies found")
+    else()
+        message(FATAL_ERROR "ENABLE_VAAPI_ENCODER requires libva development files (pkg-config modules: libva libva-drm)")
+    endif()
+endif()
+
 set(ELEMENT_INCLUDE_DIRS)
 set(ELEMENT_LIBRARIES)
 
@@ -312,6 +326,11 @@ endif()
 if(ENABLE_ONEAPI_ENCODER)
     list(APPEND ELEMENT_INCLUDE_DIRS ${ONEVPL_INCLUDE_DIRS})
     list(APPEND ELEMENT_LIBRARIES ${ONEVPL_LIBRARIES})
+endif()
+
+if(ENABLE_VAAPI_ENCODER)
+    list(APPEND ELEMENT_INCLUDE_DIRS ${LIBVA_INCLUDE_DIRS})
+    list(APPEND ELEMENT_LIBRARIES ${LIBVA_LIBRARIES})
 endif()
 
 # ── Include directories ──────────────────────────────────────────────────
@@ -476,6 +495,10 @@ endif()
 
 if(ENABLE_ONEAPI_ENCODER)
     list(APPEND ELEMENT_LIBRARY_SOURCES src/oneapi_video_encoder.c)
+endif()
+
+if(ENABLE_VAAPI_ENCODER)
+    list(APPEND ELEMENT_LIBRARY_SOURCES src/vaapi_video_encoder.c)
 endif()
 
 if(BUILD_SHARED)
@@ -716,7 +739,17 @@ else()
     set(ONEAPI_ENCODER_PLUGINS "")
 endif()
 
-set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_rtsp_server zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_netsrc zst_netsink ${JETSON_PLUGINS} ${ONEAPI_ENCODER_PLUGINS})
+if(ENABLE_VAAPI_ENCODER)
+    add_library(zst_vaapienc SHARED src/vaapi_video_encoder.c)
+    target_compile_definitions(zst_vaapienc PRIVATE BUILDING_PLUGIN)
+    target_include_directories(zst_vaapienc PRIVATE ${LIBVA_INCLUDE_DIRS})
+    target_link_libraries(zst_vaapienc PRIVATE zstreamer ${AVCODEC_LIBRARIES} ${AVUTIL_LIBRARIES} ${LIBVA_LIBRARIES})
+    set(VAAPI_ENCODER_PLUGINS zst_vaapienc)
+else()
+    set(VAAPI_ENCODER_PLUGINS "")
+endif()
+
+set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_rtsp_server zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_netsrc zst_netsink ${JETSON_PLUGINS} ${ONEAPI_ENCODER_PLUGINS} ${VAAPI_ENCODER_PLUGINS})
 
 if(HAS_V4L2)
     list(APPEND PLUGIN_TARGETS zst_v4l2source zst_v4l2sink)
@@ -882,6 +915,19 @@ if(BUILD_TESTS)
             PRIVATE zstreamer-elements
         )
         add_test(NAME test_oneapi_encoder COMMAND test_oneapi_encoder)
+    endif()
+
+    if(ENABLE_VAAPI_ENCODER)
+        add_executable(test_vaapi_encoder
+            tests/test_vaapi_encoder.c
+        )
+        target_include_directories(test_vaapi_encoder
+            PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+        )
+        target_link_libraries(test_vaapi_encoder
+            PRIVATE zstreamer-elements
+        )
+        add_test(NAME test_vaapi_encoder COMMAND test_vaapi_encoder)
     endif()
 
     if(HAS_V4L2)

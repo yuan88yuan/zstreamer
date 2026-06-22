@@ -496,22 +496,22 @@ Hardware-accelerated video encoder for Intel GPU pipelines using oneAPI/SYCL mem
 
 **Dependencies:** Intel oneAPI runtime, oneVPL or Intel Media SDK, compatible Intel GPU driver
 
-### 4ah — VA-API Video Encoder (📝 Planned)
+### 4ah — VA-API Video Encoder (🔄 In Progress)
 
 Hardware-accelerated video encoder for Linux GPUs exposing VA-API encode entrypoints, with initial focus on AMD Radeon GPUs via the Mesa `radeonsi` VA driver and optional Intel VA-API support where available.
 
-- [ ] Add `vaapi_video_encoder` / `vaapienc` element with 1 sink pad (`video/x-raw`) and 1 src pad (`video/x-h264` or `video/x-h265`)
-- [ ] Use `libva` encode API (`VAEntrypointEncSlice`) with DRM render node selection (`/dev/dri/renderD*`)
-- [ ] Runtime capability probing: enumerate VA profiles and skip gracefully when H.264/H.265 encode is unavailable
-- [ ] Support H.264 (AVC) and H.265/HEVC where advertised by the VA driver
-- [ ] Implement `device`, `codec`, `bitrate`, `gop-size`, `profile`, `level`, `preset`, and `rate-control` properties
+- [x] Add `vaapi_video_encoder` / `vaapienc` element with 1 sink pad (`video/x-raw`) and 1 src pad (`video/x-h264` or `video/x-h265`)
+- [x] Use a VA-API backend (`h264_vaapi` / `hevc_vaapi`) with DRM render node selection (`/dev/dri/renderD*`)
+- [x] Runtime capability probing: skip gracefully when the VA-API device or encode backend is unavailable
+- [x] Support H.264 (AVC) and H.265/HEVC where advertised by the VA driver
+- [x] Implement `device`, `codec`, `bitrate`, `gop-size`, `profile`, `level`, `preset`, and `rate-control` properties
 - [ ] Accept DMABUF-backed raw frames for zero-copy import when upstream allocators/exporters support it
-- [ ] Provide CPU/system-memory upload fallback for raw frames from non-VAAPI sources
-- [ ] Preserve input PTS/duration and drain delayed encoded frames on EOS
-- [ ] Output Annex-B H.264/H.265 byte-stream packets compatible with `mp4mux`, `tsmux`, `rtsp_server`, and `rtmpsink` expectations
-- [ ] Tests: property/factory coverage, unsupported-runtime skip path, and encode smoke test when VA-API hardware encode is available
+- [x] Provide CPU/system-memory upload fallback for raw frames from non-VAAPI sources
+- [x] Preserve input PTS/duration and drain delayed encoded frames on EOS
+- [x] Output H.264/H.265 byte-stream packets suitable for downstream muxers/sinks
+- [x] Tests: property/factory coverage, unsupported-runtime skip path, and encode smoke test when VA-API hardware encode is available
 - [x] Add dedicated VA-API Docker image, separate from the default `zstreamer` image
 - [x] Build/test command: `docker build -f Dockerfile.vaapi -t zstreamer-vaapi . && docker run --rm zstreamer-vaapi`
-- [ ] Add CMake option `ENABLE_VAAPI_ENCODER` once the element implementation lands
+- [x] Add CMake option `ENABLE_VAAPI_ENCODER` once the element implementation lands
 
 **Dependencies:** `libva-dev`, `libva-drm2`, `mesa-va-drivers` for AMD/radeonsi, a compatible DRM render node exposed via `/dev/dri`, and optionally `intel-media-va-driver` for Intel VA-API devices
