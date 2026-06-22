@@ -1,0 +1,74 @@
+#===============================================================================
+#  zstreamer — OpenGL Sink (glsink) Docker Environment
+#
+#  Build:    docker build -f Dockerfile.gl -t zstreamer-gl .
+#  Run:      docker run --rm zstreamer-gl              # runs ctest
+#  Run dev:  docker run --rm -it zstreamer-gl bash      # interactive shell
+#
+#  Uses Xvfb + Mesa software rendering (llvmpipe) for headless GL testing.
+#===============================================================================
+
+FROM public.ecr.aws/docker/library/ubuntu:24.04 AS base
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── Build dependencies ──────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    pkg-config \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── X11 and OpenGL development libraries ────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libx11-dev \
+    libxext-dev \
+    libgl1-mesa-dev \
+    libglu1-mesa-dev \
+    mesa-common-dev \
+    libfreetype-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Software rendering and virtual display for testing ──────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb \
+    xauth \
+    mesa-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Copy source & build ─────────────────────────────────────────────────
+WORKDIR /workspace
+COPY . .
+
+RUN mkdir -p build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Debug \
+             -DBUILD_TESTS=ON \
+             -DENABLE_VULKAN=OFF \
+             -DENABLE_GLSINK=ON && \
+    make -j$(nproc)
+
+# ── Interactive development ────────────────────────────────────────────
+FROM base AS dev
+WORKDIR /workspace
+ENV DISPLAY=:99
+ENV LIBGL_ALWAYS_SOFTWARE=true
+ENV GALLIUM_DRIVER=llvmpipe
+CMD ["/bin/bash"]
+
+# ── CI / one-shot test ──────────────────────────────────────────────────
+FROM base AS ci
+WORKDIR /workspace/build
+ENV DISPLAY=:99
+ENV LIBGL_ALWAYS_SOFTWARE=true
+ENV GALLIUM_DRIVER=llvmpipe
+
+# Start Xvfb, run the GL tests and core tests
+CMD Xvfb :99 -screen 0 1024x768x24 -ac & \
+    sleep 0.5 && \
+    export DISPLAY=:99 && \
+    export LIBGL_ALWAYS_SOFTWARE=true && \
+    export GALLIUM_DRIVER=llvmpipe && \
+    ./test_gl_sink && \
+    ./test_core && \
+    echo "--- All functional tests passed ---"

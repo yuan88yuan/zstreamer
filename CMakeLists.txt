@@ -13,6 +13,7 @@ option(ENABLE_PLUGINS  "Enable dlopen-based plugin loading" ON)
 option(ENABLE_ONEAPI_ENCODER "Build Intel oneAPI video encoder element" OFF)
 option(ENABLE_VAAPI_ENCODER "Build Linux VA-API video encoder element" OFF)
 option(ENABLE_VAAPI_DECODER "Build Linux VA-API video decoder element" OFF)
+option(ENABLE_GLSINK "Build OpenGL display sink element" ON)
 
 # ── Dependencies ─────────────────────────────────────────────────────────
 find_package(Threads REQUIRED)
@@ -197,6 +198,20 @@ endif()
 
 # ── NVIDIA Jetson Allocator Support ──────────────────────────────────
 option(ENABLE_JETSON "Enable Jetson NvBuffer allocator support" OFF)
+# ── OpenGL Sink (GLSink) ────────────────────────────────────────────────────
+if(ENABLE_GLSINK)
+    find_package(X11 QUIET)
+    find_package(OpenGL QUIET)
+    if(X11_FOUND AND OPENGL_FOUND)
+        set(HAS_GL ON)
+        add_compile_definitions(HAS_GL=1)
+        message(STATUS "OpenGL sink (glsink) enabled (X11=${X11_FOUND}, GL=${OPENGL_FOUND})")
+    else()
+        message(STATUS "OpenGL sink disabled: X11_FOUND=${X11_FOUND}, OPENGL_FOUND=${OPENGL_FOUND}")
+        set(ENABLE_GLSINK OFF)
+    endif()
+endif()
+
 if(ENABLE_JETSON)
     add_compile_definitions(HAS_JETSON=1)
     find_library(NVBUF_UTILS_LIBRARY NAMES nvbuf_utils)
@@ -335,6 +350,11 @@ endif()
 if(HAS_SRT)
     list(APPEND ELEMENT_INCLUDE_DIRS ${SRT_INCLUDE_DIRS})
     list(APPEND ELEMENT_LIBRARIES ${SRT_LIBRARIES})
+endif()
+
+if(ENABLE_GLSINK)
+    list(APPEND ELEMENT_INCLUDE_DIRS ${X11_INCLUDE_DIR} ${OPENGL_INCLUDE_DIR})
+    list(APPEND ELEMENT_LIBRARIES ${X11_LIBRARIES} ${OPENGL_LIBRARIES} ${X11_Xext_LIB})
 endif()
 
 if(ENABLE_ONEAPI_ENCODER)
@@ -524,6 +544,10 @@ if(ENABLE_VAAPI_DECODER)
     list(APPEND ELEMENT_LIBRARY_SOURCES src/vaapi_video_decoder.c)
 endif()
 
+if(ENABLE_GLSINK)
+    list(APPEND ELEMENT_LIBRARY_SOURCES src/gl_sink.c)
+endif()
+
 if(BUILD_SHARED)
     add_library(zstreamer-elements SHARED ${ELEMENT_LIBRARY_SOURCES})
 else()
@@ -688,6 +712,13 @@ add_library(zst_netsink SHARED src/net_sink.c)
 target_compile_definitions(zst_netsink PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_netsink PRIVATE zstreamer)
 
+if(ENABLE_GLSINK)
+    add_library(zst_glsink SHARED src/gl_sink.c)
+    target_compile_definitions(zst_glsink PRIVATE BUILDING_PLUGIN)
+    target_include_directories(zst_glsink PRIVATE ${X11_INCLUDE_DIR} ${OPENGL_INCLUDE_DIR})
+    target_link_libraries(zst_glsink PRIVATE zstreamer ${X11_LIBRARIES} ${OPENGL_LIBRARIES} ${X11_Xext_LIB})
+endif()
+
 if(HAS_FFMPEG)
     add_library(zst_h264decoder SHARED src/h264_decoder.c)
     target_compile_definitions(zst_h264decoder PRIVATE BUILDING_PLUGIN)
@@ -802,6 +833,10 @@ endif()
 
 if(ENABLE_ONEAPI_ENCODER)
     list(APPEND PLUGIN_TARGETS zst_oneapienc)
+endif()
+
+if(ENABLE_GLSINK)
+    list(APPEND PLUGIN_TARGETS zst_glsink)
 endif()
 
 if(HAS_FFMPEG)
@@ -927,6 +962,19 @@ if(BUILD_TESTS)
         PRIVATE zstreamer-elements
     )
     add_test(NAME test_net_sink COMMAND test_net_sink)
+
+    if(ENABLE_GLSINK)
+        add_executable(test_gl_sink
+            tests/test_gl_sink.c
+        )
+        target_include_directories(test_gl_sink
+            PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+        )
+        target_link_libraries(test_gl_sink
+            PRIVATE zstreamer-elements
+        )
+        add_test(NAME test_gl_sink COMMAND test_gl_sink)
+    endif()
 
     if(HAS_FFMPEG)
         add_executable(test_http_source

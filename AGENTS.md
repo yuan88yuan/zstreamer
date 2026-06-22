@@ -16,6 +16,7 @@ It provides a **GStreamer-like** pipeline architecture: elements connected via p
 ├── AGENTS.md          ← This file — project context for AI coding agents
 ├── CMakeLists.txt     ← CMake build system
 ├── Dockerfile         ← Ubuntu 24.04 dev environment
+├── Dockerfile.gl      ← OpenGL/X11 glsink validation env (Xvfb + Mesa software rendering)
 ├── .dockerignore
 ├── .gitignore
 ├── include/           ← Public API headers
@@ -84,9 +85,11 @@ It provides a **GStreamer-like** pipeline architecture: elements connected via p
 │   ├── rtsp_server.c      ← Multi-session RTSP server (TCP interleaved + UDP)
 │   ├── rtmp_source.c      ← RTMP source (FLV demux)
 │   ├── rtmp_sink.c        ← RTMP sink (FLV mux/publish)
+│   ├── gl_sink.c          ← OpenGL/X11 display sink (GLX, GLSL YUV→RGB, null-mode fallback)
 │   └── mp4_demuxer.c      ← FFmpeg libavformat MP4 demuxer
 ├── tests/
-│   ├── test_core.c    ← 62 unit tests: core + scheduler + queue + caps + bus + plugins + log + conversion + codecs + advanced features
+│   ├── test_core.c    ← Core unit tests: core + scheduler + queue + caps + bus + plugins + log + conversion + codecs + advanced features
+│   ├── test_gl_sink.c ← glsink tests for factory/properties/lifecycle/Xvfb smoke coverage
 │   ├── example_record.c ← Full pipeline demo with queue elements
 │   └── demo_rtsp_mod.c  ← RTSP media-on-demand demo application
 
@@ -136,6 +139,7 @@ docker build -f Dockerfile.xlnk2_arm64 -t zstreamer-xlnk2-arm64 .
 | `BUILD_SHARED`    | OFF     | Build core as `.so` instead of `.a`   |
 | `ENABLE_PLUGINS`  | ON      | Enable dlopen-based plugin loading    |
 | `ENABLE_JETSON`   | OFF     | Enable Jetson NvBuffer allocator support |
+| `ENABLE_GLSINK`   | ON      | Build OpenGL/X11 display sink when X11/OpenGL dependencies are found |
 
 ### Docker Targets
 
@@ -145,6 +149,7 @@ The Dockerfile has two build targets:
 |--------|--------------------------------------------|-------------------------------|
 | `ci`   | `docker run --rm zstreamer`                 | One-shot `ctest` (default)    |
 | `dev`  | `docker run --rm -it zstreamer bash`        | Interactive shell with build  |
+| GL sink | `docker build -f Dockerfile.gl -t zstreamer-gl . && docker run --rm zstreamer-gl` | Headless glsink validation with Xvfb + Mesa software rendering |
 
 ### NVIDIA Jetson Build (Dockerfile.jetson)
 
@@ -275,13 +280,13 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | Core Framework              | ✅ All 8 core modules implemented|
 | Scheduler Integration       | ✅ Topological sort, push/pull, EOS, state hardening |
 | Queue Element               | ✅ First-class queue with worker thread |
-| Real Element Implementations| ✅ 35 elements: v4l2_source, v4l2_sink, alsa_source, alsa_sink, x264enc, x265enc, h264_decoder, h265_encoder, h265_decoder, aac_encoder, aac_decoder, mp4_muxer, mp4_demuxer, file_sink, file_source, fake_sink, video_scaler, audio_resampler, video_test_src, audio_test_src, text_overlay, text_source, srt_parser, net_source, net_sink, rtsp_source, rtsp_sink, rtsp_server, rtmp_source, rtmp_sink, srt_source, srt_sink, mpegts_muxer, mpegts_demuxer, http_source |
-| Planned Element Additions   | 📝 vaapidec (VA-API Video Decoder) |
+| Real Element Implementations| ✅ 36 elements: v4l2_source, v4l2_sink, alsa_source, alsa_sink, x264enc, x265enc, h264_decoder, h265_encoder, h265_decoder, aac_encoder, aac_decoder, mp4_muxer, mp4_demuxer, file_sink, file_source, fake_sink, video_scaler, audio_resampler, video_test_src, audio_test_src, text_overlay, text_source, srt_parser, net_source, net_sink, rtsp_source, rtsp_sink, rtsp_server, rtmp_source, rtmp_sink, srt_source, srt_sink, mpegts_muxer, mpegts_demuxer, http_source, glsink |
+| Planned Element Additions   | 📝 x11sink, vaapidec (VA-API Video Decoder), Xilinx VCU encoder/decoder |
 | Caps Negotiation            | ✅ Done                          |
 | Event Bus                   | ✅ Done                          |
 | Dynamic Plugins             | ✅ Done                          |
 | Logging System              | ✅ Done                          |
-| Unit Tests                  | ✅ 65 core tests + test_net_source + test_net_sink + install test, all passing |
+| Unit Tests                  | ✅ Core tests + network tests + glsink tests; glsink validated via `Dockerfile.gl` (`test_gl_sink` + `test_core` pass under Xvfb/Mesa) |
 | Allocator API + Pool        | ✅ Done (allocator interface, pool, CPU/DMABUF/CUDA/Vulkan/oneAPI allocators, elements migrated, topology-aware sizing, comprehensive tests) |
 | Clock                       | ✅ Done (system clock + pipeline integration) |
 | Element Public API (8d)     | ✅ Done (Descriptor ABI, plugin introspection, typed properties, official metadata, convenience headers, library & installation layout) |
@@ -304,6 +309,7 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | SRT Transport Protocols     | ✅ Done                          |
 | MPEG-TS mux/demux           | ✅ Done                          |
 | MP4 Demuxer                 | ✅ Done                        |
+| OpenGL Sink (4ak)           | ✅ Initial implementation (GLX/X11 backend, GLSL YUV→RGB, null-mode fallback, dynamic plugin, Dockerfile.gl tests); known review follow-ups are tracked in [wiki/phase-elements.md](wiki/phase-elements.md#4ak--opengl-sink-glsink) |
 | Clock Sync Bugfix           | ✅ Fixed (frame-to-frame delta comparison in scheduler — see [wiki/clock-sync-debug.md](wiki/clock-sync-debug.md)) |
 | CI Pipeline                 | ✅ Done (GitHub Actions CI with unit and docker-run loopback integration tests) |
 | Documentation               | ✅ Phase 10 Done (Doxygen, Tutorials, Architecture Deep-Dives, Plugin Authoring) |
