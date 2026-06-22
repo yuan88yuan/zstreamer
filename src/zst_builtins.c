@@ -65,6 +65,9 @@ zst_element_t* zst_h265_decoder_create(void);
 zst_element_t* zst_nv_video_encoder_create(void);
 zst_element_t* zst_nv_video_decoder_create(void);
 #endif
+#ifdef HAS_ONEAPI_ENCODER
+zst_element_t* zst_oneapi_encoder_create(void);
+#endif
 #ifdef HAS_FFMPEG
 zst_element_t* zst_aac_encoder_create(void);
 zst_element_t* zst_aac_decoder_create(void);
@@ -138,6 +141,11 @@ static const zst_pad_template_t g_pad_aacenc[] = {
 };
 static const zst_pad_template_t g_pad_aacdec[] = {
     { "sink", ZST_PAD_SINK, "audio/x-aac" }, { "src", ZST_PAD_SRC, "audio/x-raw" }
+};
+#endif
+#ifdef HAS_ONEAPI_ENCODER
+static const zst_pad_template_t g_pad_oneapienc[] = {
+    { "sink", ZST_PAD_SINK, "video/x-raw" }, { "src", ZST_PAD_SRC, "video/x-h264" }
 };
 #endif
 static const zst_pad_template_t g_pad_video_filter[] = {
@@ -237,6 +245,17 @@ static const zst_property_spec_t g_builtin_fakesink_props[] = {
     { "log-period", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE | ZST_PROPERTY_RUNTIME, "1", "Statistics log period in seconds" },
     { "push-per-second", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE | ZST_PROPERTY_RUNTIME, "false", "Log received buffer push-rate statistics every log-period seconds" }
 };
+
+#ifdef HAS_ONEAPI_ENCODER
+static const zst_property_spec_t g_builtin_oneapienc_props[] = {
+    { "codec", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "h264", "Output codec: h264 or h265" },
+    { "bitrate", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "4000000", "Target bitrate in bits/sec" },
+    { "gop-size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "30", "GOP/keyframe interval" },
+    { "fps", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "30/1", "Frame rate as N or N/D" },
+    { "profile", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "high", "Codec profile" },
+    { "level", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Codec level; empty means encoder default" }
+};
+#endif
 
 #ifdef HAS_V4L2
 static const zst_property_spec_t g_builtin_v4l2src_props[] = {
@@ -495,6 +514,9 @@ create_builtin_element(const char* name)
     if (strcmp(name, "nvenc") == 0)        return zst_nv_video_encoder_create();
     if (strcmp(name, "nvdec") == 0)        return zst_nv_video_decoder_create();
 #endif
+#ifdef HAS_ONEAPI_ENCODER
+    if (strcmp(name, "oneapienc") == 0)    return zst_oneapi_encoder_create();
+#endif
 #ifdef HAS_FFMPEG
     if (strcmp(name, "aacenc") == 0)       return zst_aac_encoder_create();
     if (strcmp(name, "aacdec") == 0)       return zst_aac_decoder_create();
@@ -601,6 +623,9 @@ static const zst_element_desc_t g_builtin_descs[] = {
 #ifdef HAS_JETSON
     DESC("nvenc",    "NVIDIA V4L2 Video Encoder", "Codec/Encoder","Encodes raw video to H.264/H.265 using NV V4L2 extensions",                                                              NULL,                           0, g_pad_x264enc),
     DESC("nvdec",    "NVIDIA V4L2 Video Decoder", "Codec/Decoder","Decodes H.264/H.265 video frames using NV V4L2 extensions",                                                              NULL,                           0, g_pad_h264dec),
+#endif
+#ifdef HAS_ONEAPI_ENCODER
+    DESC("oneapienc", "Intel oneAPI Video Encoder", "Codec/Encoder", "Encodes raw video to H.264/H.265 using Intel oneVPL hardware acceleration",                         g_builtin_oneapienc_props,      sizeof(g_builtin_oneapienc_props) / sizeof(g_builtin_oneapienc_props[0]), g_pad_oneapienc),
 #endif
     DESC("nvvideoscaler", "NVIDIA V4L2 Video Scaler", "Filter/Video", "Hardware video scaler and format converter using NV V4L2 extensions",                                    NULL,                           0, g_pad_video_filter)
 };

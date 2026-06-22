@@ -1,6 +1,6 @@
-# Element Implementations — Phase 4  (✅ 33 implemented; 📝 planned additions)
+# Element Implementations — Phase 4  (✅ 35 implemented; 📝 planned additions)
 
-Thirty-three production elements are implemented with real hardware/codec/protocol integrations and synthetic fallbacks where appropriate.
+Thirty-five production elements are implemented with real hardware/codec/protocol integrations and synthetic fallbacks where appropriate.
 Additional planned elements cover future protocol/container expansion.
 Two implemented elements handle format conversion (scaling, resampling) — essential once caps negotiation (Phase 5) requires automatic conversion between mismatched formats.
 
@@ -476,22 +476,23 @@ Reference: https://github.com/Xilinx/vcu-ctrl-sw.git
 - [ ] Decode directly into DMABUFs allocated by `zstreamer`'s pool for zero-copy output
 - [ ] Map pixel plane metadata (`AL_TPixMapMetaData`) to `zst_video_frame_t` payloads
 
-### 4ag — Intel oneAPI Video Encoder (🔄 In Progress)
+### 4ag — Intel oneAPI Video Encoder (✅ Done)
 
 Hardware-accelerated video encoder for Intel GPU pipelines using oneAPI/SYCL memory integration and Intel media acceleration APIs.
 
-- [ ] Add `oneapi_video_encoder` / `oneapienc` element with 1 sink pad (`video/x-raw`) and 1 src pad (`video/x-h264` or `video/x-h265`)
-- [ ] Select an Intel backend: oneVPL/Media SDK for encode control with oneAPI USM interop where available
-- [ ] Support H.264 (AVC) and H.265/HEVC hardware encoding
-- [ ] Implement bitrate, GOP/keyframe interval, profile, level, and preset properties
+- [x] Add `oneapi_video_encoder` / `oneapienc` element with 1 sink pad (`video/x-raw`) and 1 src pad (`video/x-h264` or `video/x-h265`)
+- [x] Select an Intel backend: oneVPL for hardware encode control
+- [x] Support H.264 (AVC) and H.265/HEVC hardware encoding
+- [x] Implement bitrate, GOP/keyframe interval, FPS, profile, and level properties
 - [ ] Accept `ZST_MEMORY_ONEAPI` buffers from `zst_allocator_oneapi_create()` without CPU copies when the backend supports shared device memory
-- [ ] Provide CPU/DMABUF upload fallback paths for raw frames from non-oneAPI sources
-- [ ] Preserve input PTS/duration and drain delayed encoder frames on EOS
-- [ ] Add runtime capability probing so the element is skipped gracefully when Intel GPU drivers or oneVPL are unavailable
-- [ ] Tests: property/factory coverage, unsupported-runtime skip path, and encode smoke test when hardware is available
+- [x] Provide CPU YUV420P upload path via internal NV12 surfaces for raw frames from non-oneAPI sources
+- [ ] Provide DMABUF upload/import path for raw frames from non-oneAPI sources
+- [x] Preserve input PTS/duration and drain delayed encoder frames on EOS
+- [x] Add runtime capability probing so the element is skipped gracefully when Intel GPU drivers or oneVPL are unavailable
+- [x] Tests: property/factory coverage, unsupported-runtime skip path, and encode smoke test when hardware is available
 - [x] Build and test only in a dedicated Intel oneAPI Docker image, separate from the default `zstreamer` image
 - [x] Add `Dockerfile.oneapi` based on Intel's oneAPI development image with oneVPL/media dependencies installed
 - [x] Add CMake option `ENABLE_ONEAPI_ENCODER` so oneAPI-specific code is opt-in and does not affect non-Intel builds
 - [x] Add oneAPI CI/test command: `docker build -f Dockerfile.oneapi -t zstreamer-oneapi . && docker run --rm zstreamer-oneapi`
 
-**Dependencies:** Intel oneAPI runtime, oneVPL or Intel Media SDK, compatible Intel GPU driver
+**Dependencies:** Intel oneAPI runtime, oneVPL dispatcher, Intel oneVPL GPU runtime (`libmfx-gen1`), Intel media VA driver, compatible Intel GPU driver

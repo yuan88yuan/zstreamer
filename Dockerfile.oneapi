@@ -33,6 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     nettle-dev \
     libvulkan-dev \
     libvpl-dev \
+    libmfx-gen1 \
     intel-media-va-driver-non-free \
     vainfo \
     && rm -rf /var/lib/apt/lists/*
