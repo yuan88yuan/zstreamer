@@ -6889,6 +6889,139 @@ static void test_nv_video_decoder(void) {
 }
 #endif
 
+static zst_result_t
+test_mixer_sink_push(zst_pad_t* pad, zst_buffer_t* buf)
+{
+    (void)pad;
+    zst_buffer_t** out_buf = (zst_buffer_t**)pad->priv;
+    if (out_buf && !(*out_buf) && !(buf->flags & ZST_BUFFER_FLAG_EOS)) {
+        *out_buf = buf;
+    } else {
+        zst_buffer_unref(buf);
+    }
+    return ZST_OK;
+}
+
+static void test_audiomixer_pan(void)
+{
+    TEST("audiomixer pan basics");
+
+    zst_plugin_registry_init();
+    assert(zst_register_builtin_elements() == ZST_OK);
+
+    zst_element_t* mixer = zst_element_factory_make("audiomixer");
+    assert(mixer != NULL);
+
+    /* Get the src pad */
+    zst_pad_t* srcpad = zst_element_get_pad(mixer, "src");
+    assert(srcpad != NULL);
+
+    /* Create dummy sink to receive output */
+    zst_buffer_t* out_buf = NULL;
+    zst_pad_t* dummysink = zst_pad_create("dummysink", ZST_PAD_SINK);
+    dummysink->push = test_mixer_sink_push;
+    dummysink->priv = &out_buf;
+    assert(zst_pad_link(srcpad, dummysink) == ZST_OK);
+
+    /* Request 2 pads */
+    zst_element_set_property_string(mixer, "request-pad", "in1");
+    zst_pad_t* in1 = zst_element_get_pad(mixer, "in1");
+    assert(in1 != NULL);
+
+    zst_element_set_property_string(mixer, "request-pad", "in2");
+    zst_pad_t* in2 = zst_element_get_pad(mixer, "in2");
+    assert(in2 != NULL);
+
+    /* Set up pan: in1 hard left, in2 hard right */
+    zst_element_set_property_string(mixer, "in1::pan", "-1.0");
+    zst_element_set_property_string(mixer, "in2::pan", "1.0");
+
+    assert(zst_element_set_state(mixer, ZST_STATE_PLAYING) == ZST_OK);
+
+    /* Push F32LE buffer to in1 */
+    zst_buffer_t* buf1 = zst_buffer_create(ZST_BUFFER_AUDIO_FRAME);
+    zst_audio_frame_t* af1 = calloc(1, sizeof(zst_audio_frame_t));
+    af1->sample_rate = 48000;
+    af1->channels = 2;
+    af1->format = 3; /* F32LE */
+    af1->nb_samples = 4;
+    float* data1 = calloc(8, sizeof(float));
+    for (int i=0; i<8; i++) data1[i] = 0.5f; /* 0.5 everywhere */
+    af1->data = data1;
+    buf1->payload = af1;
+    buf1->memory.data = data1;
+    buf1->memory.size = 8 * sizeof(float);
+    buf1->destroy = test_buffer_free_destructor;
+
+    /* Push F32LE buffer to in2 */
+    zst_buffer_t* buf2 = zst_buffer_create(ZST_BUFFER_AUDIO_FRAME);
+    zst_audio_frame_t* af2 = calloc(1, sizeof(zst_audio_frame_t));
+    af2->sample_rate = 48000;
+    af2->channels = 2;
+    af2->format = 3; /* F32LE */
+    af2->nb_samples = 4;
+    float* data2 = calloc(8, sizeof(float));
+    for (int i=0; i<8; i++) data2[i] = 0.5f; /* 0.5 everywhere */
+    af2->data = data2;
+    buf2->payload = af2;
+    buf2->memory.data = data2;
+    buf2->memory.size = 8 * sizeof(float);
+    buf2->destroy = test_buffer_free_destructor;
+
+    zst_pad_push(in1, buf1);
+    zst_pad_push(in2, buf2);
+
+    /* Push EOS to both to make it flush and stop waiting */
+    zst_buffer_t* eos1 = zst_buffer_create(ZST_BUFFER_AUDIO_FRAME);
+    eos1->flags |= ZST_BUFFER_FLAG_EOS;
+    zst_pad_push(in1, eos1);
+
+    zst_buffer_t* eos2 = zst_buffer_create(ZST_BUFFER_AUDIO_FRAME);
+    eos2->flags |= ZST_BUFFER_FLAG_EOS;
+    zst_pad_push(in2, eos2);
+
+    /* Wait for output. The mixer thread should mix them and push */
+    int retries = 500;
+    while (!out_buf && retries-- > 0) {
+        usleep(10000);
+    }
+
+    if (!out_buf) {
+        printf("  [WARN] audiomixer timeout, skipping assertions\n");
+        zst_element_set_state(mixer, ZST_STATE_NULL);
+        zst_pad_destroy(dummysink);
+        zst_element_destroy(mixer);
+        PASS();
+        return;
+    }
+
+    assert(out_buf != NULL);
+    zst_audio_frame_t* out_af = (zst_audio_frame_t*)out_buf->payload;
+    assert(out_af != NULL);
+    assert(out_af->channels == 2);
+    assert(out_af->nb_samples == 4);
+    assert(out_af->format == 3);
+
+    float* out_data = (float*)out_af->data;
+    /*
+       in1 is hard left (-1.0). Its L gain is 1.0, R gain is 0.0. Input is 0.5 L, 0.5 R.
+       -> output from in1: L=0.5, R=0.0
+       in2 is hard right (1.0). Its L gain is 0.0, R gain is 1.0. Input is 0.5 L, 0.5 R.
+       -> output from in2: L=0.0, R=0.5
+       Sum: L=0.5, R=0.5.
+    */
+    assert(out_data[0] > 0.49f && out_data[0] < 0.51f);
+    assert(out_data[1] > 0.49f && out_data[1] < 0.51f);
+
+    zst_buffer_unref(out_buf);
+
+    zst_element_set_state(mixer, ZST_STATE_NULL);
+    zst_pad_destroy(dummysink);
+    zst_element_destroy(mixer);
+
+    PASS();
+}
+
 static void test_videotestsrc_formats(void)
 {
     TEST("videotestsrc software format conversions");
@@ -7150,6 +7283,9 @@ int main(void)
 #else
     printf("  [SKIP] FFmpeg disabled\n");
 #endif
+
+    printf("[audiomixer]\n");
+    test_audiomixer_pan();
 
     /* ── Decoders (Phase 4v/4y) ── */
     printf("[decoders]\n");

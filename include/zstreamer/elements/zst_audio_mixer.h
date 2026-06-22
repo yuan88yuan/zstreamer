@@ -15,6 +15,7 @@ extern "C" {
 
 #define ZST_AUDIO_MIXER_PAD_PROP_VOLUME         "volume"
 #define ZST_AUDIO_MIXER_PAD_PROP_MUTE           "mute"
+#define ZST_AUDIO_MIXER_PAD_PROP_PAN            "pan"
 
 typedef struct {
     size_t struct_size;

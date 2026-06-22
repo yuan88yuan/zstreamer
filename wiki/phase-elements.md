@@ -662,7 +662,7 @@ Audio mixing element that accepts multiple synchronized audio frame streams and 
 **Dependencies:** core zstreamer audio frame APIs only.  ASRC for asynchronous inputs requires inserting `audioresampler asrc-mode=pts` upstream.
 
 **Follow-ups (not yet implemented):**
-- [ ] Per-pad `pan`/balance
+- [x] Per-pad `pan`/balance
 - [ ] PTS-based input alignment with silence fill for missing/late inputs
 - [ ] Latency/QoS: `max-lateness` dropping
 - [ ] Dynamic pad removal during PLAYING

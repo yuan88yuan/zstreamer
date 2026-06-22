@@ -33,6 +33,7 @@ typedef struct {
     zst_pad_t*  pad;
     zst_queue_t* queue;
     double      volume;
+    double      pan;        /* -1.0 (left) to 1.0 (right) */
     bool        mute;
     bool        eos;
 } audio_mixer_input_t;
@@ -285,6 +286,12 @@ audio_mixer_set_pad_property(audio_mixer_input_t* in, const char* prop, const ch
         if (in->volume < 0.0) in->volume = 0.0;
         return ZST_OK;
     }
+    if (strcmp(prop, "pan") == 0) {
+        in->pan = strtod(value, NULL);
+        if (in->pan < -1.0) in->pan = -1.0;
+        if (in->pan > 1.0)  in->pan = 1.0;
+        return ZST_OK;
+    }
     if (strcmp(prop, "mute") == 0) {
         in->mute = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0);
         return ZST_OK;
@@ -297,6 +304,10 @@ audio_mixer_get_pad_property(audio_mixer_input_t* in, const char* prop, char* ou
 {
     if (strcmp(prop, "volume") == 0) {
         snprintf(out, max, "%f", in->volume);
+        return ZST_OK;
+    }
+    if (strcmp(prop, "pan") == 0) {
+        snprintf(out, max, "%f", in->pan);
         return ZST_OK;
     }
     if (strcmp(prop, "mute") == 0) {
@@ -330,6 +341,7 @@ zst_audio_mixer_request_pad(zst_element_t* el, const char* name)
     }
 
     in->volume = 1.0;
+    in->pan    = 0.0;
     in->mute   = false;
     in->eos    = false;
 
@@ -552,12 +564,30 @@ audio_mixer_worker(void* arg)
             if (af->format == ZST_AUDIO_FMT_S16LE) {
                 int16_t* src = (int16_t*)af->data;
                 for (uint32_t j = 0; j < n; j++) {
-                    fmix[j] += ((double)src[j] / 32768.0) * volume;
+                    double gain = volume;
+                    if (s->channels >= 2) {
+                        uint32_t c = j % s->channels;
+                        if (c == 0) {
+                            gain *= (s->inputs[i].pan <= 0.0 ? 1.0 : (1.0 - s->inputs[i].pan));
+                        } else if (c == 1) {
+                            gain *= (s->inputs[i].pan >= 0.0 ? 1.0 : (1.0 + s->inputs[i].pan));
+                        }
+                    }
+                    fmix[j] += ((double)src[j] / 32768.0) * gain;
                 }
             } else if (af->format == ZST_AUDIO_FMT_F32LE) {
                 float* src = (float*)af->data;
                 for (uint32_t j = 0; j < n; j++) {
-                    fmix[j] += (double)src[j] * volume;
+                    double gain = volume;
+                    if (s->channels >= 2) {
+                        uint32_t c = j % s->channels;
+                        if (c == 0) {
+                            gain *= (s->inputs[i].pan <= 0.0 ? 1.0 : (1.0 - s->inputs[i].pan));
+                        } else if (c == 1) {
+                            gain *= (s->inputs[i].pan >= 0.0 ? 1.0 : (1.0 + s->inputs[i].pan));
+                        }
+                    }
+                    fmix[j] += (double)src[j] * gain;
                 }
             }
         }
