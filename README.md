@@ -360,6 +360,7 @@ gcc my_app.c $(pkg-config --cflags --libs zstreamer-elements) -o my_app
 | 40 element implementations | ✅ Complete |
 | Clock, A/V sync, QoS | ✅ Complete |
 | Allocator & buffer pool | ✅ Complete |
+| Intel oneAPI video encoder | 🔄 In Progress |
 | Element public API (factory, descriptors, typed properties) | ✅ Complete |
 | Installation (pkg-config, CMake export) | ✅ Complete |
 | RTMP source / sink | ✅ Complete |

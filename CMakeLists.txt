@@ -10,6 +10,7 @@ add_compile_definitions(_GNU_SOURCE)
 option(BUILD_TESTS     "Build test programs" ON)
 option(BUILD_SHARED    "Build core as shared library" OFF)
 option(ENABLE_PLUGINS  "Enable dlopen-based plugin loading" ON)
+option(ENABLE_ONEAPI_ENCODER "Build Intel oneAPI video encoder element" OFF)
 
 # ── Dependencies ─────────────────────────────────────────────────────────
 find_package(Threads REQUIRED)
@@ -241,6 +242,20 @@ if(ENABLE_ONEAPI)
         endif()
     else()
         message(STATUS "C++ compiler not loaded, skipping Intel oneAPI SYCL check")
+    endif()
+endif()
+
+if(ENABLE_ONEAPI_ENCODER)
+    if(NOT HAS_ONEAPI)
+        message(FATAL_ERROR "ENABLE_ONEAPI_ENCODER requires ENABLE_ONEAPI with working SYCL support")
+    endif()
+
+    pkg_check_modules(ONEVPL vpl)
+    if(ONEVPL_FOUND)
+        add_compile_definitions(HAS_ONEAPI_ENCODER=1)
+        message(STATUS "Intel oneAPI video encoder dependencies found")
+    else()
+        message(FATAL_ERROR "ENABLE_ONEAPI_ENCODER requires oneVPL development files (pkg-config module: vpl)")
     endif()
 endif()
 

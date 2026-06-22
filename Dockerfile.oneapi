@@ -1,0 +1,60 @@
+# zstreamer Intel oneAPI development and test image
+#
+# Build:
+#   docker build -f Dockerfile.oneapi -t zstreamer-oneapi .
+# Run tests:
+#   docker run --rm zstreamer-oneapi
+# Run with Intel GPU access for hardware smoke tests:
+#   docker run --rm --device /dev/dri zstreamer-oneapi
+
+ARG ONEAPI_IMAGE=intel/oneapi-basekit:latest
+FROM ${ONEAPI_IMAGE} AS base
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Core build dependencies and zstreamer multimedia dependencies.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    pkg-config \
+    ca-certificates \
+    libv4l-dev \
+    libx264-dev \
+    libx265-dev \
+    libavformat-dev \
+    libavcodec-dev \
+    libavutil-dev \
+    libswscale-dev \
+    libswresample-dev \
+    libasound2-dev \
+    libfreetype-dev \
+    libsrt-gnutls-dev \
+    libgnutls28-dev \
+    nettle-dev \
+    libvulkan-dev \
+    libvpl-dev \
+    intel-media-va-driver-non-free \
+    vainfo \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+COPY . .
+
+# Source setvars.sh when present so DPC++/SYCL and oneAPI runtime paths are available.
+SHELL ["/bin/bash", "-c"]
+RUN if [[ -f /opt/intel/oneapi/setvars.sh ]]; then source /opt/intel/oneapi/setvars.sh --force; fi && \
+    export CC=icx CXX=icpx && \
+    mkdir -p build-oneapi && cd build-oneapi && \
+    cmake .. \
+        -DCMAKE_BUILD_TYPE=Debug \
+        -DBUILD_TESTS=ON \
+        -DENABLE_ONEAPI_ENCODER=ON && \
+    make -j$(nproc)
+
+FROM base AS dev
+WORKDIR /workspace
+CMD ["/bin/bash"]
+
+FROM base AS ci
+WORKDIR /workspace/build-oneapi
+CMD ["bash", "-lc", "ZSTREAMER_TEST_PLUGIN_PATH=/workspace/build-oneapi/plugins ctest --output-on-failure"]
