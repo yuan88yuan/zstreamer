@@ -12,7 +12,7 @@
 #    docker build --target dev -t zstreamer-dev .
 #===============================================================================
 
-FROM public.ecr.aws/docker/library/ubuntu:24.04 AS base
+FROM ubuntu:24.04 AS base
 
 ENV DEBIAN_FRONTEND=noninteractive
 
