@@ -16,6 +16,7 @@ All phases are now documented in separate files for easier maintenance.
 | Post-P0 | [V4L2 DMA-BUF Exporter](phase-v4l2-expbuf.md) | ~110 | ✅ Implemented |
 | Post-P0 | [Intel oneAPI Video Encoder](phase-elements.md#4ag--intel-oneapi-video-encoder) | ~20 | ✅ Done |
 | Post-P0 | [VA-API Video Encoder](phase-elements.md#4ah--va-api-video-encoder) | ~20 | ✅ Done |
+| Post-P0 | VA-API Encoder DMABUF zero-copy import path | ~TBD | ✅ Done |
 | Cross-Compile | [ARM64 Cross-Compilation](cross-compilation.md) | ~50 | ✅ Done |
 | Bugfix  | [Clock Sync Debug](clock-sync-debug.md) | ~200 | ✅ Fixed — scheduler clock sync comparison was broken |
 

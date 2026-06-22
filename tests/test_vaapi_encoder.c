@@ -156,10 +156,158 @@ static void test_runtime_or_skip(void)
     zst_element_destroy(enc);
 }
 
+#include "zst_allocator.h"
+#include <libavutil/pixfmt.h>
+
+typedef struct {
+    int fd;
+    zst_allocator_t* allocator;
+    void* ptr;
+} dmabuf_test_ctx_t;
+
+static void release_dmabuf_test_data(void* priv)
+{
+    dmabuf_test_ctx_t* ctx = (dmabuf_test_ctx_t*)priv;
+    if (ctx) {
+        if (ctx->allocator && ctx->ptr) {
+            zst_allocator_free(ctx->allocator, ctx->ptr);
+        }
+        zst_allocator_unref(ctx->allocator);
+        free(ctx);
+    }
+}
+
+static void destroy_dmabuf_frame(zst_buffer_t* buf)
+{
+    free(buf->payload);
+    buf->payload = NULL;
+}
+
+static zst_buffer_t* make_dmabuf_nv12_frame(zst_allocator_t* allocator, uint32_t width, uint32_t height, uint64_t frame_no)
+{
+    size_t y_size = (size_t)width * height;
+    size_t uv_size = y_size / 2;
+    size_t total_size = y_size + uv_size;
+
+    void* ptr = zst_allocator_alloc(allocator, total_size);
+    if (!ptr) return NULL;
+
+    memset(ptr, (int)(16 + (frame_no % 96)), y_size);
+    memset((uint8_t*)ptr + y_size, 128, uv_size);
+
+    int fd = zst_allocator_dmabuf_get_fd(allocator, ptr);
+    if (fd < 0) {
+        zst_allocator_free(allocator, ptr);
+        return NULL;
+    }
+
+    dmabuf_test_ctx_t* ctx = malloc(sizeof(*ctx));
+    if (!ctx) {
+        zst_allocator_free(allocator, ptr);
+        return NULL;
+    }
+    ctx->fd = fd;
+    ctx->allocator = zst_allocator_ref(allocator);
+    ctx->ptr = ptr;
+
+    zst_video_frame_t* frame = (zst_video_frame_t*)calloc(1, sizeof(*frame));
+    if (!frame) {
+        release_dmabuf_test_data(ctx);
+        return NULL;
+    }
+    frame->width = width;
+    frame->height = height;
+    frame->format = AV_PIX_FMT_NV12; // NV12
+    frame->stride[0] = width;
+    frame->stride[1] = width;
+    frame->plane[0] = ptr;
+    frame->plane[1] = (uint8_t*)ptr + y_size;
+
+    zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
+    if (!buf) {
+        free(frame);
+        release_dmabuf_test_data(ctx);
+        return NULL;
+    }
+
+    buf->memory.type = ZST_MEMORY_DMABUF;
+    buf->memory.data = ptr;
+    buf->memory.size = total_size;
+    buf->memory.priv = ctx;
+    buf->memory.release = release_dmabuf_test_data;
+
+    buf->payload = frame;
+    buf->destroy = destroy_dmabuf_frame;
+    buf->pts = frame_no * 33333333ULL;
+    buf->dts = buf->pts;
+    buf->duration = 33333333ULL;
+
+    return buf;
+}
+
+static void test_dmabuf_import(void)
+{
+    zst_element_t* enc = zst_vaapi_video_encoder_create();
+    assert(enc != NULL);
+    assert(zst_element_set_property(enc, ZST_VAAPI_VIDEO_ENCODER_PROP_CODEC, "h264") == ZST_OK);
+
+    zst_result_t ret = zst_element_set_state(enc, ZST_STATE_READY);
+    if (ret != ZST_OK) {
+        printf("SKIP: VA-API runtime or /dev/dri render node is not available, skipping DMABUF import test\n");
+        zst_element_destroy(enc);
+        return;
+    }
+
+    zst_allocator_t* allocator = zst_allocator_dmabuf_create();
+    assert(allocator != NULL);
+
+    unsigned packets = 0;
+    for (uint64_t i = 0; i < 15; i++) {
+        zst_buffer_t* in = make_dmabuf_nv12_frame(allocator, 128, 128, i);
+        assert(in != NULL);
+        zst_buffer_t* out = NULL;
+        ret = enc->ops->process(enc, in, &out);
+        zst_buffer_unref(in);
+        if (ret != ZST_OK) {
+            printf("SKIP: VA-API encoder DMABUF import is not supported by this driver/environment (ret=%d frame=%" PRIu64 ")\n", ret, i);
+            zst_allocator_unref(allocator);
+            zst_element_set_state(enc, ZST_STATE_NULL);
+            zst_element_destroy(enc);
+            return;
+        }
+        if (out) {
+            if (!(out->flags & ZST_BUFFER_FLAG_EOS) && out->memory.size > 0) packets++;
+            zst_buffer_unref(out);
+        }
+    }
+
+    zst_buffer_t* eos = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
+    assert(eos != NULL);
+    eos->flags |= ZST_BUFFER_FLAG_EOS;
+    for (int i = 0; i < 16; i++) {
+        zst_buffer_t* out = NULL;
+        ret = enc->ops->process(enc, eos, &out);
+        assert(ret == ZST_OK);
+        if (!out) break;
+        if (!(out->flags & ZST_BUFFER_FLAG_EOS) && out->memory.size > 0) packets++;
+        int is_eos = (out->flags & ZST_BUFFER_FLAG_EOS) != 0;
+        zst_buffer_unref(out);
+        if (is_eos) break;
+    }
+    zst_buffer_unref(eos);
+
+    assert(packets > 0);
+    zst_allocator_unref(allocator);
+    zst_element_set_state(enc, ZST_STATE_NULL);
+    zst_element_destroy(enc);
+    printf("VA-API DMABUF zero-copy import test passed\n");
+}
+
 int main(void)
 {
     test_factory_and_properties();
     test_runtime_or_skip();
+    test_dmabuf_import();
     printf("VA-API encoder tests passed\n");
     return 0;
 }

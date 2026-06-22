@@ -12,6 +12,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <unistd.h>
 
 #include <libavcodec/avcodec.h>
 #include <libavutil/buffer.h>
@@ -20,6 +21,8 @@
 #include <libavutil/hwcontext.h>
 #include <libavutil/opt.h>
 #include <libavutil/pixfmt.h>
+#include <libavutil/hwcontext_drm.h>
+#include <libdrm/drm_fourcc.h>
 
 #include "zst_element.h"
 #include "zst_pad.h"
@@ -351,11 +354,128 @@ vaapi_copy_i420_to_nv12(AVFrame* sw, const zst_video_frame_t* frame)
     return ZST_OK;
 }
 
+static void free_drm_descriptor(void* opaque, uint8_t* data)
+{
+    (void)opaque;
+    if (data) {
+        AVDRMFrameDescriptor* desc = (AVDRMFrameDescriptor*)data;
+        for (int i = 0; i < desc->nb_objects; i++) {
+            if (desc->objects[i].fd >= 0) {
+                close(desc->objects[i].fd);
+            }
+        }
+        av_free(desc);
+    }
+}
+
+static uint32_t
+av_to_drm_format(uint32_t av_fmt)
+{
+    switch (av_fmt) {
+        case AV_PIX_FMT_YUV420P: return DRM_FORMAT_YUV420;
+        case AV_PIX_FMT_YUYV422: return DRM_FORMAT_YUYV;
+        case AV_PIX_FMT_NV12:    return DRM_FORMAT_NV12;
+        default:                 return 0;
+    }
+}
+
 static zst_result_t
 vaapi_make_hw_frame(vaapi_video_encoder_t* s, const zst_buffer_t* in, AVFrame** hw_out)
 {
     zst_video_frame_t* frame = in ? (zst_video_frame_t*)in->payload : NULL;
     if (!frame) return ZST_ERROR;
+
+    if (in->memory.type == ZST_MEMORY_DMABUF && in->memory.priv) {
+        int dmabuf_fd = *(int*)in->memory.priv;
+        if (dmabuf_fd >= 0) {
+            AVFrame* drm_frame = av_frame_alloc();
+            if (!drm_frame) return ZST_ERROR;
+
+            drm_frame->format = AV_PIX_FMT_DRM_PRIME;
+            drm_frame->width = frame->width;
+            drm_frame->height = frame->height;
+            drm_frame->pts = (int64_t)in->pts;
+
+            AVDRMFrameDescriptor* desc = av_mallocz(sizeof(*desc));
+            if (!desc) {
+                av_frame_free(&drm_frame);
+                return ZST_ERROR;
+            }
+
+            desc->nb_objects = 1;
+            desc->objects[0].fd = dup(dmabuf_fd);
+            if (desc->objects[0].fd < 0) {
+                av_free(desc);
+                av_frame_free(&drm_frame);
+                return ZST_ERROR;
+            }
+            desc->objects[0].size = in->memory.size;
+            desc->objects[0].format_modifier = DRM_FORMAT_MOD_LINEAR;
+
+            uint32_t drm_fmt = av_to_drm_format(frame->format);
+            if (drm_fmt == 0) {
+                if (frame->format == 0) drm_fmt = DRM_FORMAT_YUV420;
+                else if (frame->format == 1) drm_fmt = DRM_FORMAT_YUYV;
+                else drm_fmt = DRM_FORMAT_NV12;
+            }
+
+            desc->nb_layers = 1;
+            desc->layers[0].format = drm_fmt;
+
+            int nb_planes = 1;
+            if (drm_fmt == DRM_FORMAT_NV12) {
+                nb_planes = 2;
+            } else if (drm_fmt == DRM_FORMAT_YUV420) {
+                nb_planes = 3;
+            }
+            desc->layers[0].nb_planes = nb_planes;
+
+            for (int i = 0; i < nb_planes; i++) {
+                desc->layers[0].planes[i].object_index = 0;
+                if (frame->plane[i] && frame->plane[0]) {
+                    desc->layers[0].planes[i].offset = (ptrdiff_t)(frame->plane[i] - frame->plane[0]);
+                } else {
+                    desc->layers[0].planes[i].offset = 0;
+                }
+                desc->layers[0].planes[i].pitch = frame->stride[i];
+            }
+
+            drm_frame->buf[0] = av_buffer_create((uint8_t*)desc, sizeof(*desc), free_drm_descriptor, NULL, 0);
+            if (!drm_frame->buf[0]) {
+                close(desc->objects[0].fd);
+                av_free(desc);
+                av_frame_free(&drm_frame);
+                return ZST_ERROR;
+            }
+            drm_frame->data[0] = (uint8_t*)desc;
+
+            AVFrame* hw = av_frame_alloc();
+            if (!hw) {
+                av_frame_free(&drm_frame);
+                return ZST_ERROR;
+            }
+
+            hw->hw_frames_ctx = av_buffer_ref(s->codec_ctx->hw_frames_ctx);
+            if (!hw->hw_frames_ctx) {
+                av_frame_free(&drm_frame);
+                av_frame_free(&hw);
+                return ZST_ERROR;
+            }
+
+            int ret = av_hwframe_map(hw, drm_frame, AV_HWFRAME_MAP_READ | AV_HWFRAME_MAP_WRITE);
+            av_frame_free(&drm_frame);
+            if (ret < 0) {
+                char err[AV_ERROR_MAX_STRING_SIZE];
+                av_strerror(ret, err, sizeof(err));
+                ZST_LOG_WARN("vaapienc", "failed to map DRM_PRIME frame to VA-API: %s", err);
+                av_frame_free(&hw);
+                return ZST_ERROR;
+            }
+            hw->pts = (int64_t)in->pts;
+            *hw_out = hw;
+            return ZST_OK;
+        }
+    }
 
     AVFrame* sw = av_frame_alloc();
     AVFrame* hw = av_frame_alloc();
@@ -546,6 +666,9 @@ vaapi_get_caps(zst_element_t* el, zst_pad_t* pad, const zst_caps_t* filter)
     if (pad == s->sinkpad) {
         zst_caps_append(caps, zst_caps_struct_create_video("video/x-raw", 0, 0, 0.0, "YUV420P"));
         zst_caps_append(caps, zst_caps_struct_create_video("video/x-raw", 0, 0, 0.0, "I420"));
+        zst_caps_append(caps, zst_caps_struct_create_video("video/x-raw", 0, 0, 0.0, "NV12"));
+        zst_caps_append(caps, zst_caps_struct_create_video("video/x-raw", 0, 0, 0.0, "YUYV"));
+        zst_caps_append(caps, zst_caps_struct_create_video("video/x-raw", 0, 0, 0.0, "YUY2"));
     } else if (pad == s->srcpad) {
         zst_caps_append(caps, zst_caps_struct_create_video(vaapi_media_type(s),
                                                            (int)s->width,
