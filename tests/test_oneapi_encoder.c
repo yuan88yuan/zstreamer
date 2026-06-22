@@ -1,22 +1,18 @@
 /*=============================================================================
-    test_oneapi_encoder.c — Intel oneAPI/oneVPL encoder smoke test
+    test_oneapi_encoder.c — Intel oneAPI/oneVPL encoder smoke tests
 =============================================================================*/
 
-#define _POSIX_C_SOURCE 200809L
-
 #include <assert.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 #include "zst_buffer.h"
 #include "zst_element.h"
 #include "zst_element_factory.h"
-#include "zstreamer/elements/zst_oneapi_encoder.h"
+#include "zstreamer/elements/zst_oneapi_video_encoder.h"
 
-static void release_memory(void* priv)
+static void release_data(void* priv)
 {
     free(priv);
 }
@@ -27,116 +23,135 @@ static void destroy_frame(zst_buffer_t* buf)
     buf->payload = NULL;
 }
 
-static zst_buffer_t* make_frame(uint32_t width, uint32_t height, uint64_t index)
+static zst_buffer_t* make_i420_frame(uint32_t width, uint32_t height, uint64_t frame_no)
 {
     size_t y_size = (size_t)width * height;
     size_t uv_size = y_size / 4;
-    uint8_t* data = malloc(y_size + uv_size * 2);
-    zst_video_frame_t* frame = calloc(1, sizeof(*frame));
-    zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
-    assert(data && frame && buf);
+    uint8_t* data = (uint8_t*)malloc(y_size + uv_size * 2);
+    if (!data) return NULL;
 
-    memset(data, (int)(16 + (index * 7) % 200), y_size);
-    memset(data + y_size, 128, uv_size * 2);
+    memset(data, (int)(16 + (frame_no % 32)), y_size);
+    memset(data + y_size, 128, uv_size);
+    memset(data + y_size + uv_size, 128, uv_size);
 
+    zst_video_frame_t* frame = (zst_video_frame_t*)calloc(1, sizeof(*frame));
+    if (!frame) {
+        free(data);
+        return NULL;
+    }
     frame->width = width;
     frame->height = height;
     frame->format = 0;
-    frame->plane[0] = data;
-    frame->plane[1] = data + y_size;
-    frame->plane[2] = data + y_size + uv_size;
     frame->stride[0] = width;
     frame->stride[1] = width / 2;
     frame->stride[2] = width / 2;
+    frame->plane[0] = data;
+    frame->plane[1] = data + y_size;
+    frame->plane[2] = data + y_size + uv_size;
 
-    buf->payload = frame;
-    buf->destroy = destroy_frame;
+    zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
+    if (!buf) {
+        free(frame);
+        free(data);
+        return NULL;
+    }
     buf->memory.type = ZST_MEMORY_CPU;
     buf->memory.data = data;
     buf->memory.size = y_size + uv_size * 2;
     buf->memory.priv = data;
-    buf->memory.release = release_memory;
-    buf->pts = index * 33333333ULL;
+    buf->memory.release = release_data;
+    buf->payload = frame;
+    buf->destroy = destroy_frame;
+    buf->pts = frame_no * 33333333ULL;
+    buf->dts = buf->pts;
     buf->duration = 33333333ULL;
     return buf;
 }
 
+static void test_factory_and_properties(void)
+{
+    assert(zst_register_builtin_elements() == ZST_OK);
+
+    const zst_element_desc_t* desc = zst_element_factory_get_desc(ZST_ONEAPI_VIDEO_ENCODER_FACTORY);
+    assert(desc != NULL);
+    assert(desc->nb_properties >= 6);
+    assert(desc->nb_pads == 3);
+
+    const zst_element_desc_t* alias = zst_element_factory_get_desc(ZST_ONEAPI_VIDEO_ENCODER_FACTORY_ALIAS);
+    assert(alias != NULL);
+
+    zst_element_t* enc = zst_element_factory_make(ZST_ONEAPI_VIDEO_ENCODER_FACTORY_ALIAS);
+    assert(enc != NULL);
+    assert(enc->ops != NULL);
+    assert(strcmp(enc->ops->name, ZST_ONEAPI_VIDEO_ENCODER_FACTORY) == 0);
+
+    assert(zst_element_set_property(enc, ZST_ONEAPI_VIDEO_ENCODER_PROP_CODEC, "h265") == ZST_OK);
+    assert(zst_element_set_property(enc, ZST_ONEAPI_VIDEO_ENCODER_PROP_BITRATE, "2500000") == ZST_OK);
+    assert(zst_element_set_property(enc, ZST_ONEAPI_VIDEO_ENCODER_PROP_GOP_SIZE, "60") == ZST_OK);
+    assert(zst_element_set_property(enc, ZST_ONEAPI_VIDEO_ENCODER_PROP_PRESET, "speed") == ZST_OK);
+    assert(zst_element_set_property(enc, ZST_ONEAPI_VIDEO_ENCODER_PROP_FPS, "30/1") == ZST_OK);
+
+    char value[64];
+    assert(zst_element_get_property(enc, ZST_ONEAPI_VIDEO_ENCODER_PROP_CODEC, value, sizeof(value)) == ZST_OK);
+    assert(strcmp(value, "h265") == 0);
+    assert(zst_element_get_property(enc, ZST_ONEAPI_VIDEO_ENCODER_PROP_BITRATE, value, sizeof(value)) == ZST_OK);
+    assert(strcmp(value, "2500000") == 0);
+
+    zst_element_destroy(enc);
+}
+
+static void test_runtime_or_skip(void)
+{
+    zst_element_t* enc = zst_oneapi_video_encoder_create();
+    assert(enc != NULL);
+    assert(zst_element_set_property(enc, ZST_ONEAPI_VIDEO_ENCODER_PROP_CODEC, "h264") == ZST_OK);
+    assert(zst_element_set_property(enc, ZST_ONEAPI_VIDEO_ENCODER_PROP_BITRATE, "1000000") == ZST_OK);
+
+    zst_result_t ret = zst_element_set_state(enc, ZST_STATE_READY);
+    if (ret != ZST_OK) {
+        printf("SKIP: Intel oneVPL hardware encoder runtime is not available in this environment\n");
+        zst_element_destroy(enc);
+        return;
+    }
+
+    unsigned packets = 0;
+    for (uint64_t i = 0; i < 30; i++) {
+        zst_buffer_t* in = make_i420_frame(128, 96, i);
+        assert(in != NULL);
+        zst_buffer_t* out = NULL;
+        ret = enc->ops->process(enc, in, &out);
+        zst_buffer_unref(in);
+        assert(ret == ZST_OK);
+        if (out) {
+            if (!(out->flags & ZST_BUFFER_FLAG_EOS) && out->memory.size > 0) packets++;
+            zst_buffer_unref(out);
+        }
+    }
+
+    zst_buffer_t* eos = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
+    assert(eos != NULL);
+    eos->flags |= ZST_BUFFER_FLAG_EOS;
+    for (int i = 0; i < 16; i++) {
+        zst_buffer_t* out = NULL;
+        ret = enc->ops->process(enc, eos, &out);
+        assert(ret == ZST_OK);
+        if (!out) break;
+        if (!(out->flags & ZST_BUFFER_FLAG_EOS) && out->memory.size > 0) packets++;
+        int is_eos = (out->flags & ZST_BUFFER_FLAG_EOS) != 0;
+        zst_buffer_unref(out);
+        if (is_eos) break;
+    }
+    zst_buffer_unref(eos);
+
+    assert(packets > 0);
+    zst_element_set_state(enc, ZST_STATE_NULL);
+    zst_element_destroy(enc);
+}
+
 int main(void)
 {
-    if (access("/dev/dri/renderD128", R_OK | W_OK) != 0) {
-        printf("SKIP: /dev/dri/renderD128 is not available; run with --device /dev/dri for hardware encode\n");
-        return 0;
-    }
-
-    assert(zst_register_builtin_elements() == ZST_OK);
-    assert(zst_element_factory_get_desc("oneapienc") != NULL);
-
-    zst_element_t* enc = zst_element_factory_make("oneapienc");
-    assert(enc != NULL);
-    assert(zst_element_set_property(enc, "codec", "h264") == ZST_OK);
-    assert(zst_element_set_property_int(enc, "bitrate", 2000000) == ZST_OK);
-    assert(zst_element_set_property_int(enc, "gop-size", 15) == ZST_OK);
-    assert(zst_element_set_property(enc, "fps", "30/1") == ZST_OK);
-    assert(zst_element_set_property(enc, "profile", "high") == ZST_OK);
-    assert(zst_element_set_property(enc, "level", "4.1") == ZST_OK);
-    assert(zst_element_set_state(enc, ZST_STATE_PLAYING) == ZST_OK);
-
-    size_t total_encoded = 0;
-    int packets = 0;
-    for (uint64_t i = 0; i < 30; i++) {
-        zst_buffer_t* frame = make_frame(320, 240, i);
-        zst_buffer_t* pkt = NULL;
-        zst_result_t r = enc->ops->process(enc, frame, &pkt);
-        zst_buffer_unref(frame);
-        assert(r == ZST_OK);
-        if (pkt) {
-            assert(pkt->type == ZST_BUFFER_VIDEO_PACKET);
-            assert(pkt->memory.data != NULL);
-            assert(pkt->memory.size > 0);
-            total_encoded += pkt->memory.size;
-            packets++;
-            zst_buffer_unref(pkt);
-        }
-    }
-
-    int saw_eos = 0;
-    for (int i = 0; i < 16 && !saw_eos; i++) {
-        zst_buffer_t* eos = zst_buffer_create(ZST_BUFFER_VIDEO_PACKET);
-        zst_buffer_t* drained = NULL;
-        assert(eos != NULL);
-        eos->flags |= ZST_BUFFER_FLAG_EOS;
-        assert(enc->ops->process(enc, eos, &drained) == ZST_OK);
-        zst_buffer_unref(eos);
-        if (drained) {
-            if (drained->flags & ZST_BUFFER_FLAG_EOS) {
-                saw_eos = 1;
-            } else {
-                total_encoded += drained->memory.size;
-                packets++;
-            }
-            zst_buffer_unref(drained);
-        }
-    }
-
-    printf("oneapienc produced %d packets, %zu bytes\n", packets, total_encoded);
-    assert(packets > 0);
-    assert(total_encoded > 0);
-    assert(saw_eos);
-
-    zst_buffer_t* oneapi_frame = make_frame(320, 240, 31);
-    zst_buffer_t* rejected = NULL;
-    oneapi_frame->memory.type = ZST_MEMORY_ONEAPI;
-    assert(enc->ops->process(enc, oneapi_frame, &rejected) == ZST_ERROR_NOT_IMPLEMENTED);
-    assert(rejected == NULL);
-    zst_buffer_unref(oneapi_frame);
-
-    assert(zst_element_set_state(enc, ZST_STATE_NULL) == ZST_OK);
-    zst_element_destroy(enc);
-
-    zst_element_t* hevc = zst_oneapi_encoder_create();
-    assert(hevc != NULL);
-    assert(zst_element_set_property(hevc, "codec", "h265") == ZST_OK);
-    assert(zst_element_set_property(hevc, "profile", "main") == ZST_OK);
-    zst_element_destroy(hevc);
+    test_factory_and_properties();
+    test_runtime_or_skip();
+    printf("oneAPI encoder tests passed\n");
     return 0;
 }

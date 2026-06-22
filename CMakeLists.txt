@@ -475,7 +475,7 @@ if(ENABLE_JETSON)
 endif()
 
 if(ENABLE_ONEAPI_ENCODER)
-    list(APPEND ELEMENT_LIBRARY_SOURCES src/oneapi_encoder.c)
+    list(APPEND ELEMENT_LIBRARY_SOURCES src/oneapi_video_encoder.c)
 endif()
 
 if(BUILD_SHARED)
@@ -707,13 +707,16 @@ else()
 endif()
 
 if(ENABLE_ONEAPI_ENCODER)
-    add_library(zst_oneapienc SHARED src/oneapi_encoder.c)
+    add_library(zst_oneapienc SHARED src/oneapi_video_encoder.c)
     target_compile_definitions(zst_oneapienc PRIVATE BUILDING_PLUGIN)
-    target_include_directories(zst_oneapienc PRIVATE ${ZSTREAMER_INCLUDE_DIR} ${ONEVPL_INCLUDE_DIRS})
+    target_include_directories(zst_oneapienc PRIVATE ${ONEVPL_INCLUDE_DIRS})
     target_link_libraries(zst_oneapienc PRIVATE zstreamer ${ONEVPL_LIBRARIES})
+    set(ONEAPI_ENCODER_PLUGINS zst_oneapienc)
+else()
+    set(ONEAPI_ENCODER_PLUGINS "")
 endif()
 
-set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_rtsp_server zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_netsrc zst_netsink ${JETSON_PLUGINS})
+set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_rtsp_server zst_srtparser zst_videotestsrc zst_audiotestsrc zst_filesource zst_netsrc zst_netsink ${JETSON_PLUGINS} ${ONEAPI_ENCODER_PLUGINS})
 
 if(HAS_V4L2)
     list(APPEND PLUGIN_TARGETS zst_v4l2source zst_v4l2sink)
