@@ -5,7 +5,7 @@ All phases are now documented in separate files for easier maintenance.
 | Phase | Document | Lines | Status |
 |-------|----------|-------|--------|
 | 0–3   | [Core Framework](phase-core.md) | ~190 | ✅ Complete |
-| 4     | [Element Implementations](phase-elements.md) | ~650 | ✅ Done (36 implemented, including initial glsink) + planned additions |
+| 4     | [Element Implementations](phase-elements.md) | ~650 | ✅ Done (37 implemented, including initial x11sink/glsink) + planned additions |
 | 5–7   | [Infrastructure](phase-infrastructure.md) | ~58 | ✅ Complete |
 | 8     | [Advanced Features](phase-advanced.md) | ~417 | 🔄 In Progress |
 | 9     | [Testing & CI](phase-testing-ci.md) | ~10 | 🔄 In Progress |
@@ -17,6 +17,7 @@ All phases are now documented in separate files for easier maintenance.
 | Post-P0 | [Intel oneAPI Video Encoder](phase-elements.md#4ag--intel-oneapi-video-encoder) | ~20 | ✅ Done |
 | Post-P0 | [VA-API Video Encoder](phase-elements.md#4ah--va-api-video-encoder) | ~20 | ✅ Done |
 | Post-P0 | [VA-API Video Decoder](phase-elements.md#4ai--va-api-video-decoder-vaapidec) | ~20 | ⬜ Planned |
+| Post-P0 | [X11 Sink](phase-elements.md#4aj--x11-sink-x11sink) | ~35 | ✅ Initial implementation; follow-ups tracked |
 | Post-P0 | [OpenGL Sink](phase-elements.md#4ak--opengl-sink-glsink) | ~45 | ✅ Initial implementation; review follow-ups tracked |
 | Post-P0 | [OpenGL Compositor Sink](phase-elements.md#4al--opengl-compositor-sink-glcompsink) | ~25 | ⬜ Planned |
 | Post-P0 | [Audio Mixer](phase-elements.md#4am--audio-mixer-audiomixer) | ~25 | ⬜ Planned |
@@ -35,7 +36,7 @@ All phases are now documented in separate files for easier maintenance.
 | Scheduler (2) | ✅ Done | Topological sort, push/pull, EOS |
 | Queue Element (3) | ✅ Done | First-class queue with worker thread |
 | Logging (3.5) | ✅ Done | Compile-time log levels, thread-safe |
-| Elements (4) | ✅ Done + planned additions | 36 elements implemented; glsink has initial GLX/X11 implementation; x11sink, glcompsink, and audiomixer remain planned |
+| Elements (4) | ✅ Done + planned additions | 37 elements implemented; x11sink has initial Xlib/XPutImage implementation with null-mode fallback; glsink has initial GLX/X11 implementation; glcompsink and audiomixer remain planned |
 | Caps Negotiation (5) | ✅ Done | Intersection, auto-negotiation |
 | Event Bus (6) | ✅ Done | Error/state/EOS notifications |
 | Dynamic Plugins (7) | ✅ Done | dlopen-based loading |

@@ -1,6 +1,6 @@
-# Element Implementations — Phase 4  (✅ 36 implemented; 📝 planned additions)
+# Element Implementations — Phase 4  (✅ 37 implemented; 📝 planned additions)
 
-Thirty-six production elements are implemented with real hardware/codec/protocol/display integrations and synthetic or graceful fallbacks where appropriate.
+Thirty-seven production elements are implemented with real hardware/codec/protocol/display integrations and synthetic or graceful fallbacks where appropriate.
 Additional planned elements cover future protocol/container/display expansion.
 Two implemented elements handle format conversion (scaling, resampling) — essential once caps negotiation (Phase 5) requires automatic conversion between mismatched formats.
 
@@ -532,27 +532,35 @@ Hardware-accelerated video decoder for Linux GPUs exposing VA-API decode entrypo
 
 ---
 
-### 4aj — X11 Sink (x11sink)  (📝 Planned)
+### 4aj — X11 Sink (x11sink)  (✅ Initial implementation; follow-ups tracked)
 
-Display sink that renders raw video frames to an X11 window using the X11 core protocol and MIT-SHM extension. Provides a simple on-screen preview for pipelines without GPU dependencies.
+Display sink that renders CPU-backed raw video frames to an X11 window using Xlib. Provides a simple on-screen preview for pipelines without GPU/OpenGL dependencies and falls back to null-sink mode in headless environments.
 
-- [ ] `x11sink` element with 1 sink pad (`video/x-raw`) — accepts raw video frames for display
-- [ ] **Window management**: create an X11 window via Xlib (`XCreateWindow` / `XMapWindow`) with configurable title, initial width/height, and position (`window-x`, `window-y`)
-- [ ] **Frame upload**: draw frames using `XPutImage` for system memory or `XShmPutImage` (MIT-SHM extension) for zero-copy shared memory transfer to the X server
-- [ ] **Pixel format conversion**: accept YUV420P / NV12 input and convert to X11-compatible RGB format (XRGB8888) via built-in YUV→RGB conversion (or use libswscale when FFmpeg is available)
-- [ ] **Aspect-ratio preservation**: letterbox/pillar-box the image to maintain original aspect ratio when the window is resized; configurable `force-aspect-ratio` property
-- [ ] **Fullscreen toggle**: fullscreen mode via `_NET_WM_STATE_FULLSCREEN` (EWMH); toggle with configurable keybinding (default F11 or double-click)
-- [ ] **Event handling**: process `ClientMessage` (WM_DELETE_WINDOW) and keyboard events (ESC to quit) — propagate EOS downstream on window close
-- [ ] **Frame pacing / dropping**: track wall-clock vs. input frame timestamps; drop frames when the display refresh can't keep up (`max-lateness` property, default 20ms)
-- [ ] **Window reconfiguration**: handle `ConfigureNotify` events for window resize, reallocate internal RGB buffer on dimension changes
-- [ ] **EOS handling**: unmap window, free XImage/XShm segments, destroy window on EOS or state change to READY/NULL
-- [ ] **Caps negotiation**: advertise `video/x-raw` with negotiable formats — prefer formats with direct RGB conversion paths; request power-of-two aligned dimensions internally if needed
-- [ ] **Graceful fallback**: if DISPLAY is unset or XOpenDisplay fails, log a warning and operate as a null sink (consume and discard frames) to avoid pipeline crashes in headless environments
-- [ ] **Tests**: window open/close lifecycle in a virtual X server (Xvfb / Xdummy); pixel check on rendered surface; EOS propagation; resize handling
-- [ ] **CMake integration**: add `HAS_X11` detection (`pkg_check_modules(X11 x11 xext)`); guarded by `ENABLE_X11SINK` option (default ON when dependencies found)
-- [ ] **Plugin packaging**: build as both a static element (in `zstreamer-elements`) and a dynamic plugin (`libzst_x11sink.so`)
+- [x] `x11sink` element with 1 sink pad — accepts raw video frames for display
+- [x] **Window management**: creates an X11 window via Xlib (`XCreateSimpleWindow` / `XMapWindow`), sets a configurable `window-title`, and sizes the window from negotiated caps or incoming frame metadata
+- [ ] **Initial window geometry**: configurable width/height and position (`window-x`, `window-y`) properties are not implemented yet
+- [x] **Frame upload**: draws converted frames with `XPutImage`
+- [ ] **MIT-SHM fast path**: `XShmPutImage` / shared-memory transfer is not implemented yet
+- [x] **Pixel format conversion**: accepts `YUV420P`, `RGB24`, and `BGR24`; converts to the display visual's RGB masks before upload
+- [ ] **NV12 support**: not implemented yet
+- [ ] **Aspect-ratio preservation**: letterbox/pillar-box resize handling and `force-aspect-ratio` are not implemented yet
+- [ ] **Fullscreen toggle**: `_NET_WM_STATE_FULLSCREEN`, F11, and double-click fullscreen handling are not implemented yet
+- [x] **Event handling**: processes `ClientMessage` / `WM_DELETE_WINDOW` and switches to null-sink mode when the display window is closed
+- [ ] **Keyboard handling / EOS on close**: ESC/Q handling and downstream EOS propagation on window close are not implemented yet
+- [ ] **Frame pacing / dropping**: timestamp-based `max-lateness` dropping and QoS events are not implemented yet
+- [ ] **Window reconfiguration**: resize (`ConfigureNotify`) handling and dynamic image reallocation are not implemented yet
+- [x] **Lifecycle handling**: frees XImage backing storage, GC, window, and display on close / state change to NULL
+- [x] **Caps negotiation**: `get_caps` advertises `video/x-raw` formats `YUV420P`, `RGB24`, and `BGR24`
+- [ ] **Descriptor metadata follow-up**: built-in registry pad metadata currently uses the generic sink template; tighten it to `video/x-raw` with supported formats
+- [x] **Graceful fallback**: if `DISPLAY` is unset or `XOpenDisplay` fails, logs a warning and operates as a null sink (consume/discard frames) to avoid pipeline crashes in headless environments
+- [x] **Properties**: `display`, `window-title`, read-only `frame-count`; `title` is accepted as an alias for `window-title`
+- [x] **Tests**: `tests/test_x11sink.c` covers factory creation, property get/set, null-mode state transitions, direct buffer processing, frame count, and a `videotestsrc → x11sink` scheduler smoke test; also runs under Xvfb for real display-open coverage
+- [ ] **Test follow-ups**: add pixel readback/assertions, resize handling tests, EOS-on-window-close tests, and keyboard event tests
+- [x] **CMake integration**: guarded by `ENABLE_X11SINK` (default ON), uses CMake `find_package(X11)`, defines `HAS_X11SINK`, and links X11 libraries when available
+- [x] **Plugin packaging**: built into `zstreamer-elements` and as dynamic plugin `libzst_x11sink.so`
+- [x] **Docker test environment**: main `Dockerfile` includes `libx11-dev`, `libxext-dev`, and `xvfb`; CI `ctest` includes `test_x11sink`
 
-**Dependencies:** `libx11-dev`, `libxext-dev`
+**Dependencies:** `libx11-dev`, `libxext-dev`; test environment also uses `xvfb`
 
 ---
 

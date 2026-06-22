@@ -41,6 +41,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgnutls28-dev \
     nettle-dev \
     libvulkan-dev \
+    libx11-dev \
+    libxext-dev \
+    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Debugging / profiling tools ─────────────────────────────────────────

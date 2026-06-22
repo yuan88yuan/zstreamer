@@ -115,6 +115,9 @@ zst_element_t* zst_gl_sink_create(void);
 #ifdef HAS_GLCOMPSINK
 zst_element_t* zst_gl_comp_sink_create(void);
 #endif
+#ifdef HAS_X11SINK
+zst_element_t* zst_x11_sink_create(const char* display);
+#endif
 
 /*──────────────────────────────────────────────────────────────────────────
   Pad template tables (used by descriptor tables below).
@@ -448,6 +451,14 @@ static const zst_property_spec_t g_builtin_audiotestsrc_props[] = {
     { "real-time-pacing", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Pace generated audio buffers in real time" }
 };
 
+#ifdef HAS_X11SINK
+static const zst_property_spec_t g_builtin_x11sink_props[] = {
+    { "display",      ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "X11 display name; empty uses DISPLAY" },
+    { "window-title", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "zstreamer X11 Sink", "Window title" },
+    { "frame-count",  ZST_PROPERTY_UINT,   ZST_PROPERTY_READABLE, "0", "Number of rendered or discarded frames" }
+};
+#endif
+
 #ifdef HAS_FREETYPE
 static const zst_property_spec_t g_builtin_textoverlay_props[] = {
     { "text", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Text to overlay" },
@@ -618,6 +629,9 @@ create_builtin_element(const char* name)
 #ifdef HAS_GLCOMPSINK
     if (strcmp(name, "glcompsink") == 0)   return zst_gl_comp_sink_create();
 #endif
+#ifdef HAS_X11SINK
+    if (strcmp(name, "x11sink") == 0)      return zst_x11_sink_create(NULL);
+#endif
     return NULL;
 }
 
@@ -703,6 +717,9 @@ static const zst_element_desc_t g_builtin_descs[] = {
     DESC("vaapi_video_decoder", "VA-API Video Decoder", "Codec/Decoder", "Alias for vaapidec", g_builtin_vaapidec_props, sizeof(g_builtin_vaapidec_props) / sizeof(g_builtin_vaapidec_props[0]), g_pad_vaapidec),
 #endif
     DESC("nvvideoscaler", "NVIDIA V4L2 Video Scaler", "Filter/Video", "Hardware video scaler and format converter using NV V4L2 extensions",                                    NULL,                           0, g_pad_video_filter),
+#ifdef HAS_X11SINK
+    DESC("x11sink", "X11 Video Sink", "Sink/Video", "Displays raw video frames in an X11 window", g_builtin_x11sink_props, sizeof(g_builtin_x11sink_props) / sizeof(g_builtin_x11sink_props[0]), g_pad_sink),
+#endif
 #ifdef HAS_GLSINK
     DESC("glsink", "OpenGL Sink", "Sink/Video", "Displays video frames in an OpenGL window with GPU YUV\u2192RGB conversion",                                              NULL,                           0, g_pad_sink),
 #endif

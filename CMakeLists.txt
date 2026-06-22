@@ -15,9 +15,14 @@ option(ENABLE_VAAPI_ENCODER "Build Linux VA-API video encoder element" OFF)
 option(ENABLE_VAAPI_DECODER "Build Linux VA-API video decoder element" OFF)
 option(ENABLE_GLSINK "Build OpenGL display sink element" ON)
 option(ENABLE_GLCOMPSINK "Build OpenGL compositor sink element" ON)
+option(ENABLE_X11SINK "Build X11 display sink element" ON)
 
 # ── Dependencies ─────────────────────────────────────────────────────────
 find_package(Threads REQUIRED)
+
+if(ENABLE_X11SINK OR ENABLE_GLSINK OR ENABLE_GLCOMPSINK)
+    find_package(X11 QUIET)
+endif()
 
 if(ENABLE_PLUGINS)
     # dlopen / libdl
@@ -201,7 +206,6 @@ endif()
 option(ENABLE_JETSON "Enable Jetson NvBuffer allocator support" OFF)
 # ── OpenGL Sinks (glsink / glcompsink) ───────────────────────────────────────
 if(ENABLE_GLSINK OR ENABLE_GLCOMPSINK)
-    find_package(X11 QUIET)
     find_package(OpenGL QUIET)
     if(X11_FOUND AND OPENGL_FOUND)
         set(HAS_GL ON)
@@ -217,6 +221,19 @@ if(ENABLE_GLSINK OR ENABLE_GLCOMPSINK)
         message(STATUS "OpenGL sinks disabled: X11_FOUND=${X11_FOUND}, OPENGL_FOUND=${OPENGL_FOUND}")
         set(ENABLE_GLSINK OFF)
         set(ENABLE_GLCOMPSINK OFF)
+    endif()
+endif()
+
+# ── X11 Sink (x11sink) ───────────────────────────────────────────────────────
+if(ENABLE_X11SINK)
+    if(X11_FOUND)
+        set(HAS_X11SINK ON)
+        add_compile_definitions(HAS_X11SINK=1)
+        message(STATUS "X11 sink enabled")
+    else()
+        set(ENABLE_X11SINK OFF)
+        set(HAS_X11SINK OFF)
+        message(STATUS "X11 sink disabled: X11 not found")
     endif()
 endif()
 
@@ -363,6 +380,11 @@ endif()
 if(ENABLE_GLSINK OR ENABLE_GLCOMPSINK)
     list(APPEND ELEMENT_INCLUDE_DIRS ${X11_INCLUDE_DIR} ${OPENGL_INCLUDE_DIR})
     list(APPEND ELEMENT_LIBRARIES ${X11_LIBRARIES} ${OPENGL_LIBRARIES} ${X11_Xext_LIB})
+endif()
+
+if(ENABLE_X11SINK)
+    list(APPEND ELEMENT_INCLUDE_DIRS ${X11_INCLUDE_DIR})
+    list(APPEND ELEMENT_LIBRARIES ${X11_LIBRARIES})
 endif()
 
 if(ENABLE_ONEAPI_ENCODER)
@@ -560,6 +582,10 @@ if(ENABLE_GLCOMPSINK)
     list(APPEND ELEMENT_LIBRARY_SOURCES src/gl_comp_sink.c)
 endif()
 
+if(ENABLE_X11SINK)
+    list(APPEND ELEMENT_LIBRARY_SOURCES src/x11_sink.c)
+endif()
+
 if(BUILD_SHARED)
     add_library(zstreamer-elements SHARED ${ELEMENT_LIBRARY_SOURCES})
 else()
@@ -738,6 +764,13 @@ if(ENABLE_GLCOMPSINK)
     target_link_libraries(zst_glcompsink PRIVATE zstreamer ${X11_LIBRARIES} ${OPENGL_LIBRARIES} ${X11_Xext_LIB})
 endif()
 
+if(ENABLE_X11SINK)
+    add_library(zst_x11sink SHARED src/x11_sink.c)
+    target_compile_definitions(zst_x11sink PRIVATE BUILDING_PLUGIN)
+    target_include_directories(zst_x11sink PRIVATE ${X11_INCLUDE_DIR})
+    target_link_libraries(zst_x11sink PRIVATE zstreamer ${X11_LIBRARIES})
+endif()
+
 if(HAS_FFMPEG)
     add_library(zst_h264decoder SHARED src/h264_decoder.c)
     target_compile_definitions(zst_h264decoder PRIVATE BUILDING_PLUGIN)
@@ -859,6 +892,9 @@ if(ENABLE_GLSINK)
 endif()
 if(ENABLE_GLCOMPSINK)
     list(APPEND PLUGIN_TARGETS zst_glcompsink)
+endif()
+if(ENABLE_X11SINK)
+    list(APPEND PLUGIN_TARGETS zst_x11sink)
 endif()
 
 if(HAS_FFMPEG)
@@ -1009,6 +1045,19 @@ if(BUILD_TESTS)
             PRIVATE zstreamer-elements
         )
         add_test(NAME test_gl_comp_sink COMMAND test_gl_comp_sink)
+    endif()
+
+    if(ENABLE_X11SINK)
+        add_executable(test_x11sink
+            tests/test_x11sink.c
+        )
+        target_include_directories(test_x11sink
+            PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+        )
+        target_link_libraries(test_x11sink
+            PRIVATE zstreamer-elements ${X11_LIBRARIES}
+        )
+        add_test(NAME test_x11sink COMMAND test_x11sink)
     endif()
 
     if(HAS_FFMPEG)
