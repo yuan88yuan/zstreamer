@@ -352,6 +352,11 @@ zst_pad_create(const char* name, zst_pad_direction_t direction)
     pad->segment = zst_segment_default();
     pad->spillover_policy = ZST_SPILLOVER_BLOCK;
 
+    pad->last_transit_time   = 0;
+    pad->media_jitter_ns     = 0.0;
+    pad->jitter_buffer_count = 0;
+    pthread_mutex_init(&pad->jitter_lock, NULL);
+
     return pad;
 }
 
@@ -381,6 +386,7 @@ zst_pad_destroy(zst_pad_t* pad)
     }
     pthread_cond_destroy(&pad->probe_cond);
     pthread_mutex_destroy(&pad->probe_lock);
+    pthread_mutex_destroy(&pad->jitter_lock);
 
     free((void*)pad->name);
     zst_caps_destroy(pad->caps);
@@ -456,6 +462,25 @@ zst_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
 
     if (!pad_buffer_in_segment(pad, buf) || !pad_buffer_in_segment(pad->peer, buf)) {
         return ZST_OK;
+    }
+
+    /* Media Jitter Tracking (RFC 3550) */
+    zst_clock_t* clock = pad->parent ? pad->parent->clock : NULL;
+    if (clock && buf && buf->pts != (zst_time_t)-1 && buf->pts != 0 && !(buf->flags & ZST_BUFFER_FLAG_EOS)) {
+        zst_time_t R = zst_clock_get_time(clock);
+        zst_time_t S = buf->pts;
+        pthread_mutex_lock(&pad->jitter_lock);
+        if (pad->jitter_buffer_count > 0) {
+            int64_t current_transit = (int64_t)R - (int64_t)S;
+            int64_t diff = current_transit - pad->last_transit_time;
+            if (diff < 0) diff = -diff;
+            pad->media_jitter_ns = pad->media_jitter_ns + ((double)diff - pad->media_jitter_ns) / 16.0;
+            pad->last_transit_time = current_transit;
+        } else {
+            pad->last_transit_time = (int64_t)R - (int64_t)S;
+        }
+        pad->jitter_buffer_count++;
+        pthread_mutex_unlock(&pad->jitter_lock);
     }
 
     if (pad_run_probes(pad, buf, ZST_PAD_PROBE_PRE_BUFFER) == ZST_PAD_PROBE_DROP) {
@@ -756,4 +781,14 @@ zst_pad_push_segment(zst_pad_t* src, const zst_segment_t* segment)
 {
     if (!src || !segment || src->direction != ZST_PAD_SRC) return ZST_ERROR;
     return pad_propagate_segment(src, segment, 0);
+}
+
+zst_result_t
+zst_pad_get_media_jitter(zst_pad_t* pad, double* jitter_ns_out)
+{
+    if (!pad) return ZST_ERROR;
+    pthread_mutex_lock(&pad->jitter_lock);
+    if (jitter_ns_out) *jitter_ns_out = pad->media_jitter_ns;
+    pthread_mutex_unlock(&pad->jitter_lock);
+    return ZST_OK;
 }

@@ -30,6 +30,9 @@ typedef struct {
     zst_time_t   base_master;
     zst_time_t   base_ref;
 
+    double       phase_jitter;     /* Moving average of absolute phase error */
+    double       max_phase_error;  /* Maximum observed absolute phase error */
+
     pthread_mutex_t lock;
 } slave_clock_priv_t;
 
@@ -66,6 +69,12 @@ slave_clock_worker(void* arg)
 
                 /* 2. Calculate the phase offset (error) between the master clock and slave clock in seconds */
                 double phase_error = (double)((int64_t)now_master - (int64_t)current_slave_time) / 1000000000.0;
+                double abs_error = phase_error > 0.0 ? phase_error : -phase_error;
+
+                priv->phase_jitter = priv->phase_jitter * 0.9 + abs_error * 0.1;
+                if (abs_error > priv->max_phase_error) {
+                    priv->max_phase_error = abs_error;
+                }
 
                 /* 3. Integrate phase error over time, with windup protection limits to prevent overshoot */
                 priv->integral_error += phase_error * dt;
@@ -180,6 +189,8 @@ zst_clock_slave_create(zst_clock_t* master, zst_clock_t* reference)
     priv->alpha = 1.0;
     priv->smoothed_ratio = 1.0;
     priv->integral_error = 0.0;
+    priv->phase_jitter = 0.0;
+    priv->max_phase_error = 0.0;
     
     zst_time_t now_master = zst_clock_get_time(master);
     zst_time_t now_ref = zst_clock_get_time(reference);
@@ -274,4 +285,16 @@ zst_clock_system_create(void)
     clock->priv     = NULL;
 
     return clock;
+}
+
+zst_result_t
+zst_clock_get_sync_stats(zst_clock_t* clock, double* jitter_sec_out, double* max_error_sec_out)
+{
+    if (!clock || !clock->priv) return ZST_ERROR;
+    slave_clock_priv_t* priv = clock->priv;
+    pthread_mutex_lock(&priv->lock);
+    if (jitter_sec_out) *jitter_sec_out = priv->phase_jitter;
+    if (max_error_sec_out) *max_error_sec_out = priv->max_phase_error;
+    pthread_mutex_unlock(&priv->lock);
+    return ZST_OK;
 }

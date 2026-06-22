@@ -40,6 +40,9 @@ typedef struct {
 
     uint64_t frame_count;
     zst_buffer_pool_t* pool;
+
+    uint8_t* tmp_yuv420p_buf;
+    size_t tmp_yuv420p_size;
 } video_test_src_t;
 
 static void video_test_src_buf_free(zst_buffer_t* buf)
@@ -57,13 +60,30 @@ static zst_result_t video_test_src_open(zst_element_t* el)
     video_test_src_t* s = el->priv;
     s->frame_count = 0;
 
+    size_t size = s->width * s->height * 3 / 2;
+    if (strcmp(s->pixel_format, "RGB24") == 0 || strcmp(s->pixel_format, "BGR24") == 0) {
+        size = s->width * s->height * 3;
+    } else if (strcmp(s->pixel_format, "YUYV") == 0 || strcmp(s->pixel_format, "YUY2") == 0) {
+        size = s->width * s->height * 2;
+    }
+
     zst_buffer_pool_config_t pool_cfg = {
         .min_buffers = 4,
         .max_buffers = 16,
-        .buffer_size = s->width * s->height * 3 / 2, // YUV420P
+        .buffer_size = size,
         .buffer_type = ZST_BUFFER_VIDEO_FRAME
     };
     s->pool = zst_buffer_pool_create(NULL, &pool_cfg);
+
+    s->tmp_yuv420p_size = s->width * s->height * 3 / 2;
+    s->tmp_yuv420p_buf = malloc(s->tmp_yuv420p_size);
+    if (!s->tmp_yuv420p_buf) {
+        if (s->pool) {
+            zst_buffer_pool_destroy(s->pool);
+            s->pool = NULL;
+        }
+        return ZST_ERROR;
+    }
 
     return ZST_OK;
 }
@@ -81,6 +101,10 @@ static zst_result_t video_test_src_close(zst_element_t* el)
     if (s->pool) {
         zst_buffer_pool_destroy(s->pool);
         s->pool = NULL;
+    }
+    if (s->tmp_yuv420p_buf) {
+        free(s->tmp_yuv420p_buf);
+        s->tmp_yuv420p_buf = NULL;
     }
     return ZST_OK;
 }
@@ -164,6 +188,72 @@ static void render_black(video_test_src_t* s, uint8_t* y_plane, uint8_t* u_plane
     memset(v_plane, 128, (s->width * s->height) / 4);
 }
 
+static void yuv420p_to_nv12(uint32_t width, uint32_t height, const uint8_t* y_in, const uint8_t* u_in, const uint8_t* v_in, uint8_t* y_out, uint8_t* uv_out)
+{
+    memcpy(y_out, y_in, width * height);
+    uint32_t uv_pixels = (width * height) / 4;
+    for (uint32_t i = 0; i < uv_pixels; i++) {
+        uv_out[2 * i] = u_in[i];
+        uv_out[2 * i + 1] = v_in[i];
+    }
+}
+
+static void yuv420p_to_yuyv(uint32_t width, uint32_t height, const uint8_t* y_in, const uint8_t* u_in, const uint8_t* v_in, uint8_t* yuyv_out)
+{
+    for (uint32_t r = 0; r < height; r++) {
+        for (uint32_t c = 0; c < width; c += 2) {
+            uint8_t y0 = y_in[r * width + c];
+            uint8_t y1 = y_in[r * width + c + 1];
+            uint8_t u  = u_in[(r / 2) * (width / 2) + (c / 2)];
+            uint8_t v  = v_in[(r / 2) * (width / 2) + (c / 2)];
+
+            uint32_t idx = 2 * (r * width + c);
+            yuyv_out[idx]     = y0;
+            yuyv_out[idx + 1] = u;
+            yuyv_out[idx + 2] = y1;
+            yuyv_out[idx + 3] = v;
+        }
+    }
+}
+
+static void yuv420p_to_rgb24(uint32_t width, uint32_t height, const uint8_t* y_in, const uint8_t* u_in, const uint8_t* v_in, uint8_t* rgb_out)
+{
+    for (uint32_t r = 0; r < height; r++) {
+        for (uint32_t c = 0; c < width; c++) {
+            int y = y_in[r * width + c];
+            int u = u_in[(r / 2) * (width / 2) + (c / 2)] - 128;
+            int v = v_in[(r / 2) * (width / 2) + (c / 2)] - 128;
+
+            int rd = y + (int)(1.402 * v);
+            int gd = y - (int)(0.344136 * u + 0.714136 * v);
+            int bd = y + (int)(1.772 * u);
+
+            rgb_out[3 * (r * width + c)]     = rd < 0 ? 0 : (rd > 255 ? 255 : rd);
+            rgb_out[3 * (r * width + c) + 1] = gd < 0 ? 0 : (gd > 255 ? 255 : gd);
+            rgb_out[3 * (r * width + c) + 2] = bd < 0 ? 0 : (bd > 255 ? 255 : bd);
+        }
+    }
+}
+
+static void yuv420p_to_bgr24(uint32_t width, uint32_t height, const uint8_t* y_in, const uint8_t* u_in, const uint8_t* v_in, uint8_t* bgr_out)
+{
+    for (uint32_t r = 0; r < height; r++) {
+        for (uint32_t c = 0; c < width; c++) {
+            int y = y_in[r * width + c];
+            int u = u_in[(r / 2) * (width / 2) + (c / 2)] - 128;
+            int v = v_in[(r / 2) * (width / 2) + (c / 2)] - 128;
+
+            int rd = y + (int)(1.402 * v);
+            int gd = y - (int)(0.344136 * u + 0.714136 * v);
+            int bd = y + (int)(1.772 * u);
+
+            bgr_out[3 * (r * width + c)]     = bd < 0 ? 0 : (bd > 255 ? 255 : bd);
+            bgr_out[3 * (r * width + c) + 1] = gd < 0 ? 0 : (gd > 255 ? 255 : gd);
+            bgr_out[3 * (r * width + c) + 2] = rd < 0 ? 0 : (rd > 255 ? 255 : rd);
+        }
+    }
+}
+
 static zst_result_t video_test_src_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
 {
     (void)in;
@@ -195,19 +285,9 @@ static zst_result_t video_test_src_process(zst_element_t* el, zst_buffer_t* in, 
         buf->destroy = video_test_src_buf_free;
     }
 
-    frame->width = s->width;
-    frame->height = s->height;
-    frame->format = 0; // YUV420P
-    frame->plane[0] = raw_data;
-    frame->plane[1] = raw_data + s->width * s->height;
-    frame->plane[2] = raw_data + s->width * s->height + (s->width * s->height) / 4;
-    frame->stride[0] = s->width;
-    frame->stride[1] = s->width / 2;
-    frame->stride[2] = s->width / 2;
-
-    uint8_t* y_plane = frame->plane[0];
-    uint8_t* u_plane = frame->plane[1];
-    uint8_t* v_plane = frame->plane[2];
+    uint8_t* y_plane = s->tmp_yuv420p_buf;
+    uint8_t* u_plane = s->tmp_yuv420p_buf + s->width * s->height;
+    uint8_t* v_plane = s->tmp_yuv420p_buf + s->width * s->height + (s->width * s->height) / 4;
 
     switch (s->pattern) {
         case PATTERN_BARS: render_bars(s, y_plane, u_plane, v_plane); break;
@@ -215,6 +295,72 @@ static zst_result_t video_test_src_process(zst_element_t* el, zst_buffer_t* in, 
         case PATTERN_CHECKERBOARD: render_checkerboard(s, y_plane, u_plane, v_plane); break;
         case PATTERN_NOISE: render_noise(s, y_plane, u_plane, v_plane); break;
         case PATTERN_BLACK: render_black(s, y_plane, u_plane, v_plane); break;
+    }
+
+    frame->width = s->width;
+    frame->height = s->height;
+
+    if (strcmp(s->pixel_format, "NV12") == 0) {
+        frame->format = 23; // AV_PIX_FMT_NV12
+        frame->plane[0] = raw_data;
+        frame->plane[1] = raw_data + s->width * s->height;
+        frame->plane[2] = NULL;
+        frame->plane[3] = NULL;
+        frame->stride[0] = s->width;
+        frame->stride[1] = s->width;
+        frame->stride[2] = 0;
+        frame->stride[3] = 0;
+
+        yuv420p_to_nv12(s->width, s->height, y_plane, u_plane, v_plane, frame->plane[0], frame->plane[1]);
+    } else if (strcmp(s->pixel_format, "RGB24") == 0) {
+        frame->format = 2; // AV_PIX_FMT_RGB24
+        frame->plane[0] = raw_data;
+        frame->plane[1] = NULL;
+        frame->plane[2] = NULL;
+        frame->plane[3] = NULL;
+        frame->stride[0] = s->width * 3;
+        frame->stride[1] = 0;
+        frame->stride[2] = 0;
+        frame->stride[3] = 0;
+
+        yuv420p_to_rgb24(s->width, s->height, y_plane, u_plane, v_plane, frame->plane[0]);
+    } else if (strcmp(s->pixel_format, "BGR24") == 0) {
+        frame->format = 3; // AV_PIX_FMT_BGR24
+        frame->plane[0] = raw_data;
+        frame->plane[1] = NULL;
+        frame->plane[2] = NULL;
+        frame->plane[3] = NULL;
+        frame->stride[0] = s->width * 3;
+        frame->stride[1] = 0;
+        frame->stride[2] = 0;
+        frame->stride[3] = 0;
+
+        yuv420p_to_bgr24(s->width, s->height, y_plane, u_plane, v_plane, frame->plane[0]);
+    } else if (strcmp(s->pixel_format, "YUYV") == 0 || strcmp(s->pixel_format, "YUY2") == 0) {
+        frame->format = 1; // AV_PIX_FMT_YUYV422
+        frame->plane[0] = raw_data;
+        frame->plane[1] = NULL;
+        frame->plane[2] = NULL;
+        frame->plane[3] = NULL;
+        frame->stride[0] = s->width * 2;
+        frame->stride[1] = 0;
+        frame->stride[2] = 0;
+        frame->stride[3] = 0;
+
+        yuv420p_to_yuyv(s->width, s->height, y_plane, u_plane, v_plane, frame->plane[0]);
+    } else {
+        // Fallback to YUV420P
+        frame->format = 0; // AV_PIX_FMT_YUV420P
+        frame->plane[0] = raw_data;
+        frame->plane[1] = raw_data + s->width * s->height;
+        frame->plane[2] = raw_data + s->width * s->height + (s->width * s->height) / 4;
+        frame->plane[3] = NULL;
+        frame->stride[0] = s->width;
+        frame->stride[1] = s->width / 2;
+        frame->stride[2] = s->width / 2;
+        frame->stride[3] = 0;
+
+        memcpy(raw_data, s->tmp_yuv420p_buf, s->tmp_yuv420p_size);
     }
 
     uint64_t dur_ns = 1000000000ULL / s->fps;

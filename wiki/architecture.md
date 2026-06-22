@@ -217,4 +217,4 @@ Pads now carry rich caps with dimensions, format, framerate, channels, sample ra
 - [x] `zst_clock_get_time()` / `zst_clock_wait()`
 - [x] Pipeline-level clock selection (`zst_pipeline_set_clock`)
 - [x] Clock slaving for A/V sync
-- [ ] Jitter measurement — future
+- [x] Jitter measurement

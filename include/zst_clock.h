@@ -31,6 +31,8 @@ zst_time_t zst_clock_get_time(zst_clock_t* clock);
 
 void zst_clock_wait(zst_clock_t* clock, zst_time_t time);
 
+zst_result_t zst_clock_get_sync_stats(zst_clock_t* clock, double* jitter_sec_out, double* max_error_sec_out);
+
 #ifdef __cplusplus
 }
 #endif

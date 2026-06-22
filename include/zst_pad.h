@@ -90,6 +90,12 @@ struct zst_pad {
 
     /* Downstream spillover strategy configuration */
     zst_spillover_policy_t spillover_policy;
+
+    /* Media Jitter Tracking (RFC 3550) */
+    zst_time_t last_transit_time;
+    double     media_jitter_ns;
+    uint64_t   jitter_buffer_count;
+    pthread_mutex_t jitter_lock;
 };
 
 zst_pad_t* zst_pad_create(const char* name, zst_pad_direction_t direction);
@@ -129,6 +135,8 @@ zst_result_t zst_pad_set_segment(zst_pad_t* pad, const zst_segment_t* segment);
 zst_result_t zst_pad_get_segment(zst_pad_t* pad, zst_segment_t* segment_out);
 void zst_pad_clear_segment(zst_pad_t* pad);
 zst_result_t zst_pad_push_segment(zst_pad_t* src, const zst_segment_t* segment);
+
+zst_result_t zst_pad_get_media_jitter(zst_pad_t* pad, double* jitter_ns_out);
 
 #ifdef __cplusplus
 }

@@ -6767,7 +6767,7 @@ static void test_nv_video_encoder(void) {
     zst_pipeline_set_state(pipe, ZST_STATE_NULL);
     zst_scheduler_destroy(sched);
     zst_pipeline_destroy(pipe);
-    PASSED();
+    PASS();
 }
 
 static void test_nv_video_decoder(void) {
@@ -6808,9 +6808,153 @@ static void test_nv_video_decoder(void) {
     zst_pipeline_set_state(pipe, ZST_STATE_NULL);
     zst_scheduler_destroy(sched);
     zst_pipeline_destroy(pipe);
-    PASSED();
+    PASS();
 }
 #endif
+
+static void test_videotestsrc_formats(void)
+{
+    TEST("videotestsrc software format conversions");
+    zst_plugin_registry_init();
+    assert(zst_register_builtin_elements() == ZST_OK);
+
+    const char* formats[] = { "YUV420P", "NV12", "YUYV", "RGB24", "BGR24" };
+    int expected_formats[] = { 0, 23, 1, 2, 3 };
+
+    for (int i = 0; i < 5; i++) {
+        zst_element_t* src = zst_element_factory_make("videotestsrc");
+        assert(src != NULL);
+        zst_element_set_property(src, "width", "320");
+        zst_element_set_property(src, "height", "240");
+        zst_element_set_property(src, "fps", "30");
+        zst_element_set_property(src, "pixel-format", formats[i]);
+        zst_element_set_property(src, "num-buffers", "2");
+
+        assert(zst_element_set_state(src, ZST_STATE_READY) == ZST_OK);
+        assert(zst_element_set_state(src, ZST_STATE_PLAYING) == ZST_OK);
+
+        zst_buffer_t* out = NULL;
+        zst_result_t res = src->ops->process(src, NULL, &out);
+        assert(res == ZST_OK);
+        assert(out != NULL);
+
+        zst_video_frame_t* frame = out->payload;
+        assert(frame != NULL);
+        assert(frame->width == 320);
+        assert(frame->height == 240);
+        assert(frame->format == (uint32_t)expected_formats[i]);
+
+        if (strcmp(formats[i], "YUV420P") == 0) {
+            assert(frame->plane[0] != NULL);
+            assert(frame->plane[1] != NULL);
+            assert(frame->plane[2] != NULL);
+            assert(frame->plane[3] == NULL);
+            assert(frame->stride[0] == 320);
+            assert(frame->stride[1] == 160);
+            assert(frame->stride[2] == 160);
+            assert(out->memory.size == 320 * 240 * 3 / 2);
+        } else if (strcmp(formats[i], "NV12") == 0) {
+            assert(frame->plane[0] != NULL);
+            assert(frame->plane[1] != NULL);
+            assert(frame->plane[2] == NULL);
+            assert(frame->plane[3] == NULL);
+            assert(frame->stride[0] == 320);
+            assert(frame->stride[1] == 320);
+            assert(frame->stride[2] == 0);
+            assert(out->memory.size == 320 * 240 * 3 / 2);
+        } else if (strcmp(formats[i], "YUYV") == 0) {
+            assert(frame->plane[0] != NULL);
+            assert(frame->plane[1] == NULL);
+            assert(frame->plane[2] == NULL);
+            assert(frame->plane[3] == NULL);
+            assert(frame->stride[0] == 320 * 2);
+            assert(out->memory.size == 320 * 240 * 2);
+        } else if (strcmp(formats[i], "RGB24") == 0 || strcmp(formats[i], "BGR24") == 0) {
+            assert(frame->plane[0] != NULL);
+            assert(frame->plane[1] == NULL);
+            assert(frame->plane[2] == NULL);
+            assert(frame->plane[3] == NULL);
+            assert(frame->stride[0] == 320 * 3);
+            assert(out->memory.size == 320 * 240 * 3);
+        }
+
+        zst_buffer_unref(out);
+        assert(zst_element_set_state(src, ZST_STATE_NULL) == ZST_OK);
+        zst_element_destroy(src);
+    }
+
+    PASS();
+}
+
+static void test_jitter_measurement(void)
+{
+    TEST("Clock and Pad Jitter Measurement");
+    zst_plugin_registry_init();
+    zst_register_builtin_elements();
+
+    /* 1. Test Clock Sync PLL Jitter tracking */
+    zst_clock_t* master = zst_clock_system_create();
+    zst_clock_t* reference = zst_clock_system_create();
+    zst_clock_t* slave = zst_clock_slave_create(master, reference);
+    assert(slave != NULL);
+
+    /* Let the slave worker thread run for a short duration so it updates stats */
+    struct timespec ts = { .tv_sec = 1, .tv_nsec = 200000000 }; // 1.2 seconds
+    nanosleep(&ts, NULL);
+
+    double jitter_sec = -1.0;
+    double max_error_sec = -1.0;
+    zst_result_t res = zst_clock_get_sync_stats(slave, &jitter_sec, &max_error_sec);
+    assert(res == ZST_OK);
+    /* The sync jitter and errors should be non-negative */
+    assert(jitter_sec >= 0.0);
+    assert(max_error_sec >= 0.0);
+
+    zst_clock_unref(slave);
+    zst_clock_unref(reference);
+    zst_clock_unref(master);
+
+    /* 2. Test Media Jitter tracking on pads */
+    zst_element_t* source = zst_element_factory_make("videotestsrc");
+    zst_element_t* fakesink = zst_element_factory_make("fakesink");
+    assert(source != NULL && fakesink != NULL);
+
+    zst_pad_t* src_pad = zst_element_get_pad(source, "src");
+    zst_pad_t* sink_pad = zst_element_get_pad(fakesink, "sink");
+    assert(src_pad != NULL && sink_pad != NULL);
+
+    assert(zst_pad_link(src_pad, sink_pad) == ZST_OK);
+
+    zst_clock_t* sys_clock = zst_clock_system_create();
+    zst_element_set_clock(source, sys_clock);
+    zst_element_set_clock(fakesink, sys_clock);
+
+    /* Push buffers with randomized/varying transit delays */
+    zst_time_t base_pts = 1000000; // 1 ms
+    for (int i = 0; i < 10; i++) {
+        zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_VIDEO_FRAME);
+        /* Set PTS. Alternate delays slightly to introduce jitter */
+        buf->pts = base_pts + i * 33333333ULL; // 33 ms intervals
+        if (i % 2 == 0) {
+            /* Sleep briefly to simulate random arrival times */
+            struct timespec wait_ts = { .tv_sec = 0, .tv_nsec = 5000000 }; // 5 ms
+            nanosleep(&wait_ts, NULL);
+        }
+        assert(zst_pad_push(src_pad, buf) == ZST_OK);
+        zst_buffer_unref(buf);
+    }
+
+    double media_jitter = -1.0;
+    assert(zst_pad_get_media_jitter(src_pad, &media_jitter) == ZST_OK);
+    assert(media_jitter > 0.0);
+
+    zst_pad_unlink(src_pad);
+    zst_clock_unref(sys_clock);
+    zst_element_destroy(source);
+    zst_element_destroy(fakesink);
+
+    PASS();
+}
 
 int main(void)
 {
@@ -6837,6 +6981,7 @@ int main(void)
     test_element_create_destroy();
     test_element_state_transition();
     test_element_pads();
+    test_videotestsrc_formats();
 
     /* ── Pipeline ── */
     printf("[pipeline]\n");
@@ -6963,6 +7108,7 @@ int main(void)
     test_clock_slaving();
     test_clock_slaving_qos_sync();
     test_clock_precision();
+    test_jitter_measurement();
 
     /* ── Text Overlay (Phase 11a) ── */
     printf("[text overlay]\n");

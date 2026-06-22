@@ -131,6 +131,10 @@
 - [x] Pipeline-level master clock selection
 - [x] Clock slaving for A/V sync — see [`wiki/clock-slaving.md`](clock-slaving.md)
   for detailed design and task breakdown
+- [x] Jitter Measurement:
+  - [x] PLL Sync Jitter: Track moving average of phase error in slave clock
+  - [x] Media Transit Jitter: Track RFC 3550 standard packet transit variance on pads
+  - [x] Metrics API: Implement functions to query tracking values dynamically
 
 ## 8c — Other Advanced Features
 
