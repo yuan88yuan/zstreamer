@@ -1,5 +1,5 @@
 /*=============================================================================
-    rtp_sink.c — Generic RTP packetizer/sender element
+    rtp_payloader.c — Generic RTP packetizer/payloader element
 
     Converts one encoded/raw media access unit on its sink pad into one or more
     RTP packet buffers on its src pad.  Network transport is intentionally kept
@@ -20,25 +20,25 @@
 #include "zst_element.h"
 #include "zst_log.h"
 #include "zst_pad.h"
-#include "zstreamer/elements/zst_rtp_sink.h"
+#include "zstreamer/elements/zst_rtp_payloader.h"
 
-#define RTP_SINK_DEFAULT_PT         96
-#define RTP_SINK_DEFAULT_SSRC       0x53545250u /* STRP */
-#define RTP_SINK_DEFAULT_SEQ        0x7000u
-#define RTP_SINK_DEFAULT_MTU        1200       /* RTP payload bytes */
-#define RTP_SINK_DEFAULT_RATE_VIDEO 90000
-#define RTP_SINK_DEFAULT_RATE_AUDIO 48000
-#define RTP_SINK_MAX_PAYLOAD        65507
+#define RTP_PAYLOADER_DEFAULT_PT         96
+#define RTP_PAYLOADER_DEFAULT_SSRC       0x53545250u /* STRP */
+#define RTP_PAYLOADER_DEFAULT_SEQ        0x7000u
+#define RTP_PAYLOADER_DEFAULT_MTU        1200       /* RTP payload bytes */
+#define RTP_PAYLOADER_DEFAULT_RATE_VIDEO 90000
+#define RTP_PAYLOADER_DEFAULT_RATE_AUDIO 48000
+#define RTP_PAYLOADER_MAX_PAYLOAD        65507
 
 typedef enum {
-    RTP_SINK_CODEC_H264,
-    RTP_SINK_CODEC_H265,
-    RTP_SINK_CODEC_AAC,
-    RTP_SINK_CODEC_PCM
-} rtp_sink_codec_t;
+    RTP_PAYLOADER_CODEC_H264,
+    RTP_PAYLOADER_CODEC_H265,
+    RTP_PAYLOADER_CODEC_AAC,
+    RTP_PAYLOADER_CODEC_PCM
+} rtp_payloader_codec_t;
 
 typedef struct {
-    rtp_sink_codec_t codec;
+    rtp_payloader_codec_t codec;
     uint8_t payload_type;
     uint32_t ssrc;
     uint16_t seq;
@@ -51,34 +51,34 @@ typedef struct {
 
     zst_pad_t* sink_pad;
     zst_pad_t* src_pad;
-} rtp_sink_t;
+} rtp_payloader_t;
 
 static const char*
-rtp_sink_codec_to_string(rtp_sink_codec_t codec)
+rtp_payloader_codec_to_string(rtp_payloader_codec_t codec)
 {
     switch (codec) {
-        case RTP_SINK_CODEC_H264: return "h264";
-        case RTP_SINK_CODEC_H265: return "h265";
-        case RTP_SINK_CODEC_AAC:  return "aac";
-        case RTP_SINK_CODEC_PCM:  return "pcm";
+        case RTP_PAYLOADER_CODEC_H264: return "h264";
+        case RTP_PAYLOADER_CODEC_H265: return "h265";
+        case RTP_PAYLOADER_CODEC_AAC:  return "aac";
+        case RTP_PAYLOADER_CODEC_PCM:  return "pcm";
     }
     return "h264";
 }
 
 static int
-rtp_sink_parse_codec(const char* value, rtp_sink_codec_t* codec_out)
+rtp_payloader_parse_codec(const char* value, rtp_payloader_codec_t* codec_out)
 {
     if (!value || !codec_out) return 0;
     if (strcasecmp(value, "h264") == 0 || strcasecmp(value, "avc") == 0) {
-        *codec_out = RTP_SINK_CODEC_H264;
+        *codec_out = RTP_PAYLOADER_CODEC_H264;
     } else if (strcasecmp(value, "h265") == 0 || strcasecmp(value, "hevc") == 0 ||
                strcasecmp(value, "hvc1") == 0) {
-        *codec_out = RTP_SINK_CODEC_H265;
+        *codec_out = RTP_PAYLOADER_CODEC_H265;
     } else if (strcasecmp(value, "aac") == 0 || strcasecmp(value, "mpeg4-generic") == 0) {
-        *codec_out = RTP_SINK_CODEC_AAC;
+        *codec_out = RTP_PAYLOADER_CODEC_AAC;
     } else if (strcasecmp(value, "pcm") == 0 || strcasecmp(value, "l16") == 0 ||
                strcasecmp(value, "raw-audio") == 0) {
-        *codec_out = RTP_SINK_CODEC_PCM;
+        *codec_out = RTP_PAYLOADER_CODEC_PCM;
     } else {
         return 0;
     }
@@ -86,16 +86,16 @@ rtp_sink_parse_codec(const char* value, rtp_sink_codec_t* codec_out)
 }
 
 static uint32_t
-rtp_sink_pts_to_rtp_ts(uint64_t pts_ns, uint32_t clock_rate)
+rtp_payloader_pts_to_rtp_ts(uint64_t pts_ns, uint32_t clock_rate)
 {
     return (uint32_t)(pts_ns * (uint64_t)clock_rate / 1000000000ULL);
 }
 
 static zst_buffer_t*
-rtp_sink_make_packet(rtp_sink_t* s, const uint8_t* payload, int payload_len,
-                     uint32_t rtp_ts, int marker, uint64_t pts_ns)
+rtp_payloader_make_packet(rtp_payloader_t* s, const uint8_t* payload, int payload_len,
+                          uint32_t rtp_ts, int marker, uint64_t pts_ns)
 {
-    if (!s || !payload || payload_len < 0 || payload_len > RTP_SINK_MAX_PAYLOAD) return NULL;
+    if (!s || !payload || payload_len < 0 || payload_len > RTP_PAYLOADER_MAX_PAYLOAD) return NULL;
 
     zst_buffer_t* out = zst_buffer_create(ZST_BUFFER_USER);
     if (!out) return NULL;
@@ -136,10 +136,10 @@ rtp_sink_make_packet(rtp_sink_t* s, const uint8_t* payload, int payload_len,
 }
 
 static zst_result_t
-rtp_sink_push_packet(rtp_sink_t* s, const uint8_t* payload, int payload_len,
-                     uint32_t rtp_ts, int marker, uint64_t pts_ns)
+rtp_payloader_push_packet(rtp_payloader_t* s, const uint8_t* payload, int payload_len,
+                          uint32_t rtp_ts, int marker, uint64_t pts_ns)
 {
-    zst_buffer_t* out = rtp_sink_make_packet(s, payload, payload_len, rtp_ts, marker, pts_ns);
+    zst_buffer_t* out = rtp_payloader_make_packet(s, payload, payload_len, rtp_ts, marker, pts_ns);
     if (!out) return ZST_ERROR;
 
     zst_result_t ret = ZST_OK;
@@ -151,7 +151,7 @@ rtp_sink_push_packet(rtp_sink_t* s, const uint8_t* payload, int payload_len,
 }
 
 static int
-rtp_sink_find_start_code(const uint8_t* data, int size, int offset, int* code_size)
+rtp_payloader_find_start_code(const uint8_t* data, int size, int offset, int* code_size)
 {
     if (code_size) *code_size = 0;
     if (!data || size <= 0) return -1;
@@ -171,16 +171,16 @@ rtp_sink_find_start_code(const uint8_t* data, int size, int offset, int* code_si
 }
 
 static zst_result_t
-rtp_sink_send_h264_nal(rtp_sink_t* s, const uint8_t* nal, int nal_len,
-                      uint32_t ts, int marker, uint64_t pts_ns)
+rtp_payloader_send_h264_nal(rtp_payloader_t* s, const uint8_t* nal, int nal_len,
+                            uint32_t ts, int marker, uint64_t pts_ns)
 {
     if (!s || !nal || nal_len <= 0) return ZST_ERROR;
 
     int mtu = s->mtu;
-    if (mtu < 3 || mtu > RTP_SINK_MAX_PAYLOAD) return ZST_ERROR;
+    if (mtu < 3 || mtu > RTP_PAYLOADER_MAX_PAYLOAD) return ZST_ERROR;
 
     if (nal_len <= mtu) {
-        return rtp_sink_push_packet(s, nal, nal_len, ts, marker, pts_ns);
+        return rtp_payloader_push_packet(s, nal, nal_len, ts, marker, pts_ns);
     }
 
     uint8_t fu_ind = (uint8_t)((nal[0] & 0xe0) | 28);
@@ -201,8 +201,8 @@ rtp_sink_send_h264_nal(rtp_sink_t* s, const uint8_t* nal, int nal_len,
         if (off + chunk >= nal_len) fu[1] |= 0x40;
         memcpy(fu + 2, nal + off, (size_t)chunk);
 
-        zst_result_t one = rtp_sink_push_packet(s, fu, chunk + 2, ts,
-                                                marker && (off + chunk >= nal_len), pts_ns);
+        zst_result_t one = rtp_payloader_push_packet(s, fu, chunk + 2, ts,
+                                                     marker && (off + chunk >= nal_len), pts_ns);
         free(fu);
         if (one != ZST_OK) ret = one;
 
@@ -214,30 +214,30 @@ rtp_sink_send_h264_nal(rtp_sink_t* s, const uint8_t* nal, int nal_len,
 }
 
 static zst_result_t
-rtp_sink_packetize_h264(rtp_sink_t* s, const uint8_t* data, int size, uint64_t pts_ns)
+rtp_payloader_packetize_h264(rtp_payloader_t* s, const uint8_t* data, int size, uint64_t pts_ns)
 {
     if (!s || !data || size <= 0) return ZST_ERROR;
 
-    uint32_t ts = rtp_sink_pts_to_rtp_ts(pts_ns, 90000);
+    uint32_t ts = rtp_payloader_pts_to_rtp_ts(pts_ns, 90000);
     int code = 0;
-    int pos = rtp_sink_find_start_code(data, size, 0, &code);
+    int pos = rtp_payloader_find_start_code(data, size, 0, &code);
     if (pos < 0) {
-        return rtp_sink_send_h264_nal(s, data, size, ts, 1, pts_ns);
+        return rtp_payloader_send_h264_nal(s, data, size, ts, 1, pts_ns);
     }
 
     zst_result_t ret = ZST_OK;
     while (pos >= 0 && pos < size) {
         int nal_start = pos + code;
         int next_code = 0;
-        int next = rtp_sink_find_start_code(data, size, nal_start, &next_code);
+        int next = rtp_payloader_find_start_code(data, size, nal_start, &next_code);
         int nal_end = next >= 0 ? next : size;
         while (nal_end > nal_start && data[nal_end - 1] == 0) nal_end--;
         int nal_len = nal_end - nal_start;
         int is_last = next < 0;
 
         if (nal_len > 0) {
-            zst_result_t one = rtp_sink_send_h264_nal(s, data + nal_start,
-                                                      nal_len, ts, is_last, pts_ns);
+            zst_result_t one = rtp_payloader_send_h264_nal(s, data + nal_start,
+                                                           nal_len, ts, is_last, pts_ns);
             if (one != ZST_OK) ret = one;
         }
 
@@ -249,16 +249,16 @@ rtp_sink_packetize_h264(rtp_sink_t* s, const uint8_t* data, int size, uint64_t p
 }
 
 static zst_result_t
-rtp_sink_send_h265_nal(rtp_sink_t* s, const uint8_t* nal, int nal_len,
-                      uint32_t ts, int marker, uint64_t pts_ns)
+rtp_payloader_send_h265_nal(rtp_payloader_t* s, const uint8_t* nal, int nal_len,
+                            uint32_t ts, int marker, uint64_t pts_ns)
 {
     if (!s || !nal || nal_len < 2) return ZST_ERROR;
 
     int mtu = s->mtu;
-    if (mtu < 4 || mtu > RTP_SINK_MAX_PAYLOAD) return ZST_ERROR;
+    if (mtu < 4 || mtu > RTP_PAYLOADER_MAX_PAYLOAD) return ZST_ERROR;
 
     if (nal_len <= mtu) {
-        return rtp_sink_push_packet(s, nal, nal_len, ts, marker, pts_ns);
+        return rtp_payloader_push_packet(s, nal, nal_len, ts, marker, pts_ns);
     }
 
     uint8_t nal_type = (uint8_t)((nal[0] >> 1) & 0x3f);
@@ -281,8 +281,8 @@ rtp_sink_send_h265_nal(rtp_sink_t* s, const uint8_t* nal, int nal_len,
         if (off + chunk >= nal_len) fu[2] |= 0x40;
         memcpy(fu + 3, nal + off, (size_t)chunk);
 
-        zst_result_t one = rtp_sink_push_packet(s, fu, chunk + 3, ts,
-                                                marker && (off + chunk >= nal_len), pts_ns);
+        zst_result_t one = rtp_payloader_push_packet(s, fu, chunk + 3, ts,
+                                                     marker && (off + chunk >= nal_len), pts_ns);
         free(fu);
         if (one != ZST_OK) ret = one;
 
@@ -294,30 +294,30 @@ rtp_sink_send_h265_nal(rtp_sink_t* s, const uint8_t* nal, int nal_len,
 }
 
 static zst_result_t
-rtp_sink_packetize_h265(rtp_sink_t* s, const uint8_t* data, int size, uint64_t pts_ns)
+rtp_payloader_packetize_h265(rtp_payloader_t* s, const uint8_t* data, int size, uint64_t pts_ns)
 {
     if (!s || !data || size <= 0) return ZST_ERROR;
 
-    uint32_t ts = rtp_sink_pts_to_rtp_ts(pts_ns, 90000);
+    uint32_t ts = rtp_payloader_pts_to_rtp_ts(pts_ns, 90000);
     int code = 0;
-    int pos = rtp_sink_find_start_code(data, size, 0, &code);
+    int pos = rtp_payloader_find_start_code(data, size, 0, &code);
     if (pos < 0) {
-        return rtp_sink_send_h265_nal(s, data, size, ts, 1, pts_ns);
+        return rtp_payloader_send_h265_nal(s, data, size, ts, 1, pts_ns);
     }
 
     zst_result_t ret = ZST_OK;
     while (pos >= 0 && pos < size) {
         int nal_start = pos + code;
         int next_code = 0;
-        int next = rtp_sink_find_start_code(data, size, nal_start, &next_code);
+        int next = rtp_payloader_find_start_code(data, size, nal_start, &next_code);
         int nal_end = next >= 0 ? next : size;
         while (nal_end > nal_start && data[nal_end - 1] == 0) nal_end--;
         int nal_len = nal_end - nal_start;
         int is_last = next < 0;
 
         if (nal_len > 0) {
-            zst_result_t one = rtp_sink_send_h265_nal(s, data + nal_start,
-                                                      nal_len, ts, is_last, pts_ns);
+            zst_result_t one = rtp_payloader_send_h265_nal(s, data + nal_start,
+                                                           nal_len, ts, is_last, pts_ns);
             if (one != ZST_OK) ret = one;
         }
 
@@ -329,7 +329,7 @@ rtp_sink_packetize_h265(rtp_sink_t* s, const uint8_t* data, int size, uint64_t p
 }
 
 static zst_result_t
-rtp_sink_packetize_aac(rtp_sink_t* s, const uint8_t* data, int size, uint64_t pts_ns)
+rtp_payloader_packetize_aac(rtp_payloader_t* s, const uint8_t* data, int size, uint64_t pts_ns)
 {
     if (!s || !data || size <= 0 || size > 0x1fff) return ZST_ERROR;
     if (size + 4 > s->mtu) return ZST_ERROR;
@@ -344,30 +344,30 @@ rtp_sink_packetize_aac(rtp_sink_t* s, const uint8_t* data, int size, uint64_t pt
     payload[3] = (uint8_t)(au_header & 0xff);
     memcpy(payload + 4, data, (size_t)size);
 
-    uint32_t ts = rtp_sink_pts_to_rtp_ts(pts_ns, s->clock_rate);
-    zst_result_t ret = rtp_sink_push_packet(s, payload, size + 4, ts, 1, pts_ns);
+    uint32_t ts = rtp_payloader_pts_to_rtp_ts(pts_ns, s->clock_rate);
+    zst_result_t ret = rtp_payloader_push_packet(s, payload, size + 4, ts, 1, pts_ns);
     free(payload);
     return ret;
 }
 
 static zst_result_t
-rtp_sink_packetize_pcm(rtp_sink_t* s, const uint8_t* data, int size, uint64_t pts_ns)
+rtp_payloader_packetize_pcm(rtp_payloader_t* s, const uint8_t* data, int size, uint64_t pts_ns)
 {
     if (!s || !data || size <= 0) return ZST_ERROR;
 
     int bytes_per_sample_frame = s->channels * s->sample_size;
     if (bytes_per_sample_frame <= 0) bytes_per_sample_frame = 1;
 
-    uint32_t base_ts = rtp_sink_pts_to_rtp_ts(pts_ns, s->clock_rate);
+    uint32_t base_ts = rtp_payloader_pts_to_rtp_ts(pts_ns, s->clock_rate);
     int off = 0;
     zst_result_t ret = ZST_OK;
     while (off < size) {
         int chunk = size - off;
         if (chunk > s->mtu) chunk = s->mtu;
         uint32_t sample_offset = (uint32_t)(off / bytes_per_sample_frame);
-        zst_result_t one = rtp_sink_push_packet(s, data + off, chunk,
-                                                base_ts + sample_offset,
-                                                off + chunk >= size, pts_ns);
+        zst_result_t one = rtp_payloader_push_packet(s, data + off, chunk,
+                                                     base_ts + sample_offset,
+                                                     off + chunk >= size, pts_ns);
         if (one != ZST_OK) ret = one;
         off += chunk;
     }
@@ -375,10 +375,10 @@ rtp_sink_packetize_pcm(rtp_sink_t* s, const uint8_t* data, int size, uint64_t pt
 }
 
 static zst_result_t
-rtp_sink_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
+rtp_payloader_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
 {
     if (!pad || !pad->parent || !buf) return ZST_ERROR;
-    rtp_sink_t* s = pad->parent->priv;
+    rtp_payloader_t* s = pad->parent->priv;
     if (!s) return ZST_ERROR;
 
     if ((buf->flags & ZST_BUFFER_FLAG_EOS) || !buf->memory.data || buf->memory.size == 0) {
@@ -389,31 +389,31 @@ rtp_sink_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
     const uint8_t* data = (const uint8_t*)buf->memory.data;
     int size = (int)buf->memory.size;
     switch (s->codec) {
-        case RTP_SINK_CODEC_H264:
-            return rtp_sink_packetize_h264(s, data, size, buf->pts);
-        case RTP_SINK_CODEC_H265:
-            return rtp_sink_packetize_h265(s, data, size, buf->pts);
-        case RTP_SINK_CODEC_AAC:
-            return rtp_sink_packetize_aac(s, data, size, buf->pts);
-        case RTP_SINK_CODEC_PCM:
-            return rtp_sink_packetize_pcm(s, data, size, buf->pts);
+        case RTP_PAYLOADER_CODEC_H264:
+            return rtp_payloader_packetize_h264(s, data, size, buf->pts);
+        case RTP_PAYLOADER_CODEC_H265:
+            return rtp_payloader_packetize_h265(s, data, size, buf->pts);
+        case RTP_PAYLOADER_CODEC_AAC:
+            return rtp_payloader_packetize_aac(s, data, size, buf->pts);
+        case RTP_PAYLOADER_CODEC_PCM:
+            return rtp_payloader_packetize_pcm(s, data, size, buf->pts);
     }
     return ZST_ERROR;
 }
 
 static zst_result_t
-rtp_sink_open(zst_element_t* el)
+rtp_payloader_open(zst_element_t* el)
 {
-    rtp_sink_t* s = el ? el->priv : NULL;
+    rtp_payloader_t* s = el ? el->priv : NULL;
     if (!s) return ZST_ERROR;
-    s->seq = RTP_SINK_DEFAULT_SEQ;
+    s->seq = RTP_PAYLOADER_DEFAULT_SEQ;
     s->packets = 0;
     s->bytes = 0;
     return ZST_OK;
 }
 
 static zst_caps_t*
-rtp_sink_get_caps(zst_element_t* el, zst_pad_t* pad, const zst_caps_t* filter)
+rtp_payloader_get_caps(zst_element_t* el, zst_pad_t* pad, const zst_caps_t* filter)
 {
     (void)el;
     (void)filter;
@@ -442,19 +442,19 @@ rtp_sink_get_caps(zst_element_t* el, zst_pad_t* pad, const zst_caps_t* filter)
 }
 
 static zst_result_t
-rtp_sink_set_property(zst_element_t* el, const char* name, const char* value)
+rtp_payloader_set_property(zst_element_t* el, const char* name, const char* value)
 {
-    rtp_sink_t* s = el ? el->priv : NULL;
+    rtp_payloader_t* s = el ? el->priv : NULL;
     if (!s || !name || !value) return ZST_ERROR;
 
     if (strcmp(name, "codec") == 0 || strcmp(name, "media") == 0 || strcmp(name, "encoding") == 0) {
-        rtp_sink_codec_t codec;
-        if (!rtp_sink_parse_codec(value, &codec)) return ZST_ERROR;
+        rtp_payloader_codec_t codec;
+        if (!rtp_payloader_parse_codec(value, &codec)) return ZST_ERROR;
         s->codec = codec;
-        if (codec == RTP_SINK_CODEC_H264 || codec == RTP_SINK_CODEC_H265) {
-            s->clock_rate = RTP_SINK_DEFAULT_RATE_VIDEO;
-        } else if (s->clock_rate == RTP_SINK_DEFAULT_RATE_VIDEO) {
-            s->clock_rate = RTP_SINK_DEFAULT_RATE_AUDIO;
+        if (codec == RTP_PAYLOADER_CODEC_H264 || codec == RTP_PAYLOADER_CODEC_H265) {
+            s->clock_rate = RTP_PAYLOADER_DEFAULT_RATE_VIDEO;
+        } else if (s->clock_rate == RTP_PAYLOADER_DEFAULT_RATE_VIDEO) {
+            s->clock_rate = RTP_PAYLOADER_DEFAULT_RATE_AUDIO;
         }
         return ZST_OK;
     }
@@ -478,7 +478,7 @@ rtp_sink_set_property(zst_element_t* el, const char* name, const char* value)
     }
     if (strcmp(name, "mtu") == 0) {
         int mtu = atoi(value);
-        if (mtu < 4 || mtu > RTP_SINK_MAX_PAYLOAD) return ZST_ERROR;
+        if (mtu < 4 || mtu > RTP_PAYLOADER_MAX_PAYLOAD) return ZST_ERROR;
         s->mtu = mtu;
         return ZST_OK;
     }
@@ -503,13 +503,13 @@ rtp_sink_set_property(zst_element_t* el, const char* name, const char* value)
 }
 
 static zst_result_t
-rtp_sink_get_property(zst_element_t* el, const char* name, char* value_out, size_t max_len)
+rtp_payloader_get_property(zst_element_t* el, const char* name, char* value_out, size_t max_len)
 {
-    rtp_sink_t* s = el ? el->priv : NULL;
+    rtp_payloader_t* s = el ? el->priv : NULL;
     if (!s || !name || !value_out || max_len == 0) return ZST_ERROR;
 
     if (strcmp(name, "codec") == 0 || strcmp(name, "media") == 0 || strcmp(name, "encoding") == 0) {
-        snprintf(value_out, max_len, "%s", rtp_sink_codec_to_string(s->codec));
+        snprintf(value_out, max_len, "%s", rtp_payloader_codec_to_string(s->codec));
     } else if (strcmp(name, "payload-type") == 0 || strcmp(name, "pt") == 0 ||
                strcmp(name, "video-payload-type") == 0 || strcmp(name, "audio-payload-type") == 0) {
         snprintf(value_out, max_len, "%u", s->payload_type);
@@ -539,29 +539,29 @@ rtp_sink_get_property(zst_element_t* el, const char* name, char* value_out, size
 }
 
 static zst_element_ops_t g_ops = {
-    .name = "rtpsink",
-    .open = rtp_sink_open,
+    .name = "rtppay",
+    .open = rtp_payloader_open,
     .close = NULL,
     .start = NULL,
     .stop = NULL,
     .process = NULL,
-    .get_caps = rtp_sink_get_caps,
-    .set_property = rtp_sink_set_property,
-    .get_property = rtp_sink_get_property,
+    .get_caps = rtp_payloader_get_caps,
+    .set_property = rtp_payloader_set_property,
+    .get_property = rtp_payloader_get_property,
 };
 
 zst_element_t*
-zst_rtp_sink_create(void)
+zst_rtp_payloader_create(void)
 {
-    rtp_sink_t* s = calloc(1, sizeof(*s));
+    rtp_payloader_t* s = calloc(1, sizeof(*s));
     if (!s) return NULL;
 
-    s->codec = RTP_SINK_CODEC_H264;
-    s->payload_type = RTP_SINK_DEFAULT_PT;
-    s->ssrc = RTP_SINK_DEFAULT_SSRC;
-    s->seq = RTP_SINK_DEFAULT_SEQ;
-    s->clock_rate = RTP_SINK_DEFAULT_RATE_VIDEO;
-    s->mtu = RTP_SINK_DEFAULT_MTU;
+    s->codec = RTP_PAYLOADER_CODEC_H264;
+    s->payload_type = RTP_PAYLOADER_DEFAULT_PT;
+    s->ssrc = RTP_PAYLOADER_DEFAULT_SSRC;
+    s->seq = RTP_PAYLOADER_DEFAULT_SEQ;
+    s->clock_rate = RTP_PAYLOADER_DEFAULT_RATE_VIDEO;
+    s->mtu = RTP_PAYLOADER_DEFAULT_MTU;
     s->channels = 2;
     s->sample_size = 2;
 
@@ -580,7 +580,7 @@ zst_rtp_sink_create(void)
         return NULL;
     }
 
-    s->sink_pad->push = rtp_sink_pad_push;
+    s->sink_pad->push = rtp_payloader_pad_push;
     zst_element_add_pad(el, s->sink_pad);
     zst_element_add_pad(el, s->src_pad);
 
@@ -607,7 +607,7 @@ zst_rtp_sink_create(void)
         zst_caps_destroy(src_caps);
     }
 
-    ZST_LOG_INFO("rtpsink", "created generic RTP packetizer element");
+    ZST_LOG_INFO("rtppay", "created generic RTP payloader element");
     return el;
 }
 
@@ -618,19 +618,18 @@ zst_rtp_sink_create(void)
 static zst_element_t*
 plugin_create_element(const char* name)
 {
-    if (strcmp(name, "rtpsink") == 0 || strcmp(name, "rtp_sink") == 0 ||
-        strcmp(name, "rtppay") == 0) {
-        return zst_rtp_sink_create();
+    if (strcmp(name, "rtppay") == 0 || strcmp(name, "rtp_payloader") == 0) {
+        return zst_rtp_payloader_create();
     }
     return NULL;
 }
 
-static const zst_pad_template_t g_rtpsink_pads[] = {
+static const zst_pad_template_t g_rtppay_pads[] = {
     { "sink", ZST_PAD_SINK, "video/x-h264;video/x-h265;audio/x-aac;audio/aac;audio/x-raw" },
     { "src",  ZST_PAD_SRC,  "application/x-rtp" }
 };
 
-static const zst_property_spec_t g_rtpsink_properties[] = {
+static const zst_property_spec_t g_rtppay_properties[] = {
     { "codec", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "h264", "RTP payload codec: h264, h265, aac, pcm" },
     { "payload-type", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "96", "RTP payload type" },
     { "ssrc", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1398030928", "RTP SSRC" },
@@ -644,24 +643,24 @@ static const zst_property_spec_t g_rtpsink_properties[] = {
     { "bytes", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE, "0", "RTP bytes produced" }
 };
 
-static const zst_element_desc_t g_rtpsink_elements[] = {
+static const zst_element_desc_t g_rtppay_elements[] = {
     {
-        .name = "rtpsink",
-        .long_name = "RTP Packetizer",
+        .name = "rtppay",
+        .long_name = "RTP Payloader",
         .category = "RTP",
         .description = "Packetizes H.264/H.265/AAC/PCM buffers into RTP packet buffers",
         .author = "zstreamer",
-        .properties = g_rtpsink_properties,
-        .nb_properties = sizeof(g_rtpsink_properties) / sizeof(g_rtpsink_properties[0]),
-        .pads = g_rtpsink_pads,
-        .nb_pads = sizeof(g_rtpsink_pads) / sizeof(g_rtpsink_pads[0]),
+        .properties = g_rtppay_properties,
+        .nb_properties = sizeof(g_rtppay_properties) / sizeof(g_rtppay_properties[0]),
+        .pads = g_rtppay_pads,
+        .nb_pads = sizeof(g_rtppay_pads) / sizeof(g_rtppay_pads[0]),
         .create = NULL
     }
 };
 
 static zst_plugin_t g_plugin = {
     .desc = {
-        .name = "rtpsink_plugin",
+        .name = "rtppay_plugin",
         .author = "zstreamer",
         .version = "0.1.0",
         .init = NULL,
@@ -675,9 +674,9 @@ const zst_element_desc_t*
 zst_get_plugin_elements(uint32_t* nb_elements_out)
 {
     if (nb_elements_out) {
-        *nb_elements_out = sizeof(g_rtpsink_elements) / sizeof(g_rtpsink_elements[0]);
+        *nb_elements_out = sizeof(g_rtppay_elements) / sizeof(g_rtppay_elements[0]);
     }
-    return g_rtpsink_elements;
+    return g_rtppay_elements;
 }
 
 ZST_PLUGIN_EXPORT

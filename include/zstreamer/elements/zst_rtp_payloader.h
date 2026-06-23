@@ -1,5 +1,5 @@
 /*=============================================================================
-    zst_rtp_sink.h — Generic RTP packetizer public API
+    zst_rtp_payloader.h — Generic RTP payloader public API
 =============================================================================*/
 #pragma once
 
@@ -11,7 +11,7 @@ extern "C" {
 #endif
 
 /**
- * @brief Create a generic RTP packetizer element.
+ * @brief Create a generic RTP payloader element.
  *
  * The element has one generic "sink" pad for encoded/raw media access units
  * and one "src" pad that emits complete application/x-rtp packet buffers.
@@ -22,7 +22,7 @@ extern "C" {
  *
  * @return A new element, or NULL on failure.
  */
-zst_element_t* zst_rtp_sink_create(void);
+zst_element_t* zst_rtp_payloader_create(void);
 
 #ifdef __cplusplus
 }

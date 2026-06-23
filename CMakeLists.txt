@@ -510,7 +510,7 @@ set(ELEMENT_LIBRARY_SOURCES
     src/srt_parser.c
     src/sdp_demuxer.c
     src/sdp_muxer.c
-    src/rtp_sink.c
+    src/rtp_payloader.c
     src/net_source.c
     src/net_sink.c
     src/rtsp_server.c
@@ -645,7 +645,7 @@ set(ELEMENT_SOURCES
     src/http_source.c
     src/sdp_demuxer.c
     src/sdp_muxer.c
-    src/rtp_sink.c
+    src/rtp_payloader.c
 )
 
 # ── Dynamic Plugins ──────────────────────────────────────────────────────
@@ -840,9 +840,9 @@ add_library(zst_sdpmuxer SHARED src/sdp_muxer.c)
 target_compile_definitions(zst_sdpmuxer PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_sdpmuxer PRIVATE zstreamer)
 
-add_library(zst_rtpsink SHARED src/rtp_sink.c)
-target_compile_definitions(zst_rtpsink PRIVATE BUILDING_PLUGIN)
-target_link_libraries(zst_rtpsink PRIVATE zstreamer)
+add_library(zst_rtppay SHARED src/rtp_payloader.c)
+target_compile_definitions(zst_rtppay PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_rtppay PRIVATE zstreamer)
 
 
 if(ENABLE_JETSON)
@@ -889,7 +889,7 @@ else()
     set(VAAPI_DECODER_PLUGINS "")
 endif()
 
-set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_rtsp_server zst_srtparser zst_videotestsrc zst_audiotestsrc zst_audiomixer zst_filesource zst_netsrc zst_netsink zst_sdpdemux zst_sdpmuxer zst_rtpsink ${JETSON_PLUGINS} ${ONEAPI_ENCODER_PLUGINS} ${VAAPI_ENCODER_PLUGINS} ${VAAPI_DECODER_PLUGINS})
+set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_rtsp_server zst_srtparser zst_videotestsrc zst_audiotestsrc zst_audiomixer zst_filesource zst_netsrc zst_netsink zst_sdpdemux zst_sdpmuxer zst_rtppay ${JETSON_PLUGINS} ${ONEAPI_ENCODER_PLUGINS} ${VAAPI_ENCODER_PLUGINS} ${VAAPI_DECODER_PLUGINS})
 
 if(HAS_V4L2)
     list(APPEND PLUGIN_TARGETS zst_v4l2source zst_v4l2sink)

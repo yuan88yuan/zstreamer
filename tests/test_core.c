@@ -48,7 +48,7 @@
 #include "zst_rtsp_server.h"
 #include "zstreamer/elements/zst_fake_sink.h"
 #include "zstreamer/elements/zst_sdp_muxer.h"
-#include "zstreamer/elements/zst_rtp_sink.h"
+#include "zstreamer/elements/zst_rtp_payloader.h"
 
 #include "zstreamer/elements/zst_srt_source.h"
 #include "zstreamer/elements/zst_srt_sink.h"
@@ -5129,15 +5129,15 @@ rtp_packet_probe_cb(zst_pad_t* pad, zst_buffer_t* buf,
 }
 
 static void
-test_rtp_sink_packetizer(void)
+test_rtp_payloader(void)
 {
-    TEST("rtpsink packetizes media to RTP buffers");
+    TEST("rtppay packetizes media to RTP buffers");
 
-    zst_element_t* rtp = zst_rtp_sink_create();
+    zst_element_t* rtp = zst_rtp_payloader_create();
     zst_element_t* sink = zst_fake_sink_create();
     assert(rtp != NULL);
     assert(sink != NULL);
-    assert(strcmp(rtp->ops->name, "rtpsink") == 0);
+    assert(strcmp(rtp->ops->name, "rtppay") == 0);
 
     assert(zst_element_set_property(rtp, "codec", "h264") == ZST_OK);
     assert(zst_element_set_property(rtp, "payload-type", "96") == ZST_OK);
@@ -7457,7 +7457,7 @@ int main(void)
 
     printf("[sdp/rtp]\n");
     test_sdp_muxer_properties();
-    test_rtp_sink_packetizer();
+    test_rtp_payloader();
 
     printf("[fakesink]\n");
     test_fakesink();

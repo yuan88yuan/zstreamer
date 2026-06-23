@@ -8,7 +8,7 @@
       ./demo_sdp_multicast recv /tmp/zstreamer-demo.sdp 239.255.42.42 10
 
     Sender pipeline (manual demo driver):
-      videotestsrc + audiotestsrc -> x264enc + aacenc -> rtpsink -> netsink(udp) -> RTP multicast
+      videotestsrc + audiotestsrc -> x264enc + aacenc -> rtppay -> netsink(udp) -> RTP multicast
       sdpmuxer observes encoded packets and writes the SDP file.
 
     Receiver pipeline:
@@ -37,7 +37,7 @@
 #include "zstreamer/elements/zst_audio_test_src.h"
 #include "zstreamer/elements/zst_fake_sink.h"
 #include "zstreamer/elements/zst_net_sink.h"
-#include "zstreamer/elements/zst_rtp_sink.h"
+#include "zstreamer/elements/zst_rtp_payloader.h"
 #include "zstreamer/elements/zst_sdp_demuxer.h"
 #include "zstreamer/elements/zst_sdp_muxer.h"
 #include "zstreamer/elements/zst_video_test_src.h"
@@ -91,8 +91,8 @@ static int run_sender(const char* sdp_path, const char* group, int seconds) {
     zst_element_t* venc = zst_x264_encoder_create();
     zst_element_t* aenc = zst_aac_encoder_create();
     zst_element_t* sdpmux = zst_sdp_muxer_create();
-    zst_element_t* vrtp = zst_rtp_sink_create();
-    zst_element_t* artp = zst_rtp_sink_create();
+    zst_element_t* vrtp = zst_rtp_payloader_create();
+    zst_element_t* artp = zst_rtp_payloader_create();
     zst_element_t* vudp = zst_net_sink_create();
     zst_element_t* audp = zst_net_sink_create();
     if (!vsrc || !asrc || !venc || !aenc || !sdpmux || !vrtp || !artp || !vudp || !audp) {
@@ -153,8 +153,8 @@ static int run_sender(const char* sdp_path, const char* group, int seconds) {
 
     zst_pad_t* sdpmux_video = zst_element_get_pad(sdpmux, "video");
     zst_pad_t* sdpmux_audio = zst_element_get_pad(sdpmux, "audio");
-    zst_pad_t* vrtp_sink = zst_element_get_pad(vrtp, "sink");
-    zst_pad_t* artp_sink = zst_element_get_pad(artp, "sink");
+    zst_pad_t* vrtp_sink_pad = zst_element_get_pad(vrtp, "sink");
+    zst_pad_t* artp_sink_pad = zst_element_get_pad(artp, "sink");
     int wrote_sdp = 0;
     uint64_t start = now_ns();
     uint64_t end = start + (uint64_t)seconds * 1000000000ULL;
@@ -178,7 +178,7 @@ static int run_sender(const char* sdp_path, const char* group, int seconds) {
                         write_sdp(sdpmux, sdp_path);
                         wrote_sdp = 1;
                     }
-                    if (vrtp_sink) vrtp_sink->push(vrtp_sink, enc);
+                    if (vrtp_sink_pad) vrtp_sink_pad->push(vrtp_sink_pad, enc);
                     v_pkts++;
                     zst_buffer_unref(enc);
                 }
@@ -195,7 +195,7 @@ static int run_sender(const char* sdp_path, const char* group, int seconds) {
                         write_sdp(sdpmux, sdp_path);
                         wrote_sdp = 1;
                     }
-                    if (artp_sink) artp_sink->push(artp_sink, enc);
+                    if (artp_sink_pad) artp_sink_pad->push(artp_sink_pad, enc);
                     a_pkts++;
                     zst_buffer_unref(enc);
                 }
