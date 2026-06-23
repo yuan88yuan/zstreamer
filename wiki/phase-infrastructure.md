@@ -18,6 +18,8 @@ negotiation process when formats don't match.
 
 **Why this matters:** Without caps, linking NV12→YUV420P gives silent garbage.
 
+**Planned dynamic-demuxer extension:** generic key/value caps fields are planned for codec and stream metadata (`codec_data`, `stream-format`, `alignment`, `profile`, `program-id`, `pid`, `language`, etc.). See [Dynamic / Floating Demuxer Support Plan](phase-dynamic-demuxer.md#6-improve-caps-for-dynamic-formats).
+
 ---
 
 ## Phase 6 — Event Bus  (✅ done)
@@ -29,6 +31,8 @@ An async notification channel (`zst_bus_t`) that decouples error/state/EOS from 
 - [x] Async callback dispatch
 - [x] Wire pipeline lifecycle events
 - [x] Wire error returns → `ZST_EVENT_ERROR`
+
+**Planned dynamic-demuxer extension:** add bus notifications for `PAD_ADDED`, `PAD_REMOVED`, `STREAM_ADDED`, `STREAM_REMOVED`, `STREAM_CHANGED`, `CAPS_CHANGED`, `SIGNAL_LOST`, and `SIGNAL_PRESENT`. See [Dynamic / Floating Demuxer Support Plan](phase-dynamic-demuxer.md#4-add-bus-events-for-dynamic-media-changes).
 
 ---
 
