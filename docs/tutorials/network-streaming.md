@@ -140,14 +140,14 @@ You should see the scrolling colour bars test pattern!
 
 ---
 
-## Low-Level Raw Network Streaming (`netsink` and `netsrc`)
+## Low-Level Raw Network Streaming (netsink and netsrc)
 
-For low-level, high-performance streaming of raw binary bytes (without application-layer framing like RTSP or RTMP), you can use the `netsink` and `netsrc` elements. These support TCP, UDP, and UNIX Domain Sockets.
+For low-level, high-performance streaming of raw binary bytes (without application-layer framing like RTSP or RTMP), you can use the netsink and netsrc elements. These support TCP, UDP, and UNIX Domain Sockets.
 
 ### 1. UDP Streaming: Push Mode (Unicast / Multicast)
 In Push Mode, the sender pushes packets directly to a target IP/port, and the receiver binds to that port and listens.
 
-**Sender Configuration (`netsink`):**
+**Sender Configuration (netsink):**
 ```c
 zst_element_t* sink = zst_element_factory_make("netsink");
 zst_element_set_property_string(sink, "protocol", "udp-client"); // or "udp"
@@ -155,7 +155,7 @@ zst_element_set_property_string(sink, "host", "127.0.0.1"); // Target IP
 zst_element_set_property_string(sink, "port", "5001");      // Target Port
 ```
 
-**Receiver Configuration (`netsrc`):**
+**Receiver Configuration (netsrc):**
 ```c
 zst_element_t* src = zst_element_factory_make("netsrc");
 zst_element_set_property_string(src, "protocol", "udp");   // binds locally
@@ -165,7 +165,7 @@ zst_element_set_property_string(src, "port", "5001");      // Port to listen on
 ### 2. UDP Streaming: Pull Mode (NAT / Stateful Firewall Friendly)
 When the receiver is behind NAT or a stateful firewall, Push Mode will fail because firewalls block unsolicited incoming UDP traffic. In Pull Mode, the receiver initiates contact.
 
-**Sender Configuration (`netsink` acting as a Server):**
+**Sender Configuration (netsink acting as a Server):**
 - Binds to a local port and waits for the client to contact it first.
 ```c
 zst_element_t* sink = zst_element_factory_make("netsink");
@@ -173,7 +173,7 @@ zst_element_set_property_string(sink, "protocol", "udp-server");
 zst_element_set_property_string(sink, "port", "5002"); // Port to bind to
 ```
 
-**Receiver Configuration (`netsrc` acting as a Client):**
+**Receiver Configuration (netsrc acting as a Client):**
 - Actively connects to the sender and sends a single registration byte `\0` to punch a hole through NAT and register its public IP/port with the sender.
 ```c
 zst_element_t* src = zst_element_factory_make("netsrc");
@@ -186,13 +186,13 @@ zst_element_set_property_string(src, "port", "5002");      // Sender Port
 TCP provides a connection-oriented, reliable stream of bytes.
 
 **TCP Client Source / TCP Server Sink:**
-- **Receiver (`netsrc` in client mode):** Connects to `host:port`.
+- **Receiver (netsrc in client mode):** Connects to `host:port`.
   ```c
   zst_element_set_property_string(src, "protocol", "tcp-client");
   zst_element_set_property_string(src, "host", "127.0.0.1");
   zst_element_set_property_string(src, "port", "5003");
   ```
-- **Sender (`netsink` in server mode):** Listens on `port` for incoming client connections.
+- **Sender (netsink in server mode):** Listens on `port` for incoming client connections.
   ```c
   zst_element_set_property_string(sink, "protocol", "tcp-server");
   zst_element_set_property_string(sink, "port", "5003");
