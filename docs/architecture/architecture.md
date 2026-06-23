@@ -7,7 +7,7 @@ It decomposes media processing into a directed graph of **elements** connected v
 
 ## Core Concepts
 
-### Buffer (`zst_buffer`)
+### Buffer (zst_buffer)
 The fundamental data carrier — a reference-counted blob with:
 
 | Field      | Purpose                                 |
@@ -27,8 +27,8 @@ zst_buffer_ref()    → refcount++
 zst_buffer_unref()  → refcount--; free when 0
 ```
 
-### Memory Descriptor (`zst_memory_t`)
-The raw allocation container wrapped inside a `zst_buffer`. It separates buffer metadata (timestamps, refcounts, types) from the concrete memory backend implementation, enabling a unified interface for zero-copy operations across CPU and accelerators.
+### Memory Descriptor (zst_memory_t)
+The raw allocation container wrapped inside a zst_buffer. It separates buffer metadata (timestamps, refcounts, types) from the concrete memory backend implementation, enabling a unified interface for zero-copy operations across CPU and accelerators.
 
 | Field | Type | Purpose |
 |---|---|---|
@@ -59,7 +59,7 @@ The raw allocation container wrapped inside a `zst_buffer`. It separates buffer 
    - `data` holds the device-only USM pointer allocated via `sycl::malloc_device`.
    - `release` triggers `sycl::free()`.
 
-### Pad (`zst_pad`)
+### Pad (zst_pad)
 Connection point on an element. Two directions:
 
 - **SRC pad** — emits data (source / output)
@@ -73,7 +73,7 @@ sink_pad → peer → src_pad
 
 Each pad carries optional **caps** (media type negotiation) and **push/pull** function pointers for both task-based and pull-based data flow.
 
-### Element (`zst_element`)
+### Element (zst_element)
 A processing node in the pipeline. Elements implement the **ops** vtable:
 
 | Op       | Called during state transition |
@@ -96,7 +96,7 @@ NULL  ──open──→  READY  ──start──→  PLAYING
 
 `PAUSED` is reserved but not yet wired — elements can optionally implement it for preroll.
 
-### Pipeline (`zst_pipeline`)
+### Pipeline (zst_pipeline)
 An ordered container of elements. Its primary job is **state propagation** — calling `zst_element_set_state()` on every element in sequence.
 
 ```
@@ -106,7 +106,7 @@ zst_pipeline_add(pipe, encoder)
 zst_pipeline_set_state(pipe, ZST_STATE_PLAYING)
 ```
 
-### Queue (`zst_queue`)
+### Queue (zst_queue)
 Thread-safe blocking queue between processing stages.
 
 - **SYNC mode**: bounded with back-pressure (push blocks when full)
@@ -117,8 +117,8 @@ Thread-safe blocking queue between processing stages.
 
 Implemented with `pthread_mutex` + `pthread_condvar`.
 
-### Queue Element (`zst_queue_element`)
-A first-class `zst_element` subclass wrapping `zst_queue_t`. Unlike internal queues, the queue element is explicitly placed in the pipeline by the user. Each queue element has:
+### Queue Element (zst_queue_element)
+A first-class zst_element subclass wrapping `zst_queue_t`. Unlike internal queues, the queue element is explicitly placed in the pipeline by the user. Each queue element has:
 
 - One **sink pad** — receives buffers into the queue
 - One **src pad** — pushes dequeued buffers downstream
@@ -130,7 +130,7 @@ v4l2src → queue → x264enc → queue → mp4mux → queue → filesink
 
 Every queue element is a threading boundary: upstream runs in its thread, downstream runs in the queue's thread.
 
-### Scheduler (`zst_scheduler`)
+### Scheduler (zst_scheduler)
 Drives the pipeline's execution model.
 
 | Mode            | Behaviour                            |
@@ -155,7 +155,7 @@ All six pipeline elements are fully implemented with real hardware/codec integra
 | Video Scaler    | `libswscale`       | 📝 Planned — scaling + pixel format conversion |
 | Audio Resampler | `libswresample`    | 📝 Planned — sample rate + format conversion |
 
-### Plugin (`zst_plugin`)
+### Plugin (zst_plugin)
 Dynamic element loading via `dlopen()`:
 
 - Each `.so` exports `zst_get_plugin()`
