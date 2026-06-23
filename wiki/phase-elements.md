@@ -418,7 +418,7 @@ Adds MPEG-TS container support for broadcast, SRT contribution, HLS segmenting, 
 - [x] Caps negotiation: `video/mp2t` container caps and elementary stream caps on demuxed pads
 - [x] Tests: H.264/AAC and H.265/AAC mux → demux roundtrip preserves payload boundaries and timestamps
 
-**Dynamic demuxer follow-up:** `tsdemux` is the first target for the [Dynamic / Floating Demuxer Support Plan](phase-dynamic-demuxer.md). Refactor from fixed `video` / `audio` outputs to stream-table-backed dynamic pads (`video_%u`, `audio_%u`, `text_%u`, `data_%u`) with pad-added/removed, stream-status, caps-changed, and signal-lost/present events.
+**Adaptive demuxing follow-up:** `tsdemux` is the first target for the [Adaptive Stream Demuxing Plan](phase-adaptive-stream-demuxing.md). Refactor from fixed `video` / `audio` outputs to stream-table-backed dynamic pads (`video_%u`, `audio_%u`, `text_%u`, `data_%u`) with pad-added/removed, stream-status, caps-changed, and signal-lost/present events.
 
 **Dependencies:** `libavformat-dev`, `libavcodec-dev`, `libavutil-dev` (if FFmpeg-backed)
 
@@ -436,7 +436,7 @@ Demuxes MP4/fragmented-MP4 files or byte streams into encoded elementary audio/v
 - [x] Caps negotiation: `video/x-h264`, `video/x-h265`, `audio/aac` (and more) output pads
 - [x] Tests: MP4 mux→demux roundtrip with H.264/AAC; verify packet counts, timestamps; property/factory tests
 
-**Dynamic demuxer follow-up:** after the core floating-demuxer APIs land, migrate `mp4demux` to the same stream-table and dynamic-pad model so fragmented MP4 / late track discovery can expose new pads and caps changes at runtime. See [Dynamic / Floating Demuxer Support Plan](phase-dynamic-demuxer.md).
+**Adaptive demuxing follow-up:** after the core adaptive-demuxing APIs land, migrate `mp4demux` to the same stream-table and dynamic-pad model so fragmented MP4 / late track discovery can expose new pads and caps changes at runtime. See [Adaptive Stream Demuxing Plan](phase-adaptive-stream-demuxing.md).
 
 **Dependencies:** `libavformat-dev`, `libavcodec-dev`, `libavutil-dev`
 

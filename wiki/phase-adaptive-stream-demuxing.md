@@ -1,4 +1,4 @@
-# Dynamic / Floating Demuxer Support Plan
+# Adaptive Stream Demuxing Plan
 
 This document describes the planned API and implementation work needed for demuxers whose output stream set is not fixed at element creation time. Examples include MPEG-TS services with changing PMT/PAT, live broadcast inputs with signal loss/restoration, RTSP/SDP sessions with changing media descriptions, and generic container demuxers that discover tracks after receiving enough bytes.
 
@@ -29,7 +29,7 @@ The project already has pieces of this model:
 - `tsdemux` and `mp4demux` discover tracks using FFmpeg.
 - The bus supports EOS/error/warning/state/segment events.
 
-However, floating demuxers need stronger core support:
+However, adaptive demuxers need stronger core support:
 
 - Pad templates do not describe `always` / `sometimes` / `request` pad presence.
 - Dynamic pad add/remove has no public bus notification contract.

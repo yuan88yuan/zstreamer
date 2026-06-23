@@ -18,7 +18,7 @@ negotiation process when formats don't match.
 
 **Why this matters:** Without caps, linking NV12→YUV420P gives silent garbage.
 
-**Planned dynamic-demuxer extension:** generic key/value caps fields are planned for codec and stream metadata (`codec_data`, `stream-format`, `alignment`, `profile`, `program-id`, `pid`, `language`, etc.). See [Dynamic / Floating Demuxer Support Plan](phase-dynamic-demuxer.md#6-improve-caps-for-dynamic-formats).
+**Planned adaptive-demuxing extension:** generic key/value caps fields are planned for codec and stream metadata (`codec_data`, `stream-format`, `alignment`, `profile`, `program-id`, `pid`, `language`, etc.). See [Adaptive Stream Demuxing Plan](phase-adaptive-stream-demuxing.md#6-improve-caps-for-dynamic-formats).
 
 ---
 
@@ -32,7 +32,7 @@ An async notification channel (`zst_bus_t`) that decouples error/state/EOS from 
 - [x] Wire pipeline lifecycle events
 - [x] Wire error returns → `ZST_EVENT_ERROR`
 
-**Planned dynamic-demuxer extension:** add bus notifications for `PAD_ADDED`, `PAD_REMOVED`, `STREAM_ADDED`, `STREAM_REMOVED`, `STREAM_CHANGED`, `CAPS_CHANGED`, `SIGNAL_LOST`, and `SIGNAL_PRESENT`. See [Dynamic / Floating Demuxer Support Plan](phase-dynamic-demuxer.md#4-add-bus-events-for-dynamic-media-changes).
+**Planned adaptive-demuxing extension:** add bus notifications for `PAD_ADDED`, `PAD_REMOVED`, `STREAM_ADDED`, `STREAM_REMOVED`, `STREAM_CHANGED`, `CAPS_CHANGED`, `SIGNAL_LOST`, and `SIGNAL_PRESENT`. See [Adaptive Stream Demuxing Plan](phase-adaptive-stream-demuxing.md#4-add-bus-events-for-dynamic-media-changes).
 
 ---
 

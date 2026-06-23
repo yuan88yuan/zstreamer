@@ -12,7 +12,7 @@ All phases are now documented in separate files for easier maintenance.
 | 10    | [Documentation](phase-documentation.md) | ~25 | ✅ Complete |
 | Post-P0 | [RTMP Hardening](phase-rtmp-hardening.md) | ~60 | ✅ Done |
 | Post-P0 | [RTSP Media-On-Demand](phase-rtsp-mod.md) | ~70 | ✅ Done |
-| Post-P0 | [Dynamic / Floating Demuxer Support](phase-dynamic-demuxer.md) | ~350 | ⬜ Planned |
+| Post-P0 | [Adaptive Stream Demuxing](phase-adaptive-stream-demuxing.md) | ~350 | ⬜ Planned |
 | Post-P0 | [Xilinx VCU Integration](phase-xilinx-vcu.md) | ~30 | ⬜ Planned |
 | Post-P0 | [V4L2 DMA-BUF Exporter](phase-v4l2-expbuf.md) | ~110 | ✅ Implemented |
 | Post-P0 | [Intel oneAPI Video Encoder](phase-elements.md#4ag--intel-oneapi-video-encoder) | ~20 | ✅ Done |
@@ -50,7 +50,7 @@ All phases are now documented in separate files for easier maintenance.
 | Documentation (10) | ✅ Done | Doxygen API ref, tutorials, deep-dives, plugin guide |
 | Advanced Features (8c) | ✅ Done | Element bin, pad probes, segment seeking |
 | Element Public API (8d) | ✅ Done | Descriptor ABI, plugin introspection, typed properties, official element metadata, convenience headers, library & installation layout |
-| Dynamic / Floating Demuxer APIs | ⬜ Planned | Stream metadata, dynamic pad events, sticky pad events, caps v2, graph reconfiguration, and demuxer refactors |
+| Adaptive Stream Demuxing APIs | ⬜ Planned | Stream metadata, dynamic pad events, sticky pad events, caps v2, graph reconfiguration, and demuxer refactors |
 
 ---
 
@@ -66,10 +66,10 @@ Detailed tasks and checklist for RTSP Server Media-On-Demand refactoring have be
 - [RTSP Media-On-Demand Refactoring Plan](phase-rtsp-mod.md)
 
 
-## Dynamic / Floating Demuxer Support (Post-P0)
+## Adaptive Stream Demuxing (Post-P0)
 
 Detailed API and implementation plan for demuxers whose stream count, media type, caps, and signal presence can change while the pipeline is running:
-- [Dynamic / Floating Demuxer Support Plan](phase-dynamic-demuxer.md)
+- [Adaptive Stream Demuxing Plan](phase-adaptive-stream-demuxing.md)
 
 
 ## V4L2 DMA-BUF Exporter (Post-P0)
