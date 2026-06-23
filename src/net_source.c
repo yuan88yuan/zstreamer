@@ -30,7 +30,9 @@ typedef enum {
     NET_SOURCE_PROTOCOL_TCP_CLIENT,
     NET_SOURCE_PROTOCOL_TCP_SERVER,
     NET_SOURCE_PROTOCOL_UNIX_CLIENT,
-    NET_SOURCE_PROTOCOL_UNIX_SERVER
+    NET_SOURCE_PROTOCOL_UNIX_SERVER,
+    NET_SOURCE_PROTOCOL_UDP_LISTENER,
+    NET_SOURCE_PROTOCOL_UDP_CLIENT
 } net_source_protocol_t;
 
 typedef struct {
@@ -123,13 +125,49 @@ net_source_create_listen_socket(net_source_t* s)
 }
 
 static zst_result_t
+net_source_create_udp_listener_socket(net_source_t* s)
+{
+    if (!s) return ZST_ERROR;
+
+    net_source_close_connection(s);
+    s->conn_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s->conn_fd < 0) {
+        ZST_LOG_ERROR("netsrc", "UDP listener socket() failed: %s", strerror(errno));
+        return ZST_ERROR;
+    }
+
+    int opt = 1;
+    setsockopt(s->conn_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    struct sockaddr_in addr = {0};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(s->port);
+
+    if (bind(s->conn_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        ZST_LOG_ERROR("netsrc", "UDP listener bind() failed: %s", strerror(errno));
+        net_source_close_connection(s);
+        return ZST_ERROR;
+    }
+
+    if (net_source_set_nonblocking(s->conn_fd) < 0) {
+        ZST_LOG_WARN("netsrc", "failed to set UDP listener socket non-blocking");
+    }
+
+    ZST_LOG_INFO("netsrc", "UDP listener socket bound to port %u", s->port);
+    return ZST_OK;
+}
+
+static zst_result_t
 net_source_connect_socket(net_source_t* s)
 {
     if (!s) return ZST_ERROR;
     net_source_close_connection(s);
 
     int fd = -1;
-    if (s->protocol == NET_SOURCE_PROTOCOL_TCP_CLIENT) {
+    if (s->protocol == NET_SOURCE_PROTOCOL_UDP_CLIENT) {
+        fd = socket(AF_INET, SOCK_DGRAM, 0);
+    } else if (s->protocol == NET_SOURCE_PROTOCOL_TCP_CLIENT) {
         fd = socket(AF_INET, SOCK_STREAM, 0);
     } else {
         fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -144,7 +182,7 @@ net_source_connect_socket(net_source_t* s)
     }
 
     int result = -1;
-    if (s->protocol == NET_SOURCE_PROTOCOL_TCP_CLIENT) {
+    if (s->protocol == NET_SOURCE_PROTOCOL_TCP_CLIENT || s->protocol == NET_SOURCE_PROTOCOL_UDP_CLIENT) {
         struct sockaddr_in addr = {0};
         addr.sin_family = AF_INET;
         addr.sin_port = htons(s->port);
@@ -163,6 +201,10 @@ net_source_connect_socket(net_source_t* s)
 
     if (result == 0) {
         s->conn_fd = fd;
+        if (s->protocol == NET_SOURCE_PROTOCOL_UDP_CLIENT) {
+            send(s->conn_fd, "\0", 1, 0);
+            ZST_LOG_DEBUG("netsrc", "UDP client registered via hole-punch to %s:%u", s->host, s->port);
+        }
         return ZST_OK;
     }
 
@@ -191,6 +233,10 @@ net_source_connect_socket(net_source_t* s)
     }
 
     s->conn_fd = fd;
+    if (s->protocol == NET_SOURCE_PROTOCOL_UDP_CLIENT) {
+        send(s->conn_fd, "\0", 1, 0);
+        ZST_LOG_DEBUG("netsrc", "UDP client registered via hole-punch to %s:%u", s->host, s->port);
+    }
     return ZST_OK;
 }
 
@@ -223,6 +269,10 @@ static zst_result_t
 net_source_ensure_connection(net_source_t* s)
 {
     if (!s) return ZST_ERROR;
+    if (s->protocol == NET_SOURCE_PROTOCOL_UDP_LISTENER) {
+        if (s->conn_fd >= 0) return ZST_OK;
+        return net_source_create_udp_listener_socket(s);
+    }
     if (s->conn_fd >= 0) return ZST_OK;
 
     if (s->protocol == NET_SOURCE_PROTOCOL_TCP_SERVER || s->protocol == NET_SOURCE_PROTOCOL_UNIX_SERVER) {
@@ -264,6 +314,8 @@ net_source_protocol_to_string(net_source_protocol_t protocol)
         case NET_SOURCE_PROTOCOL_TCP_SERVER: return "tcp-server";
         case NET_SOURCE_PROTOCOL_UNIX_CLIENT: return "unix-client";
         case NET_SOURCE_PROTOCOL_UNIX_SERVER: return "unix-server";
+        case NET_SOURCE_PROTOCOL_UDP_LISTENER: return "udp";
+        case NET_SOURCE_PROTOCOL_UDP_CLIENT: return "udp-client";
     }
     return "tcp-client";
 }
@@ -272,7 +324,7 @@ static bool
 net_source_string_to_protocol(const char* value, net_source_protocol_t* out)
 {
     if (!value || !out) return false;
-    if (strcmp(value, "tcp-client") == 0) {
+    if (strcmp(value, "tcp-client") == 0 || strcmp(value, "tcp") == 0) {
         *out = NET_SOURCE_PROTOCOL_TCP_CLIENT;
     } else if (strcmp(value, "tcp-server") == 0) {
         *out = NET_SOURCE_PROTOCOL_TCP_SERVER;
@@ -282,6 +334,10 @@ net_source_string_to_protocol(const char* value, net_source_protocol_t* out)
         *out = NET_SOURCE_PROTOCOL_UNIX_SERVER;
     } else if (strcmp(value, "unix") == 0) {
         *out = NET_SOURCE_PROTOCOL_UNIX_CLIENT;
+    } else if (strcmp(value, "udp") == 0 || strcmp(value, "udp-server") == 0) {
+        *out = NET_SOURCE_PROTOCOL_UDP_LISTENER;
+    } else if (strcmp(value, "udp-client") == 0) {
+        *out = NET_SOURCE_PROTOCOL_UDP_CLIENT;
     } else {
         return false;
     }
@@ -315,6 +371,10 @@ net_source_open(zst_element_t* el)
 
     if (s->protocol == NET_SOURCE_PROTOCOL_TCP_SERVER) {
         return net_source_create_listen_socket(s);
+    }
+
+    if (s->protocol == NET_SOURCE_PROTOCOL_UDP_LISTENER) {
+        return net_source_create_udp_listener_socket(s);
     }
 
     if (s->protocol == NET_SOURCE_PROTOCOL_UNIX_SERVER) {
@@ -366,7 +426,7 @@ static zst_result_t
 net_source_start(zst_element_t* el)
 {
     net_source_t* s = el->priv;
-    if (s->protocol == NET_SOURCE_PROTOCOL_TCP_CLIENT || s->protocol == NET_SOURCE_PROTOCOL_UNIX_CLIENT) {
+    if (s->protocol == NET_SOURCE_PROTOCOL_TCP_CLIENT || s->protocol == NET_SOURCE_PROTOCOL_UNIX_CLIENT || s->protocol == NET_SOURCE_PROTOCOL_UDP_CLIENT) {
         s->next_reconnect_time_ms = 0;
     }
     return ZST_OK;
@@ -424,6 +484,11 @@ net_source_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
 
     ssize_t n = recv(s->conn_fd, buf->memory.data, s->chunk_size, 0);
     if (n > 0) {
+        if ((s->protocol == NET_SOURCE_PROTOCOL_UDP_CLIENT || s->protocol == NET_SOURCE_PROTOCOL_UDP_LISTENER) &&
+            n == 1 && ((char*)buf->memory.data)[0] == '\0') {
+            zst_buffer_unref(buf);
+            return ZST_TIMEOUT;
+        }
         buf->memory.size = (size_t)n;
         if (el->clock) {
             buf->pts = zst_clock_get_time(el->clock);
@@ -438,6 +503,9 @@ net_source_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     zst_buffer_unref(buf);
 
     if (n == 0) {
+        if (s->protocol == NET_SOURCE_PROTOCOL_UDP_CLIENT || s->protocol == NET_SOURCE_PROTOCOL_UDP_LISTENER) {
+            return ZST_TIMEOUT;
+        }
         net_source_close_connection(s);
         return ZST_EOF;
     }
@@ -602,7 +670,7 @@ plugin_create_element(const char* name)
 static const zst_property_spec_t g_netsrc_properties[] = {
     { "host", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "127.0.0.1", "Network host to bind or connect to" },
     { "port", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5000", "Network port" },
-    { "protocol", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "tcp", "Network protocol (tcp, udp, unix, tcp-server, unix-server)" },
+    { "protocol", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "tcp", "Network protocol (tcp, udp, unix, tcp-server, unix-server, udp-client)" },
     { "path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Unix domain socket path" },
     { "chunk-size", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "4096", "Chunk size in bytes to read at a time" },
     { "read-timeout", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1000", "Read timeout in milliseconds" }

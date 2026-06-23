@@ -125,7 +125,9 @@ Receives raw byte streams over TCP or Unix sockets and feeds them into the pipel
 - [x] TCP client mode: connect to remote host:port, read stream into buffers
 - [x] TCP server mode: accept incoming connections, read from first connected client
 - [x] Unix socket support for local IPC
-- [x] Configurable `host`, `port`, `protocol` (tcp-client, tcp-server, unix)
+- [x] UDP listener mode (`udp` / `udp-server`): bind to local port, receive incoming datagrams
+- [x] UDP client mode (`udp-client`): connect to remote host:port, send active-pull/registration packet, receive datagrams from connected remote peer
+- [x] Configurable `host`, `port`, `protocol` (tcp-client, tcp-server, unix, udp, udp-client)
 - [x] Reconnection with exponential back-off on connection loss
 - [x] Buffer size / read timeout configuration
 - [x] EOS on clean disconnect; error recovery on unexpected disconnect
@@ -141,7 +143,9 @@ Sends raw byte buffers over TCP or Unix sockets. Enables local IPC and custom bi
 - [x] TCP client mode: connect to remote host:port and write buffers
 - [x] TCP server mode: listen, accept, and stream to connected clients
 - [x] Unix socket support for local IPC
-- [x] Configurable `host`, `port`, `protocol` (tcp-client, tcp-server, unix)
+- [x] UDP client mode (`udp-client` / `udp`): write buffers to remote host:port
+- [x] UDP server mode (`udp-server`): bind to local port, listen for active-pull client registration packet, stream buffers to registered client
+- [x] Configurable `host`, `port`, `protocol` (tcp-client, tcp-server, unix, udp, udp-server)
 - [x] Reconnection with exponential back-off on connection loss
 - [x] Write timeout and buffer drain on disconnect
 - [x] EOS passthrough: flush remaining data before closing connection
@@ -153,6 +157,8 @@ Sends raw byte buffers over TCP or Unix sockets. Enables local IPC and custom bi
 - [x] TCP client mode test: connect to server, send data, verify reception
 - [x] Socket error handling: reconnection with exponential back-off
 - [x] EOS handling: graceful connection close
+- [x] UDP push-based test: netsink (`udp-client`) to netsrc (`udp` / `udp-server`)
+- [x] UDP pull-based test: netsrc (`udp-client`) to netsink (`udp-server`) with hole-punching/registration
 
 ---
 

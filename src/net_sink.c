@@ -29,7 +29,8 @@ typedef enum {
     NET_SINK_PROTOCOL_TCP_SERVER,
     NET_SINK_PROTOCOL_UDP_CLIENT,
     NET_SINK_PROTOCOL_UNIX_CLIENT,
-    NET_SINK_PROTOCOL_UNIX_SERVER
+    NET_SINK_PROTOCOL_UNIX_SERVER,
+    NET_SINK_PROTOCOL_UDP_SERVER
 } net_sink_protocol_t;
 
 typedef struct {
@@ -44,6 +45,8 @@ typedef struct {
     uint64_t write_timeout_ms;
     int multicast_ttl;
     int multicast_loop;
+    struct sockaddr_in client_addr;
+    bool client_registered;
 } net_sink_t;
 
 static uint64_t
@@ -264,6 +267,7 @@ net_sink_protocol_to_string(net_sink_protocol_t protocol)
         case NET_SINK_PROTOCOL_UDP_CLIENT: return "udp-client";
         case NET_SINK_PROTOCOL_UNIX_CLIENT: return "unix-client";
         case NET_SINK_PROTOCOL_UNIX_SERVER: return "unix-server";
+        case NET_SINK_PROTOCOL_UDP_SERVER: return "udp-server";
     }
     return "tcp-client";
 }
@@ -278,6 +282,8 @@ net_sink_string_to_protocol(const char* value, net_sink_protocol_t* out)
         *out = NET_SINK_PROTOCOL_TCP_SERVER;
     } else if (strcmp(value, "udp-client") == 0 || strcmp(value, "udp") == 0) {
         *out = NET_SINK_PROTOCOL_UDP_CLIENT;
+    } else if (strcmp(value, "udp-server") == 0) {
+        *out = NET_SINK_PROTOCOL_UDP_SERVER;
     } else if (strcmp(value, "unix-client") == 0) {
         *out = NET_SINK_PROTOCOL_UNIX_CLIENT;
     } else if (strcmp(value, "unix-server") == 0) {
@@ -298,9 +304,40 @@ net_sink_open(zst_element_t* el)
     s->listen_fd = -1;
     s->reconnect_delay_ms = 500;
     s->next_reconnect_time_ms = 0;
+    s->client_registered = false;
+    memset(&s->client_addr, 0, sizeof(s->client_addr));
 
     if (s->protocol == NET_SINK_PROTOCOL_TCP_SERVER) {
         return net_sink_create_listen_socket(s);
+    }
+
+    if (s->protocol == NET_SINK_PROTOCOL_UDP_SERVER) {
+        s->conn_fd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (s->conn_fd < 0) {
+            ZST_LOG_ERROR("netsink", "UDP server socket() failed: %s", strerror(errno));
+            return ZST_ERROR;
+        }
+        int opt = 1;
+        setsockopt(s->conn_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+        struct sockaddr_in addr = {0};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = INADDR_ANY;
+        addr.sin_port = htons(s->port);
+
+        if (bind(s->conn_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+            ZST_LOG_ERROR("netsink", "UDP server bind() failed: %s", strerror(errno));
+            close(s->conn_fd);
+            s->conn_fd = -1;
+            return ZST_ERROR;
+        }
+
+        if (net_sink_set_nonblocking(s->conn_fd) < 0) {
+            ZST_LOG_WARN("netsink", "failed to set UDP server socket non-blocking");
+        }
+
+        ZST_LOG_INFO("netsink", "UDP server listening on port %u", s->port);
+        return ZST_OK;
     }
 
     if (s->protocol == NET_SINK_PROTOCOL_UDP_CLIENT) {
@@ -361,6 +398,8 @@ static zst_result_t
 net_sink_start(zst_element_t* el)
 {
     net_sink_t* s = el->priv;
+    s->client_registered = false;
+    memset(&s->client_addr, 0, sizeof(s->client_addr));
     if (s->protocol == NET_SINK_PROTOCOL_TCP_CLIENT || s->protocol == NET_SINK_PROTOCOL_UNIX_CLIENT) {
         s->next_reconnect_time_ms = 0;
     }
@@ -389,6 +428,42 @@ net_sink_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     if (in->memory.size == 0 && in->memory.data == NULL) {
         net_sink_close_connection(s);
         return ZST_OK;
+    }
+
+    if (s->protocol == NET_SINK_PROTOCOL_UDP_SERVER) {
+        if (s->conn_fd < 0) {
+            return ZST_ERROR;
+        }
+        if (!s->client_registered) {
+            char reg_buf[16];
+            struct sockaddr_in sender_addr = {0};
+            socklen_t addr_len = sizeof(sender_addr);
+            ssize_t n_rec = recvfrom(s->conn_fd, reg_buf, sizeof(reg_buf), 0,
+                                     (struct sockaddr*)&sender_addr, &addr_len);
+            if (n_rec < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                    return ZST_TIMEOUT;
+                }
+                ZST_LOG_WARN("netsink", "UDP server recvfrom() failed: %s", strerror(errno));
+                return ZST_TIMEOUT;
+            }
+            s->client_addr = sender_addr;
+            s->client_registered = true;
+            char ip_str[64];
+            inet_ntop(AF_INET, &sender_addr.sin_addr, ip_str, sizeof(ip_str));
+            ZST_LOG_INFO("netsink", "UDP server registered client from %s:%u",
+                         ip_str, ntohs(sender_addr.sin_port));
+        }
+
+        ssize_t n = sendto(s->conn_fd, in->memory.data, in->memory.size, 0,
+                           (struct sockaddr*)&s->client_addr, sizeof(s->client_addr));
+        if (n >= 0 && (size_t)n == in->memory.size) return ZST_OK;
+        if (n >= 0) return ZST_TIMEOUT;
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return ZST_TIMEOUT;
+
+        ZST_LOG_WARN("netsink", "UDP server sendto() failed: %s, resetting client registration", strerror(errno));
+        s->client_registered = false;
+        return ZST_TIMEOUT;
     }
 
     if (s->protocol == NET_SINK_PROTOCOL_UDP_CLIENT) {
@@ -619,7 +694,7 @@ plugin_create_element(const char* name)
 static const zst_property_spec_t g_netsink_properties[] = {
     { "host", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "127.0.0.1", "Network host to connect to or listen on" },
     { "port", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5000", "Network port" },
-    { "protocol", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "tcp", "Network protocol (tcp, udp, udp-client, unix, tcp-server, unix-server)" },
+    { "protocol", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "tcp", "Network protocol (tcp, udp, udp-client, udp-server, unix, tcp-server, unix-server)" },
     { "path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Unix domain socket path" },
     { "write-timeout", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1000", "Write timeout in milliseconds" },
     { "ttl", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "16", "Multicast TTL for UDP" },

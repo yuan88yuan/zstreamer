@@ -21,8 +21,9 @@
 #include "zst_buffer_pool.h"
 #include "zst_pipeline.h"
 
-/* Forward declaration from net_sink.c if linkable directly */
+/* Forward declarations */
 extern zst_element_t* zst_net_sink_create(void);
+extern zst_element_t* zst_net_source_create(void);
 
 static void
 sleep_ms(unsigned int ms)
@@ -222,15 +223,143 @@ test_net_sink_state_transitions(void)
     printf("✓ State transition test passed\n");
 }
 
+static void
+test_net_udp_push(void)
+{
+    printf("\n=== Test: net_sink/net_source UDP push mode ===\n");
+
+    zst_element_t* src = zst_net_source_create();
+    zst_element_t* sink = zst_net_sink_create();
+    assert(src != NULL && sink != NULL);
+
+    assert(zst_element_set_property(src, "protocol", "udp") == ZST_OK);
+    assert(zst_element_set_property(src, "port", "16001") == ZST_OK);
+    assert(zst_element_set_property(src, "read-timeout", "500") == ZST_OK);
+
+    assert(zst_element_set_property(sink, "protocol", "udp-client") == ZST_OK);
+    assert(zst_element_set_property(sink, "host", "127.0.0.1") == ZST_OK);
+    assert(zst_element_set_property(sink, "port", "16001") == ZST_OK);
+
+    assert(zst_element_set_state(src, ZST_STATE_READY) == ZST_OK);
+    assert(zst_element_set_state(sink, ZST_STATE_READY) == ZST_OK);
+
+    assert(zst_element_set_state(src, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_element_set_state(sink, ZST_STATE_PLAYING) == ZST_OK);
+
+    /* Create input buffer */
+    zst_buffer_t* in_buf = zst_buffer_create(ZST_BUFFER_USER);
+    assert(in_buf != NULL);
+    const char* payload = "udp_push_test_data";
+    in_buf->memory.data = (void*)payload;
+    in_buf->memory.size = strlen(payload);
+
+    /* Send buffer through sink */
+    zst_buffer_t* temp = NULL;
+    assert(sink->ops->process(sink, in_buf, &temp) == ZST_OK);
+
+    /* Receive buffer from src */
+    zst_buffer_t* out_buf = NULL;
+    zst_result_t res = ZST_TIMEOUT;
+    for (int i = 0; i < 5 && res == ZST_TIMEOUT; i++) {
+        res = src->ops->process(src, NULL, &out_buf);
+        if (res == ZST_TIMEOUT) {
+            sleep_ms(50);
+        }
+    }
+    assert(res == ZST_OK);
+    assert(out_buf != NULL);
+    assert(out_buf->memory.size == strlen(payload));
+    assert(memcmp(out_buf->memory.data, payload, strlen(payload)) == 0);
+
+    zst_buffer_unref(in_buf);
+    zst_buffer_unref(out_buf);
+
+    assert(zst_element_set_state(sink, ZST_STATE_NULL) == ZST_OK);
+    assert(zst_element_set_state(src, ZST_STATE_NULL) == ZST_OK);
+
+    zst_element_destroy(sink);
+    zst_element_destroy(src);
+    printf("✓ UDP push test passed\n");
+}
+
+static void
+test_net_udp_pull(void)
+{
+    printf("\n=== Test: net_sink/net_source UDP pull mode ===\n");
+
+    zst_element_t* src = zst_net_source_create();
+    zst_element_t* sink = zst_net_sink_create();
+    assert(src != NULL && sink != NULL);
+
+    assert(zst_element_set_property(sink, "protocol", "udp-server") == ZST_OK);
+    assert(zst_element_set_property(sink, "port", "16002") == ZST_OK);
+
+    assert(zst_element_set_property(src, "protocol", "udp-client") == ZST_OK);
+    assert(zst_element_set_property(src, "host", "127.0.0.1") == ZST_OK);
+    assert(zst_element_set_property(src, "port", "16002") == ZST_OK);
+    assert(zst_element_set_property(src, "read-timeout", "500") == ZST_OK);
+
+    assert(zst_element_set_state(sink, ZST_STATE_READY) == ZST_OK);
+    assert(zst_element_set_state(src, ZST_STATE_READY) == ZST_OK);
+
+    assert(zst_element_set_state(sink, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_element_set_state(src, ZST_STATE_PLAYING) == ZST_OK);
+
+    /* 1. Call src process to connect and send the hole-punch/registration packet */
+    zst_buffer_t* out_buf = NULL;
+    zst_result_t res = src->ops->process(src, NULL, &out_buf);
+    /* It should return ZST_TIMEOUT as no media has been pushed yet */
+    assert(res == ZST_TIMEOUT);
+    assert(out_buf == NULL);
+
+    /* Give OS loopback a tiny moment */
+    sleep_ms(10);
+
+    /* 2. Push media through sink. It will read registration packet, register client, and send media */
+    zst_buffer_t* in_buf = zst_buffer_create(ZST_BUFFER_USER);
+    assert(in_buf != NULL);
+    const char* payload = "udp_pull_test_data";
+    in_buf->memory.data = (void*)payload;
+    in_buf->memory.size = strlen(payload);
+
+    zst_buffer_t* temp = NULL;
+    assert(sink->ops->process(sink, in_buf, &temp) == ZST_OK);
+
+    /* 3. Receive buffer from src */
+    res = ZST_TIMEOUT;
+    for (int i = 0; i < 5 && res == ZST_TIMEOUT; i++) {
+        res = src->ops->process(src, NULL, &out_buf);
+        if (res == ZST_TIMEOUT) {
+            sleep_ms(50);
+        }
+    }
+    assert(res == ZST_OK);
+    assert(out_buf != NULL);
+    assert(out_buf->memory.size == strlen(payload));
+    assert(memcmp(out_buf->memory.data, payload, strlen(payload)) == 0);
+
+    zst_buffer_unref(in_buf);
+    zst_buffer_unref(out_buf);
+
+    assert(zst_element_set_state(src, ZST_STATE_NULL) == ZST_OK);
+    assert(zst_element_set_state(sink, ZST_STATE_NULL) == ZST_OK);
+
+    zst_element_destroy(src);
+    zst_element_destroy(sink);
+    printf("✓ UDP pull test passed\n");
+}
+
 int main(void)
 {
     printf("=== net_sink comprehensive test suite ===\n");
-    
+
     test_net_sink_properties();
     test_net_sink_caps();
     test_net_sink_state_transitions();
     test_net_sink_tcp_client();
-    
+    test_net_udp_push();
+    test_net_udp_pull();
+
     printf("\n✓✓✓ All net_sink tests passed ✓✓✓\n");
     return 0;
 }

@@ -22,6 +22,7 @@ extern "C" {
 #define ZST_NET_SINK_PROTOCOL_TCP_CLIENT "tcp-client"
 #define ZST_NET_SINK_PROTOCOL_TCP_SERVER "tcp-server"
 #define ZST_NET_SINK_PROTOCOL_UDP_CLIENT "udp-client"
+#define ZST_NET_SINK_PROTOCOL_UDP_SERVER "udp-server"
 #define ZST_NET_SINK_PROTOCOL_UNIX_CLIENT "unix-client"
 #define ZST_NET_SINK_PROTOCOL_UNIX_SERVER "unix-server"
 
