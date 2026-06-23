@@ -47,6 +47,7 @@
 #include <arpa/inet.h>
 #include "zst_rtsp_server.h"
 #include "zstreamer/elements/zst_fake_sink.h"
+#include "zstreamer/elements/zst_sdp_muxer.h"
 
 #include "zstreamer/elements/zst_srt_source.h"
 #include "zstreamer/elements/zst_srt_sink.h"
@@ -5093,6 +5094,41 @@ test_text_overlay(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   SDP Muxer Tests
+   ═══════════════════════════════════════════════════════════════ */
+static void
+test_sdp_muxer_properties(void)
+{
+    TEST("sdp_muxer default and audio SDP generation");
+
+    zst_element_t* mux = zst_sdp_muxer_create();
+    assert(mux != NULL);
+    assert(strcmp(mux->ops->name, "sdpmuxer") == 0);
+
+    assert(zst_element_set_property(mux, "session-name", "unit-test") == ZST_OK);
+    assert(zst_element_set_property(mux, "address", "239.1.2.3") == ZST_OK);
+    assert(zst_element_set_property(mux, "enable-audio", "true") == ZST_OK);
+    assert(zst_element_set_property(mux, "sample-rate", "44100") == ZST_OK);
+    assert(zst_element_set_property(mux, "channels", "2") == ZST_OK);
+    assert(mux->ops->open(mux) == ZST_OK);
+
+    char sdp[4096];
+    assert(zst_element_get_property(mux, "sdp", sdp, sizeof(sdp)) == ZST_OK);
+    assert(strstr(sdp, "v=0\r\n") != NULL);
+    assert(strstr(sdp, "s=unit-test\r\n") != NULL);
+    assert(strstr(sdp, "c=IN IP4 239.1.2.3\r\n") != NULL);
+    assert(strstr(sdp, "m=video 5004 RTP/AVP 96\r\n") != NULL);
+    assert(strstr(sdp, "a=rtpmap:96 H264/90000\r\n") != NULL);
+    assert(strstr(sdp, "m=audio 5006 RTP/AVP 97\r\n") != NULL);
+    assert(strstr(sdp, "a=rtpmap:97 MPEG4-GENERIC/44100/2\r\n") != NULL);
+    assert(strstr(sdp, "config=1210") != NULL);
+
+    assert(mux->ops->close(mux) == ZST_OK);
+    zst_element_destroy(mux);
+    PASS();
+}
+
+/* ═══════════════════════════════════════════════════════════════
    Fake Sink Tests
    ═══════════════════════════════════════════════════════════════ */
 static void
@@ -7332,6 +7368,9 @@ int main(void)
 #else
     printf("  [SKIP] Freetype disabled\n");
 #endif
+
+    printf("[sdp muxer]\n");
+    test_sdp_muxer_properties();
 
     printf("[fakesink]\n");
     test_fakesink();

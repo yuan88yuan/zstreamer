@@ -509,6 +509,7 @@ set(ELEMENT_LIBRARY_SOURCES
     src/audio_mixer.c
     src/srt_parser.c
     src/sdp_demuxer.c
+    src/sdp_muxer.c
     src/net_source.c
     src/net_sink.c
     src/rtsp_server.c
@@ -642,6 +643,7 @@ set(ELEMENT_SOURCES
     src/rtmp_sink.c
     src/http_source.c
     src/sdp_demuxer.c
+    src/sdp_muxer.c
 )
 
 # ── Dynamic Plugins ──────────────────────────────────────────────────────
@@ -832,6 +834,10 @@ add_library(zst_sdpdemux SHARED src/sdp_demuxer.c)
 target_compile_definitions(zst_sdpdemux PRIVATE BUILDING_PLUGIN)
 target_link_libraries(zst_sdpdemux PRIVATE zstreamer)
 
+add_library(zst_sdpmuxer SHARED src/sdp_muxer.c)
+target_compile_definitions(zst_sdpmuxer PRIVATE BUILDING_PLUGIN)
+target_link_libraries(zst_sdpmuxer PRIVATE zstreamer)
+
 
 if(ENABLE_JETSON)
     add_library(zst_nvenc SHARED src/nv_video_encoder.c)
@@ -877,7 +883,7 @@ else()
     set(VAAPI_DECODER_PLUGINS "")
 endif()
 
-set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_rtsp_server zst_srtparser zst_videotestsrc zst_audiotestsrc zst_audiomixer zst_filesource zst_netsrc zst_netsink zst_sdpdemux ${JETSON_PLUGINS} ${ONEAPI_ENCODER_PLUGINS} ${VAAPI_ENCODER_PLUGINS} ${VAAPI_DECODER_PLUGINS})
+set(PLUGIN_TARGETS zst_filesink zst_fakesink zst_rtsp_server zst_srtparser zst_videotestsrc zst_audiotestsrc zst_audiomixer zst_filesource zst_netsrc zst_netsink zst_sdpdemux zst_sdpmuxer ${JETSON_PLUGINS} ${ONEAPI_ENCODER_PLUGINS} ${VAAPI_ENCODER_PLUGINS} ${VAAPI_DECODER_PLUGINS})
 
 if(HAS_V4L2)
     list(APPEND PLUGIN_TARGETS zst_v4l2source zst_v4l2sink)
@@ -1192,6 +1198,16 @@ if(BUILD_TESTS)
             PRIVATE ${ZSTREAMER_INCLUDE_DIR}
         )
         target_link_libraries(example_record
+            PRIVATE zstreamer-elements
+        )
+
+        add_executable(demo_sdp_multicast
+            tests/demo_sdp_multicast.c
+        )
+        target_include_directories(demo_sdp_multicast
+            PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+        )
+        target_link_libraries(demo_sdp_multicast
             PRIVATE zstreamer-elements
         )
     endif()

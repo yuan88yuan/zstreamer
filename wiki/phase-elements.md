@@ -1,6 +1,6 @@
-# Element Implementations — Phase 4  (✅ 37 implemented; 📝 planned additions)
+# Element Implementations — Phase 4  (✅ 40 implemented/started; 📝 planned additions)
 
-Thirty-seven production elements are implemented with real hardware/codec/protocol/display integrations and synthetic or graceful fallbacks where appropriate.
+Forty production elements are implemented or underway with real hardware/codec/protocol/display integrations and synthetic or graceful fallbacks where appropriate.
 Additional planned elements cover future protocol/container/display expansion.
 Two implemented elements handle format conversion (scaling, resampling) — essential once caps negotiation (Phase 5) requires automatic conversion between mismatched formats.
 
@@ -667,4 +667,28 @@ Audio mixing element that accepts multiple synchronized audio frame streams and 
 - [ ] Latency/QoS: `max-lateness` dropping
 - [ ] Dynamic pad removal during PLAYING
 - [ ] Dedicated integration tests with `audio_test_src`
+
+---
+
+### 4an — SDP Muxer / Generator (`sdpmuxer`)  (🔄 Initial implementation started)
+
+Generates Session Description Protocol (SDP) text for RTP-oriented H.264/H.265/AAC sessions. This complements `sdpdemux`: `sdpmuxer` describes media streams and RTP payload mappings, while transport/RTP packetization remains the responsibility of RTSP/RTP-capable elements.
+
+- [x] `sdpmuxer` element with optional `video` and `audio` sink pads plus one `src` pad emitting `application/sdp`
+- [x] Generate core SDP lines: `v=`, `o=`, `s=`, `c=`, `t=`, media sections, `rtpmap`, `fmtp`, and `control`
+- [x] Configurable properties: address, session name, video codec, enable/disable video/audio, RTP ports, payload types, AAC sample rate/channels, and `emit-once`
+- [x] H.264 SDP: `H264/90000`, `packetization-mode=1`, and optional `sprop-parameter-sets` extracted from Annex-B SPS/PPS observed on the video sink
+- [x] H.265 SDP: `H265/90000` and optional `sprop-vps`, `sprop-sps`, `sprop-pps` extracted from Annex-B VPS/SPS/PPS
+- [x] AAC SDP: `MPEG4-GENERIC/<rate>/<channels>` with AAC-hbr fmtp and generated/observed AudioSpecificConfig
+- [x] Public header: `include/zstreamer/elements/zst_sdp_muxer.h`
+- [x] CMake integration: built into `zstreamer-elements` and as dynamic plugin `libzst_sdpmuxer.so`
+- [x] Factory registration: registered in `zst_builtins.c` under factory name `"sdpmuxer"` (`"sdpmux"` alias)
+- [x] Basic unit test for default H.264 + AAC SDP generation and configurable properties
+- [x] Demo: `demo_sdp_multicast` shows `sdpmuxer` + test sources + H.264/AAC RTP multicast and `sdpdemuxer` + fakesinks receiving from the generated SDP
+
+**Follow-ups:**
+- [ ] Add dedicated unit tests for H.264/H.265 parameter-set extraction, AAC ADTS config extraction, and plugin introspection
+- [ ] Derive codec/track defaults from negotiated caps once caps metadata carries stream-format/profile-level details
+- [ ] Add optional SDP file output property for offline publishing workflows
+- [ ] Support additional RTP payloads (Opus, PCMU/PCMA, VP8/VP9/AV1) when matching depacketizers/packetizers are available
 

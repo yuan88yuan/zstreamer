@@ -1,0 +1,677 @@
+/*=============================================================================
+    sdp_muxer.c — SDP generator/muxer
+
+    Generates an SDP description for RTP sessions from configured properties and
+    optionally observed encoded packet headers.  It is intentionally lightweight:
+    it does not RTP-packetize media; use RTSP/RTMP/SRT/TS elements for transport.
+=============================================================================*/
+
+#define _POSIX_C_SOURCE 200809L
+
+#include <ctype.h>
+#include <stdint.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+#include <time.h>
+
+#include "zst_element.h"
+#include "zst_pad.h"
+#include "zst_buffer.h"
+#include "zst_caps.h"
+#include "zst_log.h"
+#include "zstreamer/elements/zst_sdp_muxer.h"
+
+#define SDP_MUXER_TEXT_MAX       4096
+#define SDP_MUXER_EXTRA_MAX      512
+#define SDP_MUXER_DEFAULT_ADDR   "127.0.0.1"
+#define SDP_MUXER_DEFAULT_NAME   "zstreamer"
+#define SDP_MUXER_DEFAULT_VIDEO_PORT 5004
+#define SDP_MUXER_DEFAULT_AUDIO_PORT 5006
+#define SDP_MUXER_DEFAULT_VIDEO_PT   96
+#define SDP_MUXER_DEFAULT_AUDIO_PT   97
+#define SDP_MUXER_DEFAULT_AUDIO_RATE 48000
+#define SDP_MUXER_DEFAULT_AUDIO_CH   2
+
+typedef struct {
+    char address[64];
+    char session_name[128];
+    char video_codec[16];
+    int  video_enabled;
+    int  audio_enabled;
+    int  video_port;
+    int  audio_port;
+    int  video_pt;
+    int  audio_pt;
+    int  audio_sample_rate;
+    int  audio_channels;
+    int  emit_once;
+
+    uint8_t h264_sps[SDP_MUXER_EXTRA_MAX];
+    int     h264_sps_len;
+    uint8_t h264_pps[SDP_MUXER_EXTRA_MAX];
+    int     h264_pps_len;
+    uint8_t h265_vps[SDP_MUXER_EXTRA_MAX];
+    int     h265_vps_len;
+    uint8_t h265_sps[SDP_MUXER_EXTRA_MAX];
+    int     h265_sps_len;
+    uint8_t h265_pps[SDP_MUXER_EXTRA_MAX];
+    int     h265_pps_len;
+    uint8_t aac_config[8];
+    int     aac_config_len;
+
+    char sdp_text[SDP_MUXER_TEXT_MAX];
+    int  sdp_valid;
+    int  emitted;
+
+    zst_pad_t* video_pad;
+    zst_pad_t* audio_pad;
+    zst_pad_t* src_pad;
+} sdp_muxer_t;
+
+static int sdp_muxer_is_h265(const sdp_muxer_t* s) {
+    return s && (strcasecmp(s->video_codec, "h265") == 0 ||
+                 strcasecmp(s->video_codec, "hevc") == 0 ||
+                 strcasecmp(s->video_codec, "hvc1") == 0);
+}
+
+static int sdp_muxer_is_h264(const sdp_muxer_t* s) {
+    return s && (strcasecmp(s->video_codec, "h264") == 0 ||
+                 strcasecmp(s->video_codec, "avc") == 0);
+}
+
+static int sdp_muxer_find_start_code(const uint8_t* data, int size, int offset, int* code_size) {
+    if (code_size) *code_size = 0;
+    for (int i = offset; i + 3 <= size; i++) {
+        if (i + 4 <= size && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1) {
+            if (code_size) *code_size = 4;
+            return i;
+        }
+        if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
+            if (code_size) *code_size = 3;
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void sdp_muxer_copy_limited(uint8_t* dst, int* dst_len, const uint8_t* src, int len) {
+    if (!dst || !dst_len || !src || len <= 0) return;
+    if (len > SDP_MUXER_EXTRA_MAX) len = SDP_MUXER_EXTRA_MAX;
+    memcpy(dst, src, (size_t)len);
+    *dst_len = len;
+}
+
+static void sdp_muxer_parse_h264_annexb(sdp_muxer_t* s, const uint8_t* data, int size) {
+    int code_size = 0;
+    int pos = sdp_muxer_find_start_code(data, size, 0, &code_size);
+    while (pos >= 0 && pos < size) {
+        int nal_start = pos + code_size;
+        int next_code = 0;
+        int next = sdp_muxer_find_start_code(data, size, nal_start, &next_code);
+        int nal_end = next >= 0 ? next : size;
+        while (nal_end > nal_start && data[nal_end - 1] == 0) nal_end--;
+        int nal_len = nal_end - nal_start;
+        if (nal_len > 0) {
+            int nal_type = data[nal_start] & 0x1f;
+            if (nal_type == 7 && s->h264_sps_len == 0) {
+                sdp_muxer_copy_limited(s->h264_sps, &s->h264_sps_len, data + nal_start, nal_len);
+            } else if (nal_type == 8 && s->h264_pps_len == 0) {
+                sdp_muxer_copy_limited(s->h264_pps, &s->h264_pps_len, data + nal_start, nal_len);
+            }
+        }
+        if (next < 0) break;
+        code_size = next_code;
+        pos = next;
+    }
+}
+
+static void sdp_muxer_parse_h265_annexb(sdp_muxer_t* s, const uint8_t* data, int size) {
+    int code_size = 0;
+    int pos = sdp_muxer_find_start_code(data, size, 0, &code_size);
+    while (pos >= 0 && pos < size) {
+        int nal_start = pos + code_size;
+        int next_code = 0;
+        int next = sdp_muxer_find_start_code(data, size, nal_start, &next_code);
+        int nal_end = next >= 0 ? next : size;
+        while (nal_end > nal_start && data[nal_end - 1] == 0) nal_end--;
+        int nal_len = nal_end - nal_start;
+        if (nal_len >= 2) {
+            int nal_type = (data[nal_start] >> 1) & 0x3f;
+            if (nal_type == 32 && s->h265_vps_len == 0) {
+                sdp_muxer_copy_limited(s->h265_vps, &s->h265_vps_len, data + nal_start, nal_len);
+            } else if (nal_type == 33 && s->h265_sps_len == 0) {
+                sdp_muxer_copy_limited(s->h265_sps, &s->h265_sps_len, data + nal_start, nal_len);
+            } else if (nal_type == 34 && s->h265_pps_len == 0) {
+                sdp_muxer_copy_limited(s->h265_pps, &s->h265_pps_len, data + nal_start, nal_len);
+            }
+        }
+        if (next < 0) break;
+        code_size = next_code;
+        pos = next;
+    }
+}
+
+static int sdp_muxer_aac_freq_index(int sample_rate) {
+    static const int rates[] = { 96000, 88200, 64000, 48000, 44100, 32000,
+                                 24000, 22050, 16000, 12000, 11025, 8000,
+                                 7350 };
+    for (int i = 0; i < (int)(sizeof(rates) / sizeof(rates[0])); i++) {
+        if (rates[i] == sample_rate) return i;
+    }
+    return 3; /* 48000 */
+}
+
+static void sdp_muxer_make_aac_config(sdp_muxer_t* s) {
+    if (!s || s->aac_config_len > 0) return;
+    int profile = 2; /* AAC LC */
+    int freq_idx = sdp_muxer_aac_freq_index(s->audio_sample_rate);
+    int channels = s->audio_channels > 0 ? s->audio_channels : 2;
+    s->aac_config[0] = (uint8_t)((profile << 3) | (freq_idx >> 1));
+    s->aac_config[1] = (uint8_t)(((freq_idx & 1) << 7) | (channels << 3));
+    s->aac_config_len = 2;
+}
+
+static void sdp_muxer_parse_aac_adts(sdp_muxer_t* s, const uint8_t* data, int size) {
+    if (!s || !data || size < 7 || s->aac_config_len > 0) return;
+    if (data[0] != 0xff || (data[1] & 0xf0) != 0xf0) return;
+    int profile_minus1 = (data[2] >> 6) & 0x03;
+    int freq_idx = (data[2] >> 2) & 0x0f;
+    int channels = ((data[2] & 0x01) << 2) | ((data[3] >> 6) & 0x03);
+    int profile = profile_minus1 + 1;
+    s->aac_config[0] = (uint8_t)((profile << 3) | (freq_idx >> 1));
+    s->aac_config[1] = (uint8_t)(((freq_idx & 1) << 7) | (channels << 3));
+    s->aac_config_len = 2;
+    if (channels > 0) s->audio_channels = channels;
+}
+
+static int sdp_muxer_b64_len(int len) { return ((len + 2) / 3) * 4; }
+
+static int sdp_muxer_base64(const uint8_t* in, int len, char* out, int out_cap) {
+    static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    int needed = sdp_muxer_b64_len(len) + 1;
+    if (!in || len < 0 || !out || out_cap < needed) return -1;
+    int p = 0;
+    for (int i = 0; i < len; i += 3) {
+        int rem = len - i;
+        uint32_t v = ((uint32_t)in[i] << 16) |
+                     ((uint32_t)(rem > 1 ? in[i + 1] : 0) << 8) |
+                     (uint32_t)(rem > 2 ? in[i + 2] : 0);
+        out[p++] = table[(v >> 18) & 0x3f];
+        out[p++] = table[(v >> 12) & 0x3f];
+        out[p++] = rem > 1 ? table[(v >> 6) & 0x3f] : '=';
+        out[p++] = rem > 2 ? table[v & 0x3f] : '=';
+    }
+    out[p] = '\0';
+    return p;
+}
+
+static void sdp_muxer_hex(const uint8_t* in, int len, char* out, int out_cap) {
+    static const char hex[] = "0123456789ABCDEF";
+    int p = 0;
+    if (!out || out_cap <= 0) return;
+    for (int i = 0; in && i < len && p + 2 < out_cap; i++) {
+        out[p++] = hex[(in[i] >> 4) & 0x0f];
+        out[p++] = hex[in[i] & 0x0f];
+    }
+    out[p] = '\0';
+}
+
+static void sdp_muxer_append(char** dst, size_t* rem, const char* fmt, ...) {
+    if (!dst || !*dst || !rem || *rem == 0 || !fmt) return;
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(*dst, *rem, fmt, ap);
+    va_end(ap);
+    if (n < 0) return;
+    if ((size_t)n >= *rem) {
+        *dst += *rem - 1;
+        *rem = 1;
+    } else {
+        *dst += n;
+        *rem -= (size_t)n;
+    }
+}
+
+static zst_result_t sdp_muxer_generate(sdp_muxer_t* s) {
+    if (!s) return ZST_ERROR;
+    char* out = s->sdp_text;
+    size_t rem = sizeof(s->sdp_text);
+    uint64_t sid = (uint64_t)time(NULL);
+
+    sdp_muxer_make_aac_config(s);
+
+    sdp_muxer_append(&out, &rem, "v=0\r\n");
+    sdp_muxer_append(&out, &rem, "o=- %llu 1 IN IP4 %s\r\n", (unsigned long long)sid, s->address);
+    sdp_muxer_append(&out, &rem, "s=%s\r\n", s->session_name);
+    sdp_muxer_append(&out, &rem, "c=IN IP4 %s\r\n", s->address);
+    sdp_muxer_append(&out, &rem, "t=0 0\r\n");
+    sdp_muxer_append(&out, &rem, "a=tool:zstreamer\r\n");
+
+    if (s->video_enabled) {
+        if (sdp_muxer_is_h265(s)) {
+            char vps[768] = "";
+            char sps[768] = "";
+            char pps[768] = "";
+            if (s->h265_vps_len > 0) sdp_muxer_base64(s->h265_vps, s->h265_vps_len, vps, sizeof(vps));
+            if (s->h265_sps_len > 0) sdp_muxer_base64(s->h265_sps, s->h265_sps_len, sps, sizeof(sps));
+            if (s->h265_pps_len > 0) sdp_muxer_base64(s->h265_pps, s->h265_pps_len, pps, sizeof(pps));
+            sdp_muxer_append(&out, &rem, "m=video %d RTP/AVP %d\r\n", s->video_port, s->video_pt);
+            sdp_muxer_append(&out, &rem, "a=rtpmap:%d H265/90000\r\n", s->video_pt);
+            if (vps[0] || sps[0] || pps[0]) {
+                sdp_muxer_append(&out, &rem, "a=fmtp:%d", s->video_pt);
+                if (vps[0]) sdp_muxer_append(&out, &rem, " sprop-vps=%s", vps);
+                if (sps[0]) sdp_muxer_append(&out, &rem, "%ssprop-sps=%s", vps[0] ? ";" : " ", sps);
+                if (pps[0]) sdp_muxer_append(&out, &rem, "%ssprop-pps=%s", (vps[0] || sps[0]) ? ";" : " ", pps);
+                sdp_muxer_append(&out, &rem, "\r\n");
+            }
+            sdp_muxer_append(&out, &rem, "a=control:trackID=0\r\n");
+        } else {
+            char sps[768] = "";
+            char pps[768] = "";
+            if (s->h264_sps_len > 0) sdp_muxer_base64(s->h264_sps, s->h264_sps_len, sps, sizeof(sps));
+            if (s->h264_pps_len > 0) sdp_muxer_base64(s->h264_pps, s->h264_pps_len, pps, sizeof(pps));
+            sdp_muxer_append(&out, &rem, "m=video %d RTP/AVP %d\r\n", s->video_port, s->video_pt);
+            sdp_muxer_append(&out, &rem, "a=rtpmap:%d H264/90000\r\n", s->video_pt);
+            if (sps[0] && pps[0]) {
+                sdp_muxer_append(&out, &rem, "a=fmtp:%d packetization-mode=1;sprop-parameter-sets=%s,%s\r\n",
+                                 s->video_pt, sps, pps);
+            } else {
+                sdp_muxer_append(&out, &rem, "a=fmtp:%d packetization-mode=1\r\n", s->video_pt);
+            }
+            sdp_muxer_append(&out, &rem, "a=control:trackID=0\r\n");
+        }
+    }
+
+    if (s->audio_enabled) {
+        char config[32];
+        sdp_muxer_hex(s->aac_config, s->aac_config_len, config, sizeof(config));
+        sdp_muxer_append(&out, &rem, "m=audio %d RTP/AVP %d\r\n", s->audio_port, s->audio_pt);
+        sdp_muxer_append(&out, &rem, "a=rtpmap:%d MPEG4-GENERIC/%d/%d\r\n",
+                         s->audio_pt, s->audio_sample_rate, s->audio_channels);
+        sdp_muxer_append(&out, &rem,
+                         "a=fmtp:%d streamtype=5;profile-level-id=1;mode=AAC-hbr;config=%s;SizeLength=13;IndexLength=3;IndexDeltaLength=3\r\n",
+                         s->audio_pt, config);
+        sdp_muxer_append(&out, &rem, "a=control:trackID=1\r\n");
+    }
+
+    s->sdp_valid = 1;
+    return ZST_OK;
+}
+
+static void sdp_muxer_observe_video(sdp_muxer_t* s, zst_buffer_t* buf) {
+    if (!s || !buf || !buf->memory.data || buf->memory.size == 0) return;
+    const uint8_t* data = (const uint8_t*)buf->memory.data;
+    int size = (int)buf->memory.size;
+    if (sdp_muxer_is_h265(s)) {
+        sdp_muxer_parse_h265_annexb(s, data, size);
+    } else {
+        sdp_muxer_parse_h264_annexb(s, data, size);
+    }
+}
+
+static void sdp_muxer_observe_audio(sdp_muxer_t* s, zst_buffer_t* buf) {
+    if (!s || !buf || !buf->memory.data || buf->memory.size == 0) return;
+    sdp_muxer_parse_aac_adts(s, (const uint8_t*)buf->memory.data, (int)buf->memory.size);
+}
+
+static zst_result_t sdp_muxer_emit(zst_element_t* el) {
+    sdp_muxer_t* s = el ? el->priv : NULL;
+    if (!s) return ZST_ERROR;
+    if (s->emit_once && s->emitted) return ZST_OK;
+    if (!s->sdp_valid && sdp_muxer_generate(s) != ZST_OK) return ZST_ERROR;
+
+    if (s->src_pad && s->src_pad->peer) {
+        size_t len = strlen(s->sdp_text);
+        zst_buffer_t* out = zst_buffer_create(ZST_BUFFER_USER);
+        if (!out) return ZST_ERROR;
+        char* data = malloc(len + 1);
+        if (!data) {
+            zst_buffer_unref(out);
+            return ZST_ERROR;
+        }
+        memcpy(data, s->sdp_text, len + 1);
+        out->memory.data = data;
+        out->memory.size = len;
+        out->memory.priv = data;
+        out->memory.release = free;
+        zst_pad_push(s->src_pad, out);
+        zst_buffer_unref(out);
+    }
+    s->emitted = 1;
+    return ZST_OK;
+}
+
+static zst_result_t sdp_muxer_sink_push(zst_pad_t* pad, zst_buffer_t* buf) {
+    if (!pad || !pad->parent) return ZST_ERROR;
+    zst_element_t* el = pad->parent;
+    sdp_muxer_t* s = el->priv;
+    if (!s || !buf) return ZST_ERROR;
+
+    if (buf->flags & ZST_BUFFER_FLAG_EOS) {
+        if (s->src_pad && s->src_pad->peer) {
+            zst_buffer_t* eos = zst_buffer_create(ZST_BUFFER_USER);
+            if (eos) {
+                eos->flags |= ZST_BUFFER_FLAG_EOS;
+                zst_pad_push(s->src_pad, eos);
+                zst_buffer_unref(eos);
+            }
+        }
+        return ZST_OK;
+    }
+
+    if (pad == s->video_pad) {
+        s->video_enabled = 1;
+        sdp_muxer_observe_video(s, buf);
+    } else if (pad == s->audio_pad) {
+        s->audio_enabled = 1;
+        sdp_muxer_observe_audio(s, buf);
+    }
+
+    s->sdp_valid = 0;
+    return sdp_muxer_emit(el);
+}
+
+static zst_caps_t* sdp_muxer_get_caps(zst_element_t* el, zst_pad_t* pad, const zst_caps_t* filter) {
+    (void)filter;
+    sdp_muxer_t* s = el ? el->priv : NULL;
+    if (!s || !pad) return NULL;
+
+    zst_caps_t* caps = zst_caps_create();
+    if (!caps) return NULL;
+
+    if (pad == s->video_pad) {
+        zst_caps_append(caps, zst_caps_struct_create_video("video/x-h264", 0, 0, 0.0, ""));
+        zst_caps_append(caps, zst_caps_struct_create_video("video/x-h265", 0, 0, 0.0, ""));
+        return caps;
+    }
+    if (pad == s->audio_pad) {
+        zst_caps_append(caps, zst_caps_struct_create_audio("audio/aac", 0, 0, ""));
+        return caps;
+    }
+    if (pad == s->src_pad) {
+        zst_caps_append(caps, zst_caps_struct_create_video("application/sdp", 0, 0, 0.0, ""));
+        zst_caps_append(caps, zst_caps_struct_create_video("text/plain", 0, 0, 0.0, ""));
+        return caps;
+    }
+
+    zst_caps_destroy(caps);
+    return NULL;
+}
+
+static zst_result_t sdp_muxer_open(zst_element_t* el) {
+    sdp_muxer_t* s = el ? el->priv : NULL;
+    if (!s) return ZST_ERROR;
+    s->emitted = 0;
+    s->sdp_valid = 0;
+    return sdp_muxer_generate(s);
+}
+
+static zst_result_t sdp_muxer_start(zst_element_t* el) {
+    sdp_muxer_t* s = el ? el->priv : NULL;
+    if (!s) return ZST_ERROR;
+    if (!s->sdp_valid && sdp_muxer_generate(s) != ZST_OK) return ZST_ERROR;
+    return ZST_OK;
+}
+
+static zst_result_t sdp_muxer_stop(zst_element_t* el) {
+    sdp_muxer_t* s = el ? el->priv : NULL;
+    if (s) s->emitted = 0;
+    return ZST_OK;
+}
+
+static zst_result_t sdp_muxer_close(zst_element_t* el) {
+    return sdp_muxer_stop(el);
+}
+
+static zst_result_t sdp_muxer_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out) {
+    (void)el;
+    (void)in;
+    if (out) *out = NULL;
+    return ZST_OK;
+}
+
+static int sdp_muxer_parse_bool(const char* v) {
+    return v && (strcmp(v, "1") == 0 || strcasecmp(v, "true") == 0 ||
+                 strcasecmp(v, "yes") == 0 || strcasecmp(v, "on") == 0);
+}
+
+static zst_result_t sdp_muxer_set_property(zst_element_t* el, const char* name, const char* value) {
+    if (!el || !name || !value) return ZST_ERROR;
+    sdp_muxer_t* s = el->priv;
+    if (!s) return ZST_ERROR;
+
+    if (strcmp(name, "address") == 0 || strcmp(name, "connection-address") == 0) {
+        strncpy(s->address, value, sizeof(s->address) - 1);
+        s->address[sizeof(s->address) - 1] = '\0';
+    } else if (strcmp(name, "session-name") == 0 || strcmp(name, "name") == 0) {
+        strncpy(s->session_name, value, sizeof(s->session_name) - 1);
+        s->session_name[sizeof(s->session_name) - 1] = '\0';
+    } else if (strcmp(name, "video-codec") == 0 || strcmp(name, "codec") == 0) {
+        if (strcasecmp(value, "h264") != 0 && strcasecmp(value, "avc") != 0 &&
+            strcasecmp(value, "h265") != 0 && strcasecmp(value, "hevc") != 0 &&
+            strcasecmp(value, "hvc1") != 0) return ZST_ERROR;
+        strncpy(s->video_codec, value, sizeof(s->video_codec) - 1);
+        s->video_codec[sizeof(s->video_codec) - 1] = '\0';
+    } else if (strcmp(name, "video-port") == 0) {
+        s->video_port = atoi(value);
+    } else if (strcmp(name, "audio-port") == 0) {
+        s->audio_port = atoi(value);
+    } else if (strcmp(name, "video-payload-type") == 0 || strcmp(name, "video-pt") == 0) {
+        s->video_pt = atoi(value);
+    } else if (strcmp(name, "audio-payload-type") == 0 || strcmp(name, "audio-pt") == 0) {
+        s->audio_pt = atoi(value);
+    } else if (strcmp(name, "sample-rate") == 0 || strcmp(name, "audio-sample-rate") == 0) {
+        s->audio_sample_rate = atoi(value);
+        s->aac_config_len = 0;
+    } else if (strcmp(name, "channels") == 0 || strcmp(name, "audio-channels") == 0) {
+        s->audio_channels = atoi(value);
+        s->aac_config_len = 0;
+    } else if (strcmp(name, "enable-video") == 0 || strcmp(name, "video-enabled") == 0) {
+        s->video_enabled = sdp_muxer_parse_bool(value);
+    } else if (strcmp(name, "enable-audio") == 0 || strcmp(name, "audio-enabled") == 0) {
+        s->audio_enabled = sdp_muxer_parse_bool(value);
+    } else if (strcmp(name, "emit-once") == 0) {
+        s->emit_once = sdp_muxer_parse_bool(value);
+    } else {
+        return ZST_ERROR;
+    }
+
+    s->sdp_valid = 0;
+    sdp_muxer_generate(s);
+    return ZST_OK;
+}
+
+static zst_result_t sdp_muxer_get_property(zst_element_t* el, const char* name, char* value_out, size_t max_len) {
+    if (!el || !name || !value_out || max_len == 0) return ZST_ERROR;
+    sdp_muxer_t* s = el->priv;
+    if (!s) return ZST_ERROR;
+    if (!s->sdp_valid) sdp_muxer_generate(s);
+
+    if (strcmp(name, "sdp") == 0) {
+        strncpy(value_out, s->sdp_text, max_len - 1);
+    } else if (strcmp(name, "address") == 0 || strcmp(name, "connection-address") == 0) {
+        strncpy(value_out, s->address, max_len - 1);
+    } else if (strcmp(name, "session-name") == 0 || strcmp(name, "name") == 0) {
+        strncpy(value_out, s->session_name, max_len - 1);
+    } else if (strcmp(name, "video-codec") == 0 || strcmp(name, "codec") == 0) {
+        strncpy(value_out, s->video_codec, max_len - 1);
+    } else if (strcmp(name, "video-port") == 0) {
+        snprintf(value_out, max_len, "%d", s->video_port);
+    } else if (strcmp(name, "audio-port") == 0) {
+        snprintf(value_out, max_len, "%d", s->audio_port);
+    } else if (strcmp(name, "video-payload-type") == 0 || strcmp(name, "video-pt") == 0) {
+        snprintf(value_out, max_len, "%d", s->video_pt);
+    } else if (strcmp(name, "audio-payload-type") == 0 || strcmp(name, "audio-pt") == 0) {
+        snprintf(value_out, max_len, "%d", s->audio_pt);
+    } else if (strcmp(name, "sample-rate") == 0 || strcmp(name, "audio-sample-rate") == 0) {
+        snprintf(value_out, max_len, "%d", s->audio_sample_rate);
+    } else if (strcmp(name, "channels") == 0 || strcmp(name, "audio-channels") == 0) {
+        snprintf(value_out, max_len, "%d", s->audio_channels);
+    } else if (strcmp(name, "enable-video") == 0 || strcmp(name, "video-enabled") == 0) {
+        snprintf(value_out, max_len, "%s", s->video_enabled ? "true" : "false");
+    } else if (strcmp(name, "enable-audio") == 0 || strcmp(name, "audio-enabled") == 0) {
+        snprintf(value_out, max_len, "%s", s->audio_enabled ? "true" : "false");
+    } else if (strcmp(name, "emit-once") == 0) {
+        snprintf(value_out, max_len, "%s", s->emit_once ? "true" : "false");
+    } else {
+        return ZST_ERROR;
+    }
+    value_out[max_len - 1] = '\0';
+    return ZST_OK;
+}
+
+static zst_element_ops_t g_ops = {
+    .name = "sdpmuxer",
+    .open = sdp_muxer_open,
+    .close = sdp_muxer_close,
+    .start = sdp_muxer_start,
+    .stop = sdp_muxer_stop,
+    .process = sdp_muxer_process,
+    .get_caps = sdp_muxer_get_caps,
+    .set_property = sdp_muxer_set_property,
+    .get_property = sdp_muxer_get_property,
+};
+
+zst_element_t* zst_sdp_muxer_create(void) {
+    sdp_muxer_t* s = calloc(1, sizeof(*s));
+    if (!s) return NULL;
+
+    strncpy(s->address, SDP_MUXER_DEFAULT_ADDR, sizeof(s->address) - 1);
+    strncpy(s->session_name, SDP_MUXER_DEFAULT_NAME, sizeof(s->session_name) - 1);
+    strncpy(s->video_codec, "h264", sizeof(s->video_codec) - 1);
+    s->video_enabled = 1;
+    s->audio_enabled = 0;
+    s->video_port = SDP_MUXER_DEFAULT_VIDEO_PORT;
+    s->audio_port = SDP_MUXER_DEFAULT_AUDIO_PORT;
+    s->video_pt = SDP_MUXER_DEFAULT_VIDEO_PT;
+    s->audio_pt = SDP_MUXER_DEFAULT_AUDIO_PT;
+    s->audio_sample_rate = SDP_MUXER_DEFAULT_AUDIO_RATE;
+    s->audio_channels = SDP_MUXER_DEFAULT_AUDIO_CH;
+    s->emit_once = 1;
+
+    zst_element_t* el = zst_element_create(&g_ops, s);
+    if (!el) {
+        free(s);
+        return NULL;
+    }
+
+    s->video_pad = zst_pad_create("video", ZST_PAD_SINK);
+    s->audio_pad = zst_pad_create("audio", ZST_PAD_SINK);
+    s->src_pad = zst_pad_create("src", ZST_PAD_SRC);
+    if (!s->video_pad || !s->audio_pad || !s->src_pad) {
+        if (s->video_pad) zst_pad_destroy(s->video_pad);
+        if (s->audio_pad) zst_pad_destroy(s->audio_pad);
+        if (s->src_pad) zst_pad_destroy(s->src_pad);
+        zst_element_destroy(el);
+        return NULL;
+    }
+    s->video_pad->push = sdp_muxer_sink_push;
+    s->audio_pad->push = sdp_muxer_sink_push;
+
+    zst_element_add_pad(el, s->video_pad);
+    zst_element_add_pad(el, s->audio_pad);
+    zst_element_add_pad(el, s->src_pad);
+
+    zst_caps_t* vcaps = zst_caps_create();
+    if (vcaps) {
+        zst_caps_append(vcaps, zst_caps_struct_create_video("video/x-h264", 0, 0, 0.0, ""));
+        zst_caps_append(vcaps, zst_caps_struct_create_video("video/x-h265", 0, 0, 0.0, ""));
+        zst_pad_set_template_caps(s->video_pad, vcaps);
+        zst_caps_destroy(vcaps);
+    }
+    zst_caps_t* acaps = zst_caps_create();
+    if (acaps) {
+        zst_caps_append(acaps, zst_caps_struct_create_audio("audio/aac", 0, 0, ""));
+        zst_pad_set_template_caps(s->audio_pad, acaps);
+        zst_caps_destroy(acaps);
+    }
+    zst_caps_t* scaps = zst_caps_create();
+    if (scaps) {
+        zst_caps_append(scaps, zst_caps_struct_create_video("application/sdp", 0, 0, 0.0, ""));
+        zst_pad_set_template_caps(s->src_pad, scaps);
+        zst_caps_destroy(scaps);
+    }
+
+    sdp_muxer_generate(s);
+    ZST_LOG_INFO("sdpmuxer", "created SDP muxer element");
+    return el;
+}
+
+#ifdef BUILDING_PLUGIN
+
+#include "zst_plugin.h"
+
+static zst_element_t* plugin_create_element(const char* name) {
+    if (strcmp(name, "sdpmuxer") == 0 || strcmp(name, "sdpmux") == 0) {
+        return zst_sdp_muxer_create();
+    }
+    return NULL;
+}
+
+static const zst_pad_template_t g_sdpmuxer_pads[] = {
+    { "video", ZST_PAD_SINK, "video/x-h264;video/x-h265" },
+    { "audio", ZST_PAD_SINK, "audio/aac" },
+    { "src",   ZST_PAD_SRC,  "application/sdp" }
+};
+
+static const zst_property_spec_t g_sdpmuxer_properties[] = {
+    { "sdp", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE, "", "Generated SDP text" },
+    { "address", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, SDP_MUXER_DEFAULT_ADDR, "Connection address for c=/o= lines" },
+    { "session-name", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, SDP_MUXER_DEFAULT_NAME, "SDP session name" },
+    { "video-codec", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "h264", "Video codec: h264 or h265" },
+    { "enable-video", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "true", "Include video media section" },
+    { "enable-audio", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Include audio media section" },
+    { "video-port", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5004", "Video RTP port" },
+    { "audio-port", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5006", "Audio RTP port" },
+    { "video-payload-type", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "96", "Video RTP payload type" },
+    { "audio-payload-type", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "97", "Audio RTP payload type" },
+    { "sample-rate", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "48000", "AAC sample rate" },
+    { "channels", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "2", "AAC channel count" },
+    { "emit-once", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "true", "Emit SDP only once" }
+};
+
+static const zst_element_desc_t g_sdpmuxer_elements[] = {
+    {
+        .name = "sdpmuxer",
+        .long_name = "SDP Muxer",
+        .category = "Muxer/RTP",
+        .description = "Generates SDP descriptions for H.264/H.265/AAC RTP sessions",
+        .author = "zstreamer",
+        .properties = g_sdpmuxer_properties,
+        .nb_properties = sizeof(g_sdpmuxer_properties) / sizeof(g_sdpmuxer_properties[0]),
+        .pads = g_sdpmuxer_pads,
+        .nb_pads = sizeof(g_sdpmuxer_pads) / sizeof(g_sdpmuxer_pads[0]),
+        .create = NULL
+    }
+};
+
+static zst_plugin_t g_plugin = {
+    .desc = {
+        .name = "sdpmuxer_plugin",
+        .author = "zstreamer",
+        .version = "0.1.0",
+        .init = NULL,
+        .deinit = NULL
+    },
+    .create_element = plugin_create_element
+};
+
+ZST_PLUGIN_EXPORT
+const zst_element_desc_t* zst_get_plugin_elements(uint32_t* nb_elements_out) {
+    if (nb_elements_out) {
+        *nb_elements_out = sizeof(g_sdpmuxer_elements) / sizeof(g_sdpmuxer_elements[0]);
+    }
+    return g_sdpmuxer_elements;
+}
+
+ZST_PLUGIN_EXPORT
+zst_plugin_t* zst_get_plugin(void) {
+    zst_plugin_t* p = malloc(sizeof(*p));
+    if (p) *p = g_plugin;
+    return p;
+}
+
+#endif /* BUILDING_PLUGIN */

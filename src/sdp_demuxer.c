@@ -28,6 +28,7 @@
 #include <strings.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <ctype.h>
 #include <errno.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -48,6 +49,8 @@
     Constants
 ===========================================================================*/
 #define SDP_DEMUXER_MAX_TRACKS        8
+#define SDP_DEMUXER_MAX_PT_PER_TRACK  16
+#define SDP_DEMUXER_MAX_LINE          1024
 #define SDP_DEMUXER_DEFAULT_REORDER   256
 #define SDP_DEMUXER_DEFAULT_JITTER_MS 200
 #define SDP_DEMUXER_DEFAULT_LATENESS_MS 500
@@ -285,11 +288,13 @@ static int reorder_peek(rtp_reorder_t* r) {
 ===========================================================================*/
 typedef struct {
     int      type;          /* 0=none, 1=video, 2=audio */
-    int      payload_type;  /* RTP payload type number */
+    int      payload_type;  /* selected RTP payload type number */
+    int      payload_types[SDP_DEMUXER_MAX_PT_PER_TRACK]; /* all fmt values from m= */
+    int      payload_count;
     char     encoding[32];  /* "H264", "MPEG4-GENERIC", etc. */
     int      clock_rate;    /* 90000 for video, sample_rate for audio */
     int      channels;      /* for audio */
-    char     fmtp[256];     /* format parameters */
+    char     fmtp[512];     /* format parameters */
     uint32_t ssrc;          /* learned from RTP stream */
 
     /* RTP reorder buffer */
@@ -397,114 +402,360 @@ static void sdp_demuxer_free_track(sdp_track_t* tr) {
     tr->active = 0;
 }
 
+static char* sdp_trim(char* str) {
+    if (!str) return str;
+    while (*str && isspace((unsigned char)*str)) str++;
+    if (*str == '\0') return str;
+    char* end = str + strlen(str) - 1;
+    while (end >= str && isspace((unsigned char)*end)) {
+        *end = '\0';
+        end--;
+    }
+    return str;
+}
+
+static int sdp_track_has_payload_type(const sdp_track_t* tr, int pt) {
+    if (!tr || pt < 0) return 0;
+    for (int i = 0; i < tr->payload_count; i++) {
+        if (tr->payload_types[i] == pt) return 1;
+    }
+    return tr->payload_count == 0 && tr->payload_type == pt;
+}
+
+static void sdp_track_add_payload_type(sdp_track_t* tr, int pt) {
+    if (!tr || pt < 0 || pt > 127 || sdp_track_has_payload_type(tr, pt)) return;
+    if (tr->payload_count < SDP_DEMUXER_MAX_PT_PER_TRACK) {
+        tr->payload_types[tr->payload_count++] = pt;
+        if (tr->payload_type < 0) tr->payload_type = pt;
+    }
+}
+
+static int sdp_encoding_is_h264(const char* enc) {
+    return enc && strcasecmp(enc, "H264") == 0;
+}
+
+static int sdp_encoding_is_h265(const char* enc) {
+    return enc && (strcasecmp(enc, "H265") == 0 ||
+                   strcasecmp(enc, "HEVC") == 0 ||
+                   strcasecmp(enc, "HVC1") == 0);
+}
+
+static int sdp_encoding_is_aac(const char* enc) {
+    return enc && (strcasecmp(enc, "MPEG4-GENERIC") == 0 ||
+                   strcasecmp(enc, "AAC") == 0);
+}
+
+static int sdp_track_codec_supported(const sdp_track_t* tr) {
+    if (!tr || tr->payload_type < 0) return 0;
+    if (tr->type == 1) return sdp_encoding_is_h264(tr->encoding) || sdp_encoding_is_h265(tr->encoding);
+    if (tr->type == 2) return sdp_encoding_is_aac(tr->encoding);
+    return 0;
+}
+
+static int sdp_base64_value(char ch) {
+    if (ch >= 'A' && ch <= 'Z') return ch - 'A';
+    if (ch >= 'a' && ch <= 'z') return ch - 'a' + 26;
+    if (ch >= '0' && ch <= '9') return ch - '0' + 52;
+    if (ch == '+') return 62;
+    if (ch == '/') return 63;
+    if (ch == '=') return -2;
+    return -1;
+}
+
+static int sdp_base64_decode(const char* in, uint8_t* out, size_t out_cap) {
+    int val = 0;
+    int valb = -8;
+    size_t out_len = 0;
+    for (const unsigned char* p = (const unsigned char*)in; p && *p; p++) {
+        if (isspace(*p)) continue;
+        int d = sdp_base64_value((char)*p);
+        if (d == -2) break;
+        if (d < 0) return -1;
+        val = (val << 6) | d;
+        valb += 6;
+        if (valb >= 0) {
+            if (out_len >= out_cap) return -1;
+            out[out_len++] = (uint8_t)((val >> valb) & 0xff);
+            valb -= 8;
+        }
+    }
+    return (int)out_len;
+}
+
+static int sdp_append_extradata(sdp_track_t* tr, const uint8_t* data, int len,
+                                int annexb_start_code) {
+    if (!tr || !data || len <= 0) return 0;
+    int prefix = annexb_start_code ? 4 : 0;
+    uint8_t* next = realloc(tr->extra_data, (size_t)tr->extra_size + (size_t)prefix + (size_t)len);
+    if (!next) return -1;
+    tr->extra_data = next;
+    if (prefix) {
+        tr->extra_data[tr->extra_size + 0] = 0;
+        tr->extra_data[tr->extra_size + 1] = 0;
+        tr->extra_data[tr->extra_size + 2] = 0;
+        tr->extra_data[tr->extra_size + 3] = 1;
+    }
+    memcpy(tr->extra_data + tr->extra_size + prefix, data, (size_t)len);
+    tr->extra_size += prefix + len;
+    return 0;
+}
+
+static int sdp_fmtp_get_param(const char* fmtp, const char* key,
+                              char* out, size_t out_cap) {
+    if (!fmtp || !key || !out || out_cap == 0) return 0;
+    size_t key_len = strlen(key);
+    const char* p = fmtp;
+    while (*p) {
+        while (*p == ';' || isspace((unsigned char)*p)) p++;
+        const char* tok = p;
+        while (*p && *p != ';') p++;
+        size_t tok_len = (size_t)(p - tok);
+        while (tok_len > 0 && isspace((unsigned char)tok[tok_len - 1])) tok_len--;
+        if (tok_len > key_len && strncasecmp(tok, key, key_len) == 0) {
+            const char* eq = tok + key_len;
+            const char* tok_end = tok + tok_len;
+            while (eq < tok_end && isspace((unsigned char)*eq)) eq++;
+            if (eq < tok_end && *eq == '=') {
+                const char* val = eq + 1;
+                size_t val_len = (size_t)(tok_end - val);
+                while (val_len > 0 && isspace((unsigned char)*val)) { val++; val_len--; }
+                while (val_len > 0 && isspace((unsigned char)val[val_len - 1])) val_len--;
+                if (val_len >= out_cap) val_len = out_cap - 1;
+                memcpy(out, val, val_len);
+                out[val_len] = '\0';
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+static void sdp_parse_fmtp_extradata(sdp_track_t* tr) {
+    if (!tr || tr->fmtp[0] == '\0') return;
+
+    free(tr->extra_data);
+    tr->extra_data = NULL;
+    tr->extra_size = 0;
+
+    if (sdp_encoding_is_h264(tr->encoding)) {
+        char value[512];
+        if (!sdp_fmtp_get_param(tr->fmtp, "sprop-parameter-sets", value, sizeof(value))) return;
+        char* token = value;
+        while (token && *token) {
+            char* comma = strchr(token, ',');
+            if (comma) *comma = '\0';
+            token = sdp_trim(token);
+            uint8_t decoded[512];
+            int len = sdp_base64_decode(token, decoded, sizeof(decoded));
+            if (len > 0) sdp_append_extradata(tr, decoded, len, 1);
+            token = comma ? comma + 1 : NULL;
+        }
+    } else if (sdp_encoding_is_h265(tr->encoding)) {
+        const char* keys[] = { "sprop-vps", "sprop-sps", "sprop-pps", NULL };
+        for (int i = 0; keys[i]; i++) {
+            char value[512];
+            if (!sdp_fmtp_get_param(tr->fmtp, keys[i], value, sizeof(value))) continue;
+            uint8_t decoded[512];
+            int len = sdp_base64_decode(value, decoded, sizeof(decoded));
+            if (len > 0) sdp_append_extradata(tr, decoded, len, 1);
+        }
+    } else if (sdp_encoding_is_aac(tr->encoding)) {
+        char value[256];
+        if (!sdp_fmtp_get_param(tr->fmtp, "config", value, sizeof(value))) return;
+        size_t n = strlen(value);
+        if ((n & 1u) != 0) return;
+        uint8_t decoded[128];
+        size_t out = 0;
+        for (size_t i = 0; i + 1 < n && out < sizeof(decoded); i += 2) {
+            if (!isxdigit((unsigned char)value[i]) || !isxdigit((unsigned char)value[i + 1])) return;
+            char byte_str[3] = { value[i], value[i + 1], '\0' };
+            decoded[out++] = (uint8_t)strtoul(byte_str, NULL, 16);
+        }
+        if (out > 0) sdp_append_extradata(tr, decoded, (int)out, 0);
+    }
+}
+
 /*===========================================================================
     SDP Parser
 ===========================================================================*/
-static int sdp_demuxer_parse_sdp(sdp_demuxer_t* s) {
-    const char* sdp = s->sdp_text;
-    int len = (int)strlen(sdp);
-    if (len == 0) return -1;
+static zst_result_t sdp_demuxer_parse_sdp(sdp_demuxer_t* s) {
+    if (!s || s->sdp_text[0] == '\0') return -1;
 
-    const char* end = sdp + len;
-    const char* p = sdp;
+    /* The parser is intentionally conservative: it builds one zstreamer track
+     * per media section, remembers every advertised fmt long enough to parse
+     * matching rtpmap/fmtp lines, and selects the first supported payload for
+     * actual RTP routing/depacketization. */
+    for (int i = 0; i < s->track_count; i++) {
+        if (s->tracks[i].src_pad) {
+            ZST_LOG_WARN("sdpdemux", "refusing to reparse SDP while dynamic pads exist");
+            return -1;
+        }
+        if (!s->tracks[i].src_pad) {
+            sdp_demuxer_free_track(&s->tracks[i]);
+            memset(&s->tracks[i], 0, sizeof(s->tracks[i]));
+        }
+    }
+
+    const char* p = s->sdp_text;
+    const char* end = s->sdp_text + strlen(s->sdp_text);
     sdp_track_t* track = NULL;
-    int track_idx = 0;
+    int raw_count = 0;
 
-    while (p < end && track_idx < SDP_DEMUXER_MAX_TRACKS) {
-        const char* eol = strchr(p, '\n');
+    while (p < end) {
+        const char* eol = memchr(p, '\n', (size_t)(end - p));
         if (!eol) eol = end;
+
         size_t line_len = (size_t)(eol - p);
-        while (line_len > 0 && (p[line_len-1] == '\r' || p[line_len-1] == '\n'))
+        while (line_len > 0 && (p[line_len - 1] == '\r' || p[line_len - 1] == '\n'))
             line_len--;
 
-        if (line_len < 2) { p = eol + 1; continue; }
+        char line[SDP_DEMUXER_MAX_LINE];
+        if (line_len >= sizeof(line)) line_len = sizeof(line) - 1;
+        memcpy(line, p, line_len);
+        line[line_len] = '\0';
+        char* trimmed = sdp_trim(line);
 
-        if (p[0] == 'm' && p[1] == '=') {
-            /* new media track */
-            track = &s->tracks[track_idx];
-            memset(track, 0, sizeof(*track));
-
-            const char* rest = p + 2;
-            if (strncmp(rest, "video", 5) == 0) track->type = 1;
-            else if (strncmp(rest, "audio", 5) == 0) track->type = 2;
-
-            /* Parse payload type (last token) */
-            const char* tok = rest;
-            const char* last_space = NULL;
-            while (*tok && *tok != '\r' && *tok != '\n') {
-                if (*tok == ' ') last_space = tok;
-                tok++;
-            }
-            if (last_space) {
-                track->payload_type = atoi(last_space + 1);
-            }
-
-            track->clock_rate = (track->type == 1)
-                                ? s->default_clock_video
-                                : s->default_clock_audio;
-
-            /* Initialise reorder buffer & DPLL */
-            if (reorder_init(&track->reorder, s->reorder_capacity) != 0) {
-                ZST_LOG_ERROR("sdpdemux", "reorder_init failed for track %d", track_idx);
-                track = NULL;
-                p = eol + 1;
+        if (trimmed[0] == 'm' && trimmed[1] == '=') {
+            track = NULL;
+            if (raw_count >= SDP_DEMUXER_MAX_TRACKS) {
+                p = (eol < end) ? eol + 1 : end;
                 continue;
             }
-            dpll_init(&track->dpll, (size_t)s->reorder_capacity);
-            track->dpll.target_level = (size_t)(s->reorder_capacity *
-                                          s->jitter_buffer_ms /
-                                          (s->jitter_buffer_ms + 100));
-            if (track->dpll.target_level < 1) track->dpll.target_level = 1;
 
-            track->base_pts = 0;
-            track->has_base_pts = 0;
-            track->active = 1;
-            track->fu_accum_len = 0;
-            track_idx++;
-        } else if (p[0] == 'a' && p[1] == '=' && track) {
-            const char* val = p + 2;
-            int cur_idx = track_idx - 1;
-            sdp_track_t* cur = &s->tracks[cur_idx];
+            char* rest = sdp_trim(trimmed + 2);
+            char* save = NULL;
+            char* media = strtok_r(rest, " \t", &save);
+            char* port  = strtok_r(NULL, " \t", &save);
+            char* proto = strtok_r(NULL, " \t", &save);
+            (void)port;
+            (void)proto;
 
-            if (strncmp(val, "rtpmap:", 7) == 0) {
-                int pt = atoi(val + 7);
-                if (pt == cur->payload_type) {
-                    const char* slash = strchr(val + 7, '/');
+            int media_type = 0;
+            if (media && strcasecmp(media, "video") == 0) media_type = 1;
+            else if (media && strcasecmp(media, "audio") == 0) media_type = 2;
+            if (media_type == 0) {
+                p = (eol < end) ? eol + 1 : end;
+                continue;
+            }
+
+            sdp_track_t* cur = &s->tracks[raw_count];
+            memset(cur, 0, sizeof(*cur));
+            cur->payload_type = -1;
+            cur->type = media_type;
+            cur->clock_rate = (cur->type == 1) ? s->default_clock_video : s->default_clock_audio;
+            cur->channels = (cur->type == 2) ? 2 : 0;
+
+            char* fmt = NULL;
+            while ((fmt = strtok_r(NULL, " \t", &save)) != NULL) {
+                char* endptr = NULL;
+                long pt = strtol(fmt, &endptr, 10);
+                if (endptr != fmt && *endptr == '\0' && pt >= 0 && pt <= 127) {
+                    sdp_track_add_payload_type(cur, (int)pt);
+                }
+            }
+
+            if (cur->payload_count == 0) {
+                ZST_LOG_WARN("sdpdemux", "ignoring media section without RTP payloads");
+                memset(cur, 0, sizeof(*cur));
+                p = (eol < end) ? eol + 1 : end;
+                continue;
+            }
+
+            if (reorder_init(&cur->reorder, s->reorder_capacity) != 0) {
+                ZST_LOG_ERROR("sdpdemux", "reorder_init failed for track %d", raw_count);
+                memset(cur, 0, sizeof(*cur));
+                p = (eol < end) ? eol + 1 : end;
+                continue;
+            }
+            dpll_init(&cur->dpll, (size_t)s->reorder_capacity);
+            cur->dpll.target_level = (size_t)(s->reorder_capacity *
+                                         s->jitter_buffer_ms /
+                                         (s->jitter_buffer_ms + 100));
+            if (cur->dpll.target_level < 1) cur->dpll.target_level = 1;
+            cur->active = 1;
+            track = cur;
+            raw_count++;
+        } else if (trimmed[0] == 'a' && trimmed[1] == '=' && track) {
+            char* val = sdp_trim(trimmed + 2);
+
+            if (strncasecmp(val, "rtpmap:", 7) == 0) {
+                char* attr = sdp_trim(val + 7);
+                char* endptr = NULL;
+                long pt = strtol(attr, &endptr, 10);
+                if (endptr != attr && pt >= 0 && pt <= 127 && sdp_track_has_payload_type(track, (int)pt)) {
+                    char* enc = sdp_trim(endptr);
+                    char* slash = strchr(enc, '/');
                     if (slash) {
-                        const char* enc_start = val + 7;
-                        while (*enc_start && *enc_start != ' ') enc_start++;
-                        if (*enc_start == ' ') enc_start++;
-                        const char* enc_end = strchr(enc_start, '/');
-                        if (enc_end) {
-                            size_t e = (size_t)(enc_end - enc_start);
-                            if (e >= sizeof(cur->encoding)) e = sizeof(cur->encoding) - 1;
-                            memcpy(cur->encoding, enc_start, e);
-                            cur->encoding[e] = '\0';
-                            cur->clock_rate = atoi(enc_end + 1);
-                            const char* slash2 = strchr(enc_end + 1, '/');
-                            if (slash2) cur->channels = atoi(slash2 + 1);
+                        *slash = '\0';
+                        char* clock = slash + 1;
+                        char* slash2 = strchr(clock, '/');
+                        if (slash2) *slash2 = '\0';
+
+                        /* SDP may advertise several payload alternatives in one
+                         * m= section.  Keep the first supported codec we find;
+                         * keep scanning while the current selection is unsupported. */
+                        if (!sdp_track_codec_supported(track) || track->payload_type == (int)pt) {
+                            size_t enc_len = strlen(enc);
+                            if (enc_len >= sizeof(track->encoding)) enc_len = sizeof(track->encoding) - 1;
+                            memcpy(track->encoding, enc, enc_len);
+                            track->encoding[enc_len] = '\0';
+
+                            int clock_rate = atoi(clock);
+                            if (clock_rate > 0) track->clock_rate = clock_rate;
+                            if (slash2) {
+                                int ch = atoi(slash2 + 1);
+                                if (ch > 0) track->channels = ch;
+                            } else if (track->type == 2 && track->channels <= 0) {
+                                track->channels = 1;
+                            }
+                            track->payload_type = (int)pt;
+                            if (track->fmtp[0]) sdp_parse_fmtp_extradata(track);
                         }
                     }
                 }
-            } else if (strncmp(val, "fmtp:", 5) == 0) {
-                int pt_fmtp = atoi(val + 5);
-                if (pt_fmtp == cur->payload_type) {
-                    const char* fmtp_start = val + 5;
-                    while (*fmtp_start && *fmtp_start != ' ') fmtp_start++;
-                    if (*fmtp_start == ' ') {
-                        fmtp_start++;
-                        strncpy(cur->fmtp, fmtp_start, sizeof(cur->fmtp) - 1);
+            } else if (strncasecmp(val, "fmtp:", 5) == 0) {
+                char* attr = sdp_trim(val + 5);
+                char* endptr = NULL;
+                long pt = strtol(attr, &endptr, 10);
+                if (endptr != attr && pt >= 0 && pt <= 127 && sdp_track_has_payload_type(track, (int)pt)) {
+                    if (track->payload_type == (int)pt || !sdp_track_codec_supported(track)) {
+                        char* fmtp = sdp_trim(endptr);
+                        strncpy(track->fmtp, fmtp, sizeof(track->fmtp) - 1);
+                        track->fmtp[sizeof(track->fmtp) - 1] = '\0';
+                        track->payload_type = (int)pt;
+                        sdp_parse_fmtp_extradata(track);
                     }
                 }
+            } else if (strcasecmp(val, "inactive") == 0) {
+                track->active = 0;
             }
         }
 
-        p = eol + 1;
+        p = (eol < end) ? eol + 1 : end;
     }
 
-    s->track_count = track_idx;
+    /* Compact away unsupported/inactive media sections so the rest of the
+     * element never creates misleading H.264/AAC caps for unknown codecs. */
+    int kept = 0;
+    for (int i = 0; i < raw_count; i++) {
+        sdp_track_t* cur = &s->tracks[i];
+        if (!cur->active || !sdp_track_codec_supported(cur)) {
+            ZST_LOG_WARN("sdpdemux", "ignoring unsupported SDP track type=%d pt=%d encoding=%s",
+                            cur->type, cur->payload_type, cur->encoding[0] ? cur->encoding : "<unset>");
+            sdp_demuxer_free_track(cur);
+            memset(cur, 0, sizeof(*cur));
+            continue;
+        }
+        if (kept != i) {
+            s->tracks[kept] = *cur;
+            memset(cur, 0, sizeof(*cur));
+        }
+        kept++;
+    }
+
+    s->track_count = kept;
     s->sdp_parsed = 1;
-    ZST_LOG_INFO("sdpdemux", "parsed %d track(s) from SDP", s->track_count);
+    ZST_LOG_INFO("sdpdemux", "parsed %d supported track(s) from SDP", s->track_count);
     return s->track_count;
 }
 
@@ -602,7 +853,7 @@ static void sdp_push_buffer(zst_element_t* el, sdp_track_t* track,
                              const uint8_t* data, int len,
                              uint64_t pts, int is_video)
 {
-    sdp_demuxer_t* s = el->priv;
+    (void)el;
     if (!track->src_pad || !track->src_pad->peer) return;
 
     uint32_t buf_type = is_video ? ZST_BUFFER_VIDEO_PACKET : ZST_BUFFER_AUDIO_PACKET;
@@ -628,9 +879,7 @@ static void sdp_push_buffer(zst_element_t* el, sdp_track_t* track,
         buf->payload = track->extra_data;
     }
 
-    pthread_mutex_lock(&s->lock);
     zst_pad_push(track->src_pad, buf);
-    pthread_mutex_unlock(&s->lock);
     zst_buffer_unref(buf);
     track->frames_pushed++;
 }
@@ -811,12 +1060,9 @@ static void sdp_push_aac_frame(zst_element_t* el, sdp_track_t* track,
     buf->pts = pts;
     buf->dts = pts;
 
-    sdp_demuxer_t* s = el->priv;
-    pthread_mutex_lock(&s->lock);
     if (track->src_pad && track->src_pad->peer) {
         zst_pad_push(track->src_pad, buf);
     }
-    pthread_mutex_unlock(&s->lock);
     zst_buffer_unref(buf);
     track->frames_pushed++;
 }
@@ -863,14 +1109,13 @@ static void sdp_demuxer_depacketize(sdp_demuxer_t* s, sdp_track_t* track,
     track->packets_processed++;
 
     if (track->type == 1) {
-        if (strcasecmp(track->encoding, "H264") == 0) {
+        if (sdp_encoding_is_h264(track->encoding)) {
             sdp_demuxer_depacketize_h264(el, track, payload, payload_len, rtp_ts, marker);
-        } else if (strcasecmp(track->encoding, "H265") == 0) {
+        } else if (sdp_encoding_is_h265(track->encoding)) {
             sdp_demuxer_depacketize_h265(el, track, payload, payload_len, rtp_ts, marker);
         }
     } else if (track->type == 2) {
-        if (strcasecmp(track->encoding, "MPEG4-GENERIC") == 0 ||
-            strcasecmp(track->encoding, "AAC") == 0) {
+        if (sdp_encoding_is_aac(track->encoding)) {
             sdp_demuxer_depacketize_aac(el, track, payload, payload_len, rtp_ts, marker);
         }
     }
@@ -1175,7 +1420,7 @@ static zst_caps_t* sdp_get_caps(zst_element_t* el, zst_pad_t* pad,
 
             if (s->tracks[i].type == 1) {
                 const char* media_type = "video/x-h264";
-                if (strcasecmp(s->tracks[i].encoding, "H265") == 0)
+                if (sdp_encoding_is_h265(s->tracks[i].encoding))
                     media_type = "video/x-h265";
                 zst_caps_append(caps, zst_caps_struct_create_video(media_type, 0, 0, 0, ""));
             } else if (s->tracks[i].type == 2) {
@@ -1281,9 +1526,9 @@ static zst_result_t sdp_set_property(zst_element_t* el, const char* name,
         strncpy(s->sdp_text, value, sizeof(s->sdp_text) - 1);
         s->sdp_text[sizeof(s->sdp_text) - 1] = '\0';
         s->sdp_parsed = 0;
-        sdp_demuxer_parse_sdp(s);
+        zst_result_t ret = sdp_demuxer_parse_sdp(s);
         pthread_mutex_unlock(&s->lock);
-        return ZST_OK;
+        return ret >= 0 ? ZST_OK : ZST_ERROR;
     }
 
     if (strcmp(name, "sdp-file") == 0 || strcmp(name, "sdp_file") == 0) {
