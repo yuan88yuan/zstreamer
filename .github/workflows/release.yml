@@ -14,6 +14,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-and-release:
     name: Build and Release Packages
@@ -27,12 +31,12 @@ jobs:
         id: version
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_ENV
+            echo "VERSION=${{ github.event.inputs.version }}" >> "$GITHUB_ENV"
           else
-            echo "VERSION=${{ github.ref_name }}" >> $GITHUB_ENV
+            echo "VERSION=${{ github.ref_name }}" >> "$GITHUB_ENV"
           fi
 
-      - name: Install Host Dependencies
+      - name: Install Release Build Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -42,6 +46,7 @@ jobs:
             zip \
             libv4l-dev \
             libx264-dev \
+            libx265-dev \
             libavformat-dev \
             libavcodec-dev \
             libavutil-dev \
@@ -52,11 +57,28 @@ jobs:
             libsrt-gnutls-dev \
             libgnutls28-dev \
             nettle-dev \
-            libvulkan-dev
+            libvulkan-dev \
+            libx11-dev \
+            libxext-dev \
+            libgl1-mesa-dev \
+            libglu1-mesa-dev \
+            mesa-common-dev
 
       - name: Build and Package
         run: |
           ./scripts/package.sh "${{ env.VERSION }}"
+
+      - name: Verify Release Artifacts
+        run: |
+          set -euo pipefail
+          DEB_VERSION="${VERSION#v}"
+          ls -lh dist
+          test -f "dist/zstreamer-${VERSION}-linux-x86_64.tar.gz"
+          test -f "dist/zstreamer-elements-${VERSION}-linux-x86_64.tar.gz"
+          test -f "dist/zstreamer-${VERSION}-linux-x86_64.zip"
+          test -f "dist/zstreamer-elements-${VERSION}-linux-x86_64.zip"
+          test -f "dist/zstreamer-dev_${DEB_VERSION}_amd64.deb"
+          test -f "dist/zstreamer-elements-dev_${DEB_VERSION}_amd64.deb"
 
       - name: Create or Update Release
         uses: softprops/action-gh-release@v2
@@ -67,6 +89,7 @@ jobs:
             dist/zstreamer-*.tar.gz
             dist/zstreamer-*.zip
             dist/zstreamer-dev_*.deb
+            dist/zstreamer-elements-dev_*.deb
           draft: false
           prerelease: false
         env:

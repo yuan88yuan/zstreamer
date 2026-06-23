@@ -7,15 +7,23 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build-and-test:
-    runs-on: ubuntu-latest
+  docker-core-and-v4l2:
+    name: Core Docker, CTest, V4L2 integration
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install Host Dependencies & Kernel Headers
+      - name: Install Host V4L2 Test Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y linux-modules-extra-$(uname -r) v4l2loopback-dkms dkms
@@ -23,24 +31,42 @@ jobs:
       - name: Load v4l2loopback Kernel Module
         run: |
           sudo modprobe v4l2loopback devices=1 video_nr=10 card_label="ZStreamer-Loopback" exclusive_caps=1
-          # Verify that the device was created successfully on the host
           ls -lh /dev/video10
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Docker Image
+      - name: Build Main CI Docker Image
         run: |
-          docker build -t zstreamer:latest --target dev .
+          docker build --target ci -t zstreamer:latest .
 
-      - name: Run Unit Tests (ctest) in Container
+      - name: Run Unit Tests (CTest) in Container
         run: |
-          docker run --rm -w /workspace/build zstreamer:latest ctest --output-on-failure
+          docker run --rm zstreamer:latest
 
-      - name: Run Docker Compose Multi-Service Integration Tests
+      - name: Run V4L2 Loopback Integration Test
         run: |
           ./tests/run_integration_tests.sh
 
       - name: Run V4L2 DMABUF Simulation Test (vivid)
         run: |
           ./tests/run_v4l2_dmabuf_simulation.sh
+
+  docker-gl-sinks:
+    name: Headless OpenGL/X11 sink tests
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build GL CI Docker Image
+        run: |
+          docker build -f Dockerfile.gl --target ci -t zstreamer-gl:latest .
+
+      - name: Run GL Sink and Compositor Tests
+        run: |
+          docker run --rm zstreamer-gl:latest

@@ -127,7 +127,7 @@ Section: devel
 Priority: optional
 Architecture: ${DEB_ARCH}
 Maintainer: zzlee <zzlee@github.com>
-Depends: zstreamer-dev (= ${DEB_VERSION}), libavformat-dev, libavcodec-dev, libavutil-dev, libx264-dev, libasound2-dev, libv4l-dev, libswscale-dev, libswresample-dev, libfreetype-dev, libsrt-gnutls-dev
+Depends: zstreamer-dev (= ${DEB_VERSION}), libavformat-dev, libavcodec-dev, libavutil-dev, libx264-dev, libx265-dev, libasound2-dev, libv4l-dev, libswscale-dev, libswresample-dev, libfreetype-dev, libsrt-gnutls-dev, libx11-dev, libxext-dev, libgl1-mesa-dev, libglu1-mesa-dev, mesa-common-dev
 Description: Lightweight modular multimedia streaming framework - Elements
  This package contains development headers, static libraries, shared libraries, and plugins
  for zstreamer elements.
