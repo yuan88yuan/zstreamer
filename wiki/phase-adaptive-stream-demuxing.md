@@ -582,9 +582,9 @@ src/zst_element.c
 
 Tasks:
 
-- [ ] Add `zst_stream_id_t`, `zst_media_kind_t`, `zst_stream_status_t`, and `zst_stream_info_t`.
-- [ ] Add element stream query APIs.
-- [ ] Define ownership rules for copied `zst_stream_info_t` and embedded caps.
+- [x] Add `zst_stream_id_t`, `zst_media_kind_t`, `zst_stream_status_t`, and `zst_stream_info_t`.
+- [x] Add element stream query APIs.
+- [x] Define ownership rules for copied `zst_stream_info_t` and embedded caps.
 
 ### Phase B — Dynamic pad safety
 
@@ -600,10 +600,10 @@ src/zst_scheduler.c
 
 Tasks:
 
-- [ ] Add pad refcounting or deferred destruction.
-- [ ] Add dynamic pad add/remove helpers.
-- [ ] Add source/sink pad snapshot APIs.
-- [ ] Update scheduler and default push/pull paths to tolerate dynamic pad mutation.
+- [x] Add pad refcounting or deferred destruction.
+- [x] Add dynamic pad add/remove helpers.
+- [x] Add source/sink pad snapshot APIs.
+- [x] Update scheduler and default push/pull paths to tolerate dynamic pad mutation.
 
 ### Phase C — Bus and in-band pad events
 
@@ -619,10 +619,10 @@ src/zst_pad.c
 
 Tasks:
 
-- [ ] Add pad/stream/caps/signal bus events.
-- [ ] Add event constructors and destruction/copy logic.
-- [ ] Add pad event propagation.
-- [ ] Add sticky event storage/replay on source pads.
+- [x] Add pad/stream/caps/signal bus events.
+- [x] Add event constructors and destruction/copy logic.
+- [x] Add pad event propagation.
+- [x] Add sticky event storage/replay on source pads.
 
 ### Phase D — Graph reconfiguration
 

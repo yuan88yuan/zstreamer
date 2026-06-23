@@ -70,12 +70,16 @@ execute_element_task(zst_scheduler_t* sched, zst_element_t* el, zst_pipeline_t* 
     }
 
     bool is_source = true;
-    for (uint32_t p_idx = 0; p_idx < el->nb_sink_pads; p_idx++) {
-        if (el->sink_pads[p_idx] && el->sink_pads[p_idx]->peer) {
+    zst_pad_t** sink_pads = NULL;
+    uint32_t nb_sink_pads = 0;
+    zst_element_snapshot_sink_pads(el, &sink_pads, &nb_sink_pads);
+    for (uint32_t p_idx = 0; p_idx < nb_sink_pads; p_idx++) {
+        if (sink_pads[p_idx] && sink_pads[p_idx]->peer) {
             is_source = false;
             break;
         }
     }
+    zst_element_pad_snapshot_free(sink_pads, nb_sink_pads);
 
     if (el->ops && el->ops->process) {
         zst_buffer_t* out_buf = NULL;
@@ -85,7 +89,10 @@ execute_element_task(zst_scheduler_t* sched, zst_element_t* el, zst_pipeline_t* 
         if (ret == ZST_OK) {
             zst_pipeline_update_buffer_pool_sizing_if_needed(pipe, el);
             if (out_buf) {
-                if (el->nb_src_pads > 0 && el->src_pads[0]) {
+                zst_pad_t** src_pads = NULL;
+                uint32_t nb_src_pads = 0;
+                zst_element_snapshot_src_pads(el, &src_pads, &nb_src_pads);
+                if (nb_src_pads > 0 && src_pads[0]) {
                     if (pipe->clock_sync && el->clock && pipe->base_time > 0
                         && !(out_buf->flags & (ZST_BUFFER_FLAG_EOS | ZST_BUFFER_FLAG_DROP))) {
                         zst_time_t now = zst_clock_get_time(el->clock);
@@ -95,9 +102,10 @@ execute_element_task(zst_scheduler_t* sched, zst_element_t* el, zst_pipeline_t* 
                         }
                     }
                     
-                    zst_pad_push(el->src_pads[0], out_buf);
+                    zst_pad_push(src_pads[0], out_buf);
                     zst_buffer_unref(out_buf);
                 }
+                zst_element_pad_snapshot_free(src_pads, nb_src_pads);
             }
             
             if (is_source) {
@@ -110,11 +118,15 @@ execute_element_task(zst_scheduler_t* sched, zst_element_t* el, zst_pipeline_t* 
             zst_buffer_t* eos_buf = zst_buffer_create(ZST_BUFFER_USER);
             if (eos_buf) {
                 eos_buf->flags |= ZST_BUFFER_FLAG_EOS;
-                if (el->nb_src_pads > 0 && el->src_pads[0]) {
-                    zst_pad_push(el->src_pads[0], eos_buf);
+                zst_pad_t** src_pads = NULL;
+                uint32_t nb_src_pads = 0;
+                zst_element_snapshot_src_pads(el, &src_pads, &nb_src_pads);
+                if (nb_src_pads > 0 && src_pads[0]) {
+                    zst_pad_push(src_pads[0], eos_buf);
                 } else if (el->bus) {
                     zst_bus_post(el->bus, zst_event_new_eos(el));
                 }
+                zst_element_pad_snapshot_free(src_pads, nb_src_pads);
                 zst_buffer_unref(eos_buf);
             }
             atomic_store_explicit(&el->state, ZST_STATE_READY, memory_order_release);
@@ -160,12 +172,16 @@ worker_pool_loop(void* arg)
                     zst_element_t* el = pipe->elements[i];
                     if (atomic_load_explicit(&el->state, memory_order_acquire) == ZST_STATE_PLAYING) {
                         bool is_src = true;
-                        for (uint32_t p_idx = 0; p_idx < el->nb_sink_pads; p_idx++) {
-                            if (el->sink_pads[p_idx] && el->sink_pads[p_idx]->peer) {
+                        zst_pad_t** sink_pads = NULL;
+                        uint32_t nb_sink_pads = 0;
+                        zst_element_snapshot_sink_pads(el, &sink_pads, &nb_sink_pads);
+                        for (uint32_t p_idx = 0; p_idx < nb_sink_pads; p_idx++) {
+                            if (sink_pads[p_idx] && sink_pads[p_idx]->peer) {
                                 is_src = false;
                                 break;
                             }
                         }
+                        zst_element_pad_snapshot_free(sink_pads, nb_sink_pads);
                         if (is_src) {
                             zst_scheduler_queue_task(sched, el);
                         }
@@ -243,12 +259,16 @@ zst_scheduler_run(zst_scheduler_t* sched)
         for (uint32_t i = 0; i < sched->pipeline->nb_elements; i++) {
             zst_element_t* el = sched->pipeline->elements[i];
             bool is_src = true;
-            for (uint32_t p_idx = 0; p_idx < el->nb_sink_pads; p_idx++) {
-                if (el->sink_pads[p_idx] && el->sink_pads[p_idx]->peer) {
+            zst_pad_t** sink_pads = NULL;
+            uint32_t nb_sink_pads = 0;
+            zst_element_snapshot_sink_pads(el, &sink_pads, &nb_sink_pads);
+            for (uint32_t p_idx = 0; p_idx < nb_sink_pads; p_idx++) {
+                if (sink_pads[p_idx] && sink_pads[p_idx]->peer) {
                     is_src = false;
                     break;
                 }
             }
+            zst_element_pad_snapshot_free(sink_pads, nb_sink_pads);
             if (is_src) {
                 zst_scheduler_queue_task(sched, el);
             }

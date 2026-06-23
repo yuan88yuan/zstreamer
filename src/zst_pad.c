@@ -10,6 +10,7 @@
 #include "zst_buffer.h"
 #include "zst_bus.h"
 #include "zst_clock.h"
+#include "zst_pad_event.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -18,6 +19,8 @@
 static zst_pad_probe_return_t pad_run_probes(zst_pad_t* pad,
                                              zst_buffer_t* buf,
                                              zst_pad_probe_type_t type);
+
+static void zst_pad_finalize(zst_pad_t* pad);
 
 static int
 pad_buffer_in_segment(zst_pad_t* pad, zst_buffer_t* buf)
@@ -67,9 +70,13 @@ pad_propagate_segment(zst_pad_t* pad, const zst_segment_t* segment, uint32_t dep
             }
             zst_element_t* downstream = pad->peer->parent;
             if (downstream) {
-                for (uint32_t i = 0; i < downstream->nb_src_pads; i++) {
-                    pad_propagate_segment(downstream->src_pads[i], segment, depth + 1);
+                zst_pad_t** downstream_src_pads = NULL;
+                uint32_t nb_downstream_src_pads = 0;
+                zst_element_snapshot_src_pads(downstream, &downstream_src_pads, &nb_downstream_src_pads);
+                for (uint32_t i = 0; i < nb_downstream_src_pads; i++) {
+                    pad_propagate_segment(downstream_src_pads[i], segment, depth + 1);
                 }
+                zst_element_pad_snapshot_free(downstream_src_pads, nb_downstream_src_pads);
             }
         }
     }
@@ -180,28 +187,38 @@ default_sink_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
     zst_element_t* el = pad->parent;
     if (!el || !el->ops) return ZST_ERROR;
 
+    zst_pad_t** src_pads = NULL;
+    uint32_t nb_src_pads = 0;
+    zst_element_snapshot_src_pads(el, &src_pads, &nb_src_pads);
+
     /* Handle drop flag (propagate downstream or skip immediately) */
     if (buf && (buf->flags & ZST_BUFFER_FLAG_DROP)) {
-        if (el->nb_src_pads > 0) {
-            return zst_pad_push(el->src_pads[0], buf);
+        if (nb_src_pads > 0) {
+            zst_result_t r = zst_pad_push(src_pads[0], buf);
+            zst_element_pad_snapshot_free(src_pads, nb_src_pads);
+            return r;
         }
+        zst_element_pad_snapshot_free(src_pads, nb_src_pads);
         return ZST_OK;
     }
 
     if (buf && (buf->flags & ZST_BUFFER_FLAG_EOS)) {
-        if (el->nb_src_pads > 0) {
-            return zst_pad_push(el->src_pads[0], buf);
+        if (nb_src_pads > 0) {
+            zst_result_t r = zst_pad_push(src_pads[0], buf);
+            zst_element_pad_snapshot_free(src_pads, nb_src_pads);
+            return r;
         }
         /* Sink element receiving EOS */
         if (el->bus) {
             zst_event_t* eos_ev = zst_event_new_eos(el);
             zst_bus_post(el->bus, eos_ev);
         }
+        zst_element_pad_snapshot_free(src_pads, nb_src_pads);
         return ZST_OK;
     }
 
     /* Sink element clock synchronization and QoS dropping */
-    if (el->nb_src_pads == 0 && el->clock && buf && buf->pts > 0 && !(buf->flags & ZST_BUFFER_FLAG_EOS)) {
+    if (nb_src_pads == 0 && el->clock && buf && buf->pts > 0 && !(buf->flags & ZST_BUFFER_FLAG_EOS)) {
         zst_time_t current = zst_clock_get_time(el->clock);
         if (buf->pts > current + 5000000ULL) { /* 5ms early threshold */
             if (buf->pts - current < 5000000000ULL) { /* 5s safeguard */
@@ -215,6 +232,7 @@ default_sink_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
                     zst_event_t* qos_ev = zst_event_new_warning(el, ZST_ERROR, "QoS: Frame dropped (too late)");
                     zst_bus_post(el->bus, qos_ev);
                 }
+                zst_element_pad_snapshot_free(src_pads, nb_src_pads);
                 return ZST_OK;
             }
         }
@@ -232,8 +250,8 @@ default_sink_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
     }
 
     if (ret == ZST_OK && out_buf) {
-        if (el->nb_src_pads > 0) {
-            ret = zst_pad_push(el->src_pads[0], out_buf);
+        if (nb_src_pads > 0) {
+            ret = zst_pad_push(src_pads[0], out_buf);
             if (out_buf != buf) {
                 zst_buffer_unref(out_buf);
             } else if (out_buf->refcount > 1) {
@@ -245,6 +263,8 @@ default_sink_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
             }
         }
     }
+
+    zst_element_pad_snapshot_free(src_pads, nb_src_pads);
 
     if (ret == ZST_OK && el->pipeline) {
         zst_pipeline_update_buffer_pool_sizing_if_needed(el->pipeline, el);
@@ -273,9 +293,13 @@ default_src_pad_pull(zst_pad_t* pad, zst_buffer_t** out)
         zst_pipeline_update_buffer_pool_sizing_if_needed(el->pipeline, el);
     }
 
-    if (el->nb_sink_pads > 0) {
+    zst_pad_t** sink_pads = NULL;
+    uint32_t nb_sink_pads = 0;
+    zst_element_snapshot_sink_pads(el, &sink_pads, &nb_sink_pads);
+
+    if (nb_sink_pads > 0) {
         zst_buffer_t* in_buf = NULL;
-        ret = zst_pad_pull(el->sink_pads[0], &in_buf);
+        ret = zst_pad_pull(sink_pads[0], &in_buf);
         if (ret != ZST_OK) {
             if (ret != ZST_EOF && ret != ZST_TIMEOUT && ret != ZST_AGAIN) {
                 if (el->bus) {
@@ -283,11 +307,13 @@ default_src_pad_pull(zst_pad_t* pad, zst_buffer_t** out)
                     zst_bus_post(el->bus, err_ev);
                 }
             }
+            zst_element_pad_snapshot_free(sink_pads, nb_sink_pads);
             return ret;
         }
 
         if (in_buf && (in_buf->flags & ZST_BUFFER_FLAG_EOS)) {
             *out = in_buf;
+            zst_element_pad_snapshot_free(sink_pads, nb_sink_pads);
             return ZST_OK;
         }
 
@@ -300,6 +326,8 @@ default_src_pad_pull(zst_pad_t* pad, zst_buffer_t** out)
             ret = el->ops->process(el, NULL, &out_buf);
         }
     }
+
+    zst_element_pad_snapshot_free(sink_pads, nb_sink_pads);
 
     if (ret == ZST_OK) {
         *out = out_buf;
@@ -357,11 +385,36 @@ zst_pad_create(const char* name, zst_pad_direction_t direction)
     pad->jitter_buffer_count = 0;
     pthread_mutex_init(&pad->jitter_lock, NULL);
 
+    atomic_init(&pad->refcount, 1);
+
+    return pad;
+}
+
+zst_pad_t*
+zst_pad_ref(zst_pad_t* pad)
+{
+    if (!pad) return NULL;
+    atomic_fetch_add_explicit(&pad->refcount, 1, memory_order_relaxed);
     return pad;
 }
 
 void
+zst_pad_unref(zst_pad_t* pad)
+{
+    if (!pad) return;
+    if (atomic_fetch_sub_explicit(&pad->refcount, 1, memory_order_acq_rel) == 1) {
+        zst_pad_finalize(pad);
+    }
+}
+
+void
 zst_pad_destroy(zst_pad_t* pad)
+{
+    zst_pad_unref(pad);
+}
+
+static void
+zst_pad_finalize(zst_pad_t* pad)
 {
     if (!pad) return;
 
@@ -388,9 +441,13 @@ zst_pad_destroy(zst_pad_t* pad)
     pthread_mutex_destroy(&pad->probe_lock);
     pthread_mutex_destroy(&pad->jitter_lock);
 
+    if (pad->sticky_stream_start) zst_pad_event_unref(pad->sticky_stream_start);
+    if (pad->sticky_caps) zst_pad_event_unref(pad->sticky_caps);
+    if (pad->sticky_segment) zst_pad_event_unref(pad->sticky_segment);
+
     free((void*)pad->name);
-    zst_caps_destroy(pad->caps);
-    zst_caps_destroy(pad->template_caps);
+    if (pad->caps) zst_caps_destroy(pad->caps);
+    if (pad->template_caps) zst_caps_destroy(pad->template_caps);
     free(pad);
 }
 
@@ -418,6 +475,11 @@ zst_pad_link(zst_pad_t* src, zst_pad_t* sink)
 
     src->peer = sink;
     sink->peer = src;
+
+    /* Replay sticky events */
+    if (src->sticky_stream_start) zst_pad_push_event(src, src->sticky_stream_start);
+    if (src->sticky_caps) zst_pad_push_event(src, src->sticky_caps);
+    if (src->sticky_segment) zst_pad_push_event(src, src->sticky_segment);
 
     if (src->parent && src->parent->pipeline) {
         zst_pipeline_mark_buffer_pool_sizing_dirty(src->parent->pipeline);
@@ -621,15 +683,13 @@ zst_pad_negotiate(zst_pad_t* src, zst_pad_t* sink)
         return ZST_ERROR;
     }
 
-    if (!intersect->structs) {
-        zst_caps_destroy(intersect);
-        return ZST_ERROR;
-    }
-
-    zst_result_t ret = zst_caps_fixate(intersect);
-    if (ret != ZST_OK) {
-        zst_caps_destroy(intersect);
-        return ZST_ERROR;
+    zst_result_t ret = ZST_OK;
+    if (!zst_caps_is_fixed(intersect)) {
+        ret = zst_caps_fixate(intersect);
+        if (ret != ZST_OK) {
+            zst_caps_destroy(intersect);
+            return ZST_ERROR;
+        }
     }
 
     ret = zst_pad_set_caps(src, intersect);
@@ -790,5 +850,51 @@ zst_pad_get_media_jitter(zst_pad_t* pad, double* jitter_ns_out)
     pthread_mutex_lock(&pad->jitter_lock);
     if (jitter_ns_out) *jitter_ns_out = pad->media_jitter_ns;
     pthread_mutex_unlock(&pad->jitter_lock);
+    return ZST_OK;
+}
+
+zst_result_t
+zst_pad_push_event(zst_pad_t* src, zst_pad_event_t* event)
+{
+    if (!src || !event || src->direction != ZST_PAD_SRC) return ZST_ERROR;
+
+    /* Update sticky events */
+    pthread_mutex_lock(&src->probe_lock);
+    if (event->type == ZST_PAD_EVENT_STREAM_START) {
+        if (src->sticky_stream_start) zst_pad_event_unref(src->sticky_stream_start);
+        src->sticky_stream_start = zst_pad_event_ref(event);
+    } else if (event->type == ZST_PAD_EVENT_CAPS) {
+        if (src->sticky_caps) zst_pad_event_unref(src->sticky_caps);
+        src->sticky_caps = zst_pad_event_ref(event);
+        if (event->as.caps.caps) {
+            zst_pad_set_caps(src, event->as.caps.caps);
+        }
+    } else if (event->type == ZST_PAD_EVENT_SEGMENT) {
+        if (src->sticky_segment) zst_pad_event_unref(src->sticky_segment);
+        src->sticky_segment = zst_pad_event_ref(event);
+        src->segment = event->as.segment.segment;
+        src->has_segment = 1;
+    }
+    pthread_mutex_unlock(&src->probe_lock);
+
+    if (pad_run_probes(src, NULL, ZST_PAD_PROBE_PRE_EVENT) == ZST_PAD_PROBE_DROP) {
+        return ZST_OK;
+    }
+
+    if (src->peer) {
+        if (pad_run_probes(src->peer, NULL, ZST_PAD_PROBE_PRE_EVENT) != ZST_PAD_PROBE_DROP) {
+            /* For now, we don't have a sink-side event handler,
+               but we can update peer caps/segment if needed. */
+            if (event->type == ZST_PAD_EVENT_CAPS && event->as.caps.caps) {
+                zst_pad_set_caps(src->peer, event->as.caps.caps);
+            } else if (event->type == ZST_PAD_EVENT_SEGMENT) {
+                src->peer->segment = event->as.segment.segment;
+                src->peer->has_segment = 1;
+            }
+            pad_run_probes(src->peer, NULL, ZST_PAD_PROBE_POST_EVENT);
+        }
+    }
+
+    pad_run_probes(src, NULL, ZST_PAD_PROBE_POST_EVENT);
     return ZST_OK;
 }

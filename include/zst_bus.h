@@ -16,7 +16,19 @@ typedef enum {
     ZST_EVENT_ERROR,
     ZST_EVENT_STATE_CHANGED,
     ZST_EVENT_WARNING,
-    ZST_EVENT_SEGMENT
+    ZST_EVENT_SEGMENT,
+
+    ZST_EVENT_PAD_ADDED,
+    ZST_EVENT_PAD_REMOVED,
+    ZST_EVENT_STREAM_ADDED,
+    ZST_EVENT_STREAM_REMOVED,
+    ZST_EVENT_STREAM_CHANGED,
+    ZST_EVENT_STREAM_STATUS,
+    ZST_EVENT_CAPS_CHANGED,
+    ZST_EVENT_NO_MORE_PADS,
+
+    ZST_EVENT_SIGNAL_PRESENT,
+    ZST_EVENT_SIGNAL_LOST
 } zst_event_type_t;
 
 struct zst_event {
@@ -40,6 +52,26 @@ struct zst_event {
         } warning;
 
         zst_segment_t segment;
+
+        struct {
+            zst_pad_t* pad;
+            zst_stream_info_t stream;
+        } pad_added;
+
+        struct {
+            zst_pad_t* pad;
+            zst_stream_id_t stream_id;
+        } pad_removed;
+
+        struct {
+            zst_pad_t* pad;
+            zst_caps_t* old_caps;
+            zst_caps_t* new_caps;
+        } caps_changed;
+
+        struct {
+            zst_stream_info_t stream;
+        } stream_status;
     } as;
 };
 
@@ -88,6 +120,44 @@ zst_event_t* zst_event_new_warning(
 zst_event_t* zst_event_new_segment(
     zst_element_t* src,
     const zst_segment_t* segment);
+
+zst_event_t* zst_event_new_pad_added(
+    zst_element_t* src,
+    zst_pad_t* pad,
+    const zst_stream_info_t* stream);
+
+zst_event_t* zst_event_new_pad_removed(
+    zst_element_t* src,
+    zst_pad_t* pad,
+    zst_stream_id_t stream_id);
+
+zst_event_t* zst_event_new_caps_changed(
+    zst_element_t* src,
+    zst_pad_t* pad,
+    const zst_caps_t* old_caps,
+    const zst_caps_t* new_caps);
+
+zst_event_t* zst_event_new_stream_added(
+    zst_element_t* src,
+    const zst_stream_info_t* stream);
+
+zst_event_t* zst_event_new_stream_removed(
+    zst_element_t* src,
+    zst_stream_id_t stream_id);
+
+zst_event_t* zst_event_new_stream_changed(
+    zst_element_t* src,
+    const zst_stream_info_t* stream);
+
+zst_event_t* zst_event_new_stream_status(
+    zst_element_t* src,
+    const zst_stream_info_t* stream);
+
+zst_event_t* zst_event_new_no_more_pads(
+    zst_element_t* src);
+
+zst_event_t* zst_event_new_signal_lost(zst_element_t* src);
+zst_event_t* zst_event_new_signal_present(zst_element_t* src);
 
 void zst_event_destroy(
     zst_event_t* event);

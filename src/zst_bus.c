@@ -9,6 +9,7 @@
 #include <string.h>
 #include <errno.h>
 #include <time.h>
+#include <stdio.h>
 #include <pthread.h>
 
 typedef struct zst_event_node {
@@ -247,6 +248,70 @@ zst_event_new_eos(zst_element_t* src)
     return ev;
 }
 
+static void
+copy_stream_info(zst_stream_info_t* dest, const zst_stream_info_t* src)
+{
+    if (!dest || !src) return;
+    *dest = *src;
+    if (src->name) dest->name = strdup(src->name);
+    if (src->language) dest->language = strdup(src->language);
+    if (src->caps) dest->caps = zst_caps_copy(src->caps);
+}
+
+zst_event_t*
+zst_event_new_stream_added(zst_element_t* src, const zst_stream_info_t* stream)
+{
+    zst_event_t* ev = calloc(1, sizeof(*ev));
+    if (!ev) return NULL;
+    ev->type = ZST_EVENT_STREAM_ADDED;
+    ev->src = src;
+    copy_stream_info(&ev->as.stream_status.stream, stream);
+    return ev;
+}
+
+zst_event_t*
+zst_event_new_stream_removed(zst_element_t* src, zst_stream_id_t stream_id)
+{
+    zst_event_t* ev = calloc(1, sizeof(*ev));
+    if (!ev) return NULL;
+    ev->type = ZST_EVENT_STREAM_REMOVED;
+    ev->src = src;
+    ev->as.pad_removed.stream_id = stream_id;
+    return ev;
+}
+
+zst_event_t*
+zst_event_new_stream_changed(zst_element_t* src, const zst_stream_info_t* stream)
+{
+    zst_event_t* ev = calloc(1, sizeof(*ev));
+    if (!ev) return NULL;
+    ev->type = ZST_EVENT_STREAM_CHANGED;
+    ev->src = src;
+    copy_stream_info(&ev->as.stream_status.stream, stream);
+    return ev;
+}
+
+zst_event_t*
+zst_event_new_stream_status(zst_element_t* src, const zst_stream_info_t* stream)
+{
+    zst_event_t* ev = calloc(1, sizeof(*ev));
+    if (!ev) return NULL;
+    ev->type = ZST_EVENT_STREAM_STATUS;
+    ev->src = src;
+    copy_stream_info(&ev->as.stream_status.stream, stream);
+    return ev;
+}
+
+zst_event_t*
+zst_event_new_no_more_pads(zst_element_t* src)
+{
+    zst_event_t* ev = calloc(1, sizeof(*ev));
+    if (!ev) return NULL;
+    ev->type = ZST_EVENT_NO_MORE_PADS;
+    ev->src = src;
+    return ev;
+}
+
 zst_event_t*
 zst_event_new_error(zst_element_t* src, zst_result_t result, const char* message)
 {
@@ -286,12 +351,73 @@ zst_event_new_warning(zst_element_t* src, zst_result_t result, const char* messa
 zst_event_t*
 zst_event_new_segment(zst_element_t* src, const zst_segment_t* segment)
 {
-    if (!segment) return NULL;
     zst_event_t* ev = calloc(1, sizeof(*ev));
     if (!ev) return NULL;
     ev->type = ZST_EVENT_SEGMENT;
     ev->src = src;
-    ev->as.segment = *segment;
+    if (segment) ev->as.segment = *segment;
+    return ev;
+}
+
+zst_event_t*
+zst_event_new_pad_added(zst_element_t* src, zst_pad_t* pad, const zst_stream_info_t* stream)
+{
+    zst_event_t* ev = calloc(1, sizeof(*ev));
+    if (!ev) return NULL;
+    ev->type = ZST_EVENT_PAD_ADDED;
+    ev->src = src;
+    ev->as.pad_added.pad = zst_pad_ref(pad);
+    if (stream) {
+        ev->as.pad_added.stream = *stream;
+        if (stream->name) ev->as.pad_added.stream.name = strdup(stream->name);
+        if (stream->language) ev->as.pad_added.stream.language = strdup(stream->language);
+        if (stream->caps) ev->as.pad_added.stream.caps = zst_caps_copy(stream->caps);
+    }
+    return ev;
+}
+
+zst_event_t*
+zst_event_new_pad_removed(zst_element_t* src, zst_pad_t* pad, zst_stream_id_t stream_id)
+{
+    zst_event_t* ev = calloc(1, sizeof(*ev));
+    if (!ev) return NULL;
+    ev->type = ZST_EVENT_PAD_REMOVED;
+    ev->src = src;
+    ev->as.pad_removed.pad = zst_pad_ref(pad);
+    ev->as.pad_removed.stream_id = stream_id;
+    return ev;
+}
+
+zst_event_t*
+zst_event_new_caps_changed(zst_element_t* src, zst_pad_t* pad, const zst_caps_t* old_caps, const zst_caps_t* new_caps)
+{
+    zst_event_t* ev = calloc(1, sizeof(*ev));
+    if (!ev) return NULL;
+    ev->type = ZST_EVENT_CAPS_CHANGED;
+    ev->src = src;
+    ev->as.caps_changed.pad = zst_pad_ref(pad);
+    if (old_caps) ev->as.caps_changed.old_caps = zst_caps_copy(old_caps);
+    if (new_caps) ev->as.caps_changed.new_caps = zst_caps_copy(new_caps);
+    return ev;
+}
+
+zst_event_t*
+zst_event_new_signal_lost(zst_element_t* src)
+{
+    zst_event_t* ev = calloc(1, sizeof(*ev));
+    if (!ev) return NULL;
+    ev->type = ZST_EVENT_SIGNAL_LOST;
+    ev->src = src;
+    return ev;
+}
+
+zst_event_t*
+zst_event_new_signal_present(zst_element_t* src)
+{
+    zst_event_t* ev = calloc(1, sizeof(*ev));
+    if (!ev) return NULL;
+    ev->type = ZST_EVENT_SIGNAL_PRESENT;
+    ev->src = src;
     return ev;
 }
 
@@ -303,6 +429,23 @@ zst_event_destroy(zst_event_t* event)
         free(event->as.error.message);
     } else if (event->type == ZST_EVENT_WARNING) {
         free(event->as.warning.message);
+    } else if (event->type == ZST_EVENT_PAD_ADDED) {
+        if (event->as.pad_added.pad) zst_pad_unref(event->as.pad_added.pad);
+        free(event->as.pad_added.stream.name);
+        free(event->as.pad_added.stream.language);
+        if (event->as.pad_added.stream.caps) zst_caps_destroy(event->as.pad_added.stream.caps);
+    } else if (event->type == ZST_EVENT_PAD_REMOVED) {
+        if (event->as.pad_removed.pad) zst_pad_unref(event->as.pad_removed.pad);
+    } else if (event->type == ZST_EVENT_CAPS_CHANGED) {
+        if (event->as.caps_changed.pad) zst_pad_unref(event->as.caps_changed.pad);
+        if (event->as.caps_changed.old_caps) zst_caps_destroy(event->as.caps_changed.old_caps);
+        if (event->as.caps_changed.new_caps) zst_caps_destroy(event->as.caps_changed.new_caps);
+    } else if (event->type == ZST_EVENT_STREAM_STATUS ||
+               event->type == ZST_EVENT_STREAM_ADDED ||
+               event->type == ZST_EVENT_STREAM_CHANGED) {
+        free(event->as.stream_status.stream.name);
+        free(event->as.stream_status.stream.language);
+        if (event->as.stream_status.stream.caps) zst_caps_destroy(event->as.stream_status.stream.caps);
     }
     free(event);
 }
