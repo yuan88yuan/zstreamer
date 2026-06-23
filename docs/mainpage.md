@@ -16,4 +16,4 @@ configurable scheduler.
 - **Clock & A/V sync** — system clock, QoS dropping, clock slaving
 - **Lightweight logging** — compile-time level filtering with custom handler support
 
-For more details on how to use zstreamer, please refer to the [Getting Started](@ref tutorials/getting-started.md) guide and the [Architecture](@ref architecture/architecture.md) documentation.
+For more details on how to use zstreamer, please refer to the [Getting Started](@ref tutorials_getting_started) guide and the [Architecture](@ref architecture_architecture) documentation.
