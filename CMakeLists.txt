@@ -425,6 +425,7 @@ set(CORE_SOURCES
     src/zst_allocator_dmabuf.c
     src/zst_allocator_cuda.c
     src/zst_clock.c
+    src/zst_pad_event.c
 )
 
 if(ENABLE_PLUGINS)
@@ -968,6 +969,17 @@ if(BUILD_TESTS)
     target_link_libraries(test_core
         PRIVATE zstreamer-elements
     )
+
+    add_executable(test_dynamic
+        tests/test_dynamic.c
+    )
+    target_include_directories(test_dynamic
+        PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+    )
+    target_link_libraries(test_dynamic
+        PRIVATE zstreamer-elements
+    )
+    add_test(NAME test_dynamic COMMAND test_dynamic)
 
     add_executable(test_videotestsrc_timing
         tests/test_videotestsrc_timing.c

@@ -4,6 +4,7 @@
 #pragma once
 
 #include "zst_types.h"
+#include "zst_stream.h"
 #include "zst_pad.h"
 #include "zst_segment.h"
 #include <stdbool.h>
@@ -111,6 +112,29 @@ zst_pad_t* zst_element_get_pad(zst_element_t* el, const char* name);
 zst_result_t zst_element_add_pad(zst_element_t* el, zst_pad_t* pad);
 zst_result_t zst_element_remove_pad(zst_element_t* el, zst_pad_t* pad);
 
+zst_result_t zst_element_add_dynamic_pad(
+    zst_element_t* el,
+    zst_pad_t* pad,
+    const zst_stream_info_t* stream_info);
+
+zst_result_t zst_element_remove_dynamic_pad(
+    zst_element_t* el,
+    zst_pad_t* pad);
+
+zst_result_t zst_element_snapshot_src_pads(
+    zst_element_t* el,
+    zst_pad_t*** pads_out,
+    uint32_t* count_out);
+
+zst_result_t zst_element_snapshot_sink_pads(
+    zst_element_t* el,
+    zst_pad_t*** pads_out,
+    uint32_t* count_out);
+
+void zst_element_pad_snapshot_free(
+    zst_pad_t** pads,
+    uint32_t count);
+
 void zst_element_set_clock(zst_element_t* el, zst_clock_t* clock);
 
 zst_result_t zst_element_set_property(
@@ -139,6 +163,17 @@ zst_result_t zst_element_get_property_bool(zst_element_t* el, const char* name, 
 
 zst_buffer_pool_t* zst_element_get_pool(zst_element_t* el);
 zst_result_t zst_element_seek(zst_element_t* el, double rate, const zst_segment_t* segment);
+
+uint32_t zst_element_get_stream_count(zst_element_t* el);
+
+zst_result_t zst_element_get_stream_info(
+    zst_element_t* el,
+    uint32_t index,
+    zst_stream_info_t* info_out);
+
+zst_pad_t* zst_element_get_stream_pad(
+    zst_element_t* el,
+    zst_stream_id_t stream_id);
 
 #ifdef __cplusplus
 }

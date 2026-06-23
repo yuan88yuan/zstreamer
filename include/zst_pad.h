@@ -7,6 +7,7 @@
 #include "zst_buffer.h"
 #include "zst_caps.h"
 #include "zst_segment.h"
+#include "zst_pad_event.h"
 #include <pthread.h>
 #include <stdatomic.h>
 
@@ -91,14 +92,23 @@ struct zst_pad {
     /* Downstream spillover strategy configuration */
     zst_spillover_policy_t spillover_policy;
 
+    /* Sticky events */
+    zst_pad_event_t* sticky_stream_start;
+    zst_pad_event_t* sticky_caps;
+    zst_pad_event_t* sticky_segment;
+
     /* Media Jitter Tracking (RFC 3550) */
     zst_time_t last_transit_time;
     double     media_jitter_ns;
     uint64_t   jitter_buffer_count;
     pthread_mutex_t jitter_lock;
+
+    _Atomic int refcount;
 };
 
 zst_pad_t* zst_pad_create(const char* name, zst_pad_direction_t direction);
+zst_pad_t* zst_pad_ref(zst_pad_t* pad);
+void zst_pad_unref(zst_pad_t* pad);
 void zst_pad_destroy(zst_pad_t* pad);
 
 zst_result_t zst_pad_link(zst_pad_t* src, zst_pad_t* sink);

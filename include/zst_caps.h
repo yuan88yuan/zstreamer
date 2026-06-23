@@ -38,9 +38,11 @@ typedef struct zst_caps_struct {
     struct zst_caps_struct* next;
 } zst_caps_struct_t;
 
-typedef struct {
+struct zst_caps {
     zst_caps_struct_t* structs;
-} zst_caps_t;
+};
+
+typedef struct zst_caps zst_caps_t;
 
 /* Lifecycle & builders */
 zst_caps_t* zst_caps_create(void);
