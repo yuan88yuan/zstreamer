@@ -34,6 +34,7 @@ typedef struct zst_scheduler   zst_scheduler_t;
 typedef struct zst_plugin      zst_plugin_t;
 typedef struct zst_bus         zst_bus_t;
 typedef struct zst_event       zst_event_t;
+typedef struct zst_stream_info zst_stream_info_t;
 typedef struct zst_bin         zst_bin_t;
 typedef struct zst_ghost_pad   zst_ghost_pad_t;
 typedef struct zst_pad_probe   zst_pad_probe_t;
