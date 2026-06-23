@@ -313,6 +313,7 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | ASRC Drift Compensation     | ✅ Done (PTS-based drift detection + swr_set_compensation in audioresampler; passthrough bypass fix allows ASRC with equal nominal rates) |
 | Fractional Rate Override    | ✅ Done (rate-numer/rate-denom properties on audioresampler for explicit fractional target rates; uses swr_set_compensation for fine-grained ratio adjustment) |
 | OpenGL Sink (4ak)           | ✅ Initial implementation (GLX/X11 backend, GLSL YUV→RGB, null-mode fallback, dynamic plugin, Dockerfile.gl tests); known review follow-ups are tracked in [wiki/phase-elements.md](wiki/phase-elements.md#4ak--opengl-sink-glsink) |
+| OpenGL Compositor Sink (4al) | ✅ Completed implementation with threaded rendering, clock-driven composition, dynamic pad removal, and enhanced UI features (borders, fullscreen). |
 | Clock Sync Bugfix           | ✅ Fixed (frame-to-frame delta comparison in scheduler — see [wiki/clock-sync-debug.md](wiki/clock-sync-debug.md)) |
 | CI Pipeline                 | ✅ Done (GitHub Actions CI with unit and docker-run loopback integration tests) |
 | Documentation               | ✅ Phase 10 Done (Doxygen, Tutorials, Architecture Deep-Dives, Plugin Authoring) |
