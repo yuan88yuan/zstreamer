@@ -426,6 +426,7 @@ set(CORE_SOURCES
     src/zst_allocator_cuda.c
     src/zst_clock.c
     src/zst_pad_event.c
+    src/zst_stream.c
 )
 
 if(ENABLE_PLUGINS)

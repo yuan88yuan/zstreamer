@@ -1349,7 +1349,6 @@ static zst_result_t sdp_close(zst_element_t* el) {
         /* Remove dynamic source pads */
         if (s->tracks[i].src_pad) {
             zst_element_remove_pad(el, s->tracks[i].src_pad);
-            zst_pad_destroy(s->tracks[i].src_pad);
             s->tracks[i].src_pad = NULL;
         }
     }

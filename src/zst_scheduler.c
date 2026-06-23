@@ -74,7 +74,7 @@ execute_element_task(zst_scheduler_t* sched, zst_element_t* el, zst_pipeline_t* 
     uint32_t nb_sink_pads = 0;
     zst_element_snapshot_sink_pads(el, &sink_pads, &nb_sink_pads);
     for (uint32_t p_idx = 0; p_idx < nb_sink_pads; p_idx++) {
-        if (sink_pads[p_idx] && sink_pads[p_idx]->peer) {
+        if (sink_pads[p_idx] && zst_pad_is_linked(sink_pads[p_idx])) {
             is_source = false;
             break;
         }
@@ -176,7 +176,7 @@ worker_pool_loop(void* arg)
                         uint32_t nb_sink_pads = 0;
                         zst_element_snapshot_sink_pads(el, &sink_pads, &nb_sink_pads);
                         for (uint32_t p_idx = 0; p_idx < nb_sink_pads; p_idx++) {
-                            if (sink_pads[p_idx] && sink_pads[p_idx]->peer) {
+                            if (sink_pads[p_idx] && zst_pad_is_linked(sink_pads[p_idx])) {
                                 is_src = false;
                                 break;
                             }
@@ -263,7 +263,7 @@ zst_scheduler_run(zst_scheduler_t* sched)
             uint32_t nb_sink_pads = 0;
             zst_element_snapshot_sink_pads(el, &sink_pads, &nb_sink_pads);
             for (uint32_t p_idx = 0; p_idx < nb_sink_pads; p_idx++) {
-                if (sink_pads[p_idx] && sink_pads[p_idx]->peer) {
+                if (sink_pads[p_idx] && zst_pad_is_linked(sink_pads[p_idx])) {
                     is_src = false;
                     break;
                 }

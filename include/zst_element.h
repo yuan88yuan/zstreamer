@@ -55,6 +55,22 @@ typedef struct {
         size_t max_len);
 
     zst_buffer_pool_t* (*get_pool)(zst_element_t* el);
+
+    zst_result_t (*event)(
+        zst_element_t* el,
+        zst_pad_t* sink_pad,
+        zst_pad_event_t* event);
+
+    uint32_t (*get_stream_count)(zst_element_t* el);
+
+    zst_result_t (*get_stream_info)(
+        zst_element_t* el,
+        uint32_t index,
+        zst_stream_info_t* info_out);
+
+    zst_pad_t* (*get_stream_pad)(
+        zst_element_t* el,
+        zst_stream_id_t stream_id);
 } zst_element_ops_t;
 
 struct zst_element {
@@ -69,6 +85,10 @@ struct zst_element {
 
     zst_pad_t** sink_pads;
     uint32_t nb_sink_pads;
+
+    zst_stream_info_t* stream_infos;
+    zst_pad_t** stream_pads;
+    uint32_t nb_streams;
 
     /* Fine-grained clock tracking used during hot push schedules */
     zst_time_t clock_sync_last_pts;

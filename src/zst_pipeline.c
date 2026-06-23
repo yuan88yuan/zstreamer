@@ -180,9 +180,15 @@ pipeline_count_downstream_type_dfs(zst_pipeline_t* pipe, zst_element_t* el,
     int count = 0;
     if (!pipe || !el || !type_name || !visited) return 0;
 
-    for (uint32_t i = 0; i < el->nb_src_pads; i++) {
-        zst_pad_t* src_pad = el->src_pads[i];
-        zst_element_t* child = (src_pad && src_pad->peer) ? src_pad->peer->parent : NULL;
+    zst_pad_t** src_pads = NULL;
+    uint32_t nb_src_pads = 0;
+    if (zst_element_snapshot_src_pads(el, &src_pads, &nb_src_pads) != ZST_OK) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < nb_src_pads; i++) {
+        zst_pad_t* peer = zst_pad_get_peer(src_pads[i]);
+        zst_element_t* child = peer ? peer->parent : NULL;
+        if (peer) zst_pad_unref(peer);
         int idx = pipeline_element_index(pipe, child);
         if (idx < 0 || visited[idx]) continue;
         visited[idx] = 1;
@@ -190,6 +196,7 @@ pipeline_count_downstream_type_dfs(zst_pipeline_t* pipe, zst_element_t* el,
         if (pipeline_element_is_type(child, type_name)) count++;
         count += pipeline_count_downstream_type_dfs(pipe, child, type_name, visited);
     }
+    zst_element_pad_snapshot_free(src_pads, nb_src_pads);
 
     return count;
 }
@@ -469,11 +476,18 @@ dfs_sort(zst_element_t* el, zst_element_t** temp, uint32_t* temp_idx, int* visit
 
     visited[idx] = 1;
 
-    for (uint32_t i = 0; i < el->nb_src_pads; i++) {
-        zst_pad_t* src_pad = el->src_pads[i];
-        if (src_pad->peer && src_pad->peer->parent) {
-            dfs_sort(src_pad->peer->parent, temp, temp_idx, visited, pipe);
+    zst_pad_t** src_pads = NULL;
+    uint32_t nb_src_pads = 0;
+    if (zst_element_snapshot_src_pads(el, &src_pads, &nb_src_pads) == ZST_OK) {
+        for (uint32_t i = 0; i < nb_src_pads; i++) {
+            zst_pad_t* peer = zst_pad_get_peer(src_pads[i]);
+            zst_element_t* child = peer ? peer->parent : NULL;
+            if (peer) zst_pad_unref(peer);
+            if (child) {
+                dfs_sort(child, temp, temp_idx, visited, pipe);
+            }
         }
+        zst_element_pad_snapshot_free(src_pads, nb_src_pads);
     }
 
     temp[--(*temp_idx)] = el;

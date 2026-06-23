@@ -113,7 +113,7 @@ ghost_src_proxy_push(zst_pad_t* proxy, zst_buffer_t* buf)
     if (!gp) return ZST_ERROR;
 
     zst_pad_t* ghost = (zst_pad_t*)proxy->priv;
-    if (ghost->peer) {
+    if (zst_pad_is_linked(ghost)) {
         zst_result_t ret = zst_pad_push(ghost, buf);
         if (ret == ZST_OK && (buf->flags & ZST_BUFFER_FLAG_EOS)) {
             bin_post_eos_once(ghost->parent);

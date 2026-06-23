@@ -72,6 +72,10 @@ struct zst_event {
         struct {
             zst_stream_info_t stream;
         } stream_status;
+
+        struct {
+            zst_stream_id_t stream_id;
+        } stream_removed;
     } as;
 };
 

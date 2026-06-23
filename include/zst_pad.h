@@ -70,6 +70,7 @@ struct zst_pad {
     zst_pad_pull_fn pull;
 
     zst_pad_t* peer;
+    pthread_mutex_t link_lock;
     void* priv;
     void (*destroy_priv)(zst_pad_t* pad);
 
@@ -113,6 +114,8 @@ void zst_pad_destroy(zst_pad_t* pad);
 
 zst_result_t zst_pad_link(zst_pad_t* src, zst_pad_t* sink);
 void zst_pad_unlink(zst_pad_t* pad);
+zst_pad_t* zst_pad_get_peer(zst_pad_t* pad);
+int zst_pad_is_linked(zst_pad_t* pad);
 
 zst_result_t zst_pad_push(zst_pad_t* pad, zst_buffer_t* buf);
 zst_result_t zst_pad_pull(zst_pad_t* pad, zst_buffer_t** out);

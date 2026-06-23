@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdint.h>
 
 
 static zst_pad_probe_return_t pad_run_probes(zst_pad_t* pad,
@@ -21,6 +22,34 @@ static zst_pad_probe_return_t pad_run_probes(zst_pad_t* pad,
                                              zst_pad_probe_type_t type);
 
 static void zst_pad_finalize(zst_pad_t* pad);
+static zst_result_t zst_pad_push_event_internal(zst_pad_t* src, zst_pad_event_t* event, uint32_t depth);
+
+static void
+pad_lock_pair(zst_pad_t* a, zst_pad_t* b)
+{
+    if (a == b) {
+        pthread_mutex_lock(&a->link_lock);
+        return;
+    }
+    if ((uintptr_t)a < (uintptr_t)b) {
+        pthread_mutex_lock(&a->link_lock);
+        pthread_mutex_lock(&b->link_lock);
+    } else {
+        pthread_mutex_lock(&b->link_lock);
+        pthread_mutex_lock(&a->link_lock);
+    }
+}
+
+static void
+pad_unlock_pair(zst_pad_t* a, zst_pad_t* b)
+{
+    if (a == b) {
+        pthread_mutex_unlock(&a->link_lock);
+        return;
+    }
+    pthread_mutex_unlock(&a->link_lock);
+    pthread_mutex_unlock(&b->link_lock);
+}
 
 static int
 pad_buffer_in_segment(zst_pad_t* pad, zst_buffer_t* buf)
@@ -63,12 +92,15 @@ pad_propagate_segment(zst_pad_t* pad, const zst_segment_t* segment, uint32_t dep
     zst_pad_set_segment(pad, segment);
 
     if (pad->direction == ZST_PAD_SRC) {
-        if (pad->peer) {
-            if (pad_run_probes(pad->peer, NULL, ZST_PAD_PROBE_PRE_EVENT) != ZST_PAD_PROBE_DROP) {
-                zst_pad_set_segment(pad->peer, segment);
-                pad_run_probes(pad->peer, NULL, ZST_PAD_PROBE_POST_EVENT);
+        pthread_mutex_lock(&pad->link_lock);
+        zst_pad_t* peer = pad->peer ? zst_pad_ref(pad->peer) : NULL;
+        pthread_mutex_unlock(&pad->link_lock);
+        if (peer) {
+            if (pad_run_probes(peer, NULL, ZST_PAD_PROBE_PRE_EVENT) != ZST_PAD_PROBE_DROP) {
+                zst_pad_set_segment(peer, segment);
+                pad_run_probes(peer, NULL, ZST_PAD_PROBE_POST_EVENT);
             }
-            zst_element_t* downstream = pad->peer->parent;
+            zst_element_t* downstream = peer->parent;
             if (downstream) {
                 zst_pad_t** downstream_src_pads = NULL;
                 uint32_t nb_downstream_src_pads = 0;
@@ -78,6 +110,7 @@ pad_propagate_segment(zst_pad_t* pad, const zst_segment_t* segment, uint32_t dep
                 }
                 zst_element_pad_snapshot_free(downstream_src_pads, nb_downstream_src_pads);
             }
+            zst_pad_unref(peer);
         }
     }
 
@@ -365,6 +398,7 @@ zst_pad_create(const char* name, zst_pad_direction_t direction)
         pad->pull = NULL;
     }
     pad->peer         = NULL;
+    pthread_mutex_init(&pad->link_lock, NULL);
     pad->priv         = NULL;
     pad->destroy_priv = NULL;
     pad->probes       = NULL;
@@ -418,9 +452,18 @@ zst_pad_finalize(zst_pad_t* pad)
 {
     if (!pad) return;
 
-    /* Unlink from peer if still connected */
-    if (pad->peer)
-        zst_pad_unlink(pad);
+    /* Pads should be explicitly unlinked before their final owner is dropped.
+     * If an inconsistent peer pointer remains, detach it defensively without
+     * dropping reciprocal link refs from a zero-ref finalizer path. */
+    pthread_mutex_lock(&pad->link_lock);
+    zst_pad_t* stale_peer = pad->peer;
+    pad->peer = NULL;
+    pthread_mutex_unlock(&pad->link_lock);
+    if (stale_peer) {
+        pthread_mutex_lock(&stale_peer->link_lock);
+        if (stale_peer->peer == pad) stale_peer->peer = NULL;
+        pthread_mutex_unlock(&stale_peer->link_lock);
+    }
 
     if (pad->destroy_priv) {
         pad->destroy_priv(pad);
@@ -440,6 +483,7 @@ zst_pad_finalize(zst_pad_t* pad)
     pthread_cond_destroy(&pad->probe_cond);
     pthread_mutex_destroy(&pad->probe_lock);
     pthread_mutex_destroy(&pad->jitter_lock);
+    pthread_mutex_destroy(&pad->link_lock);
 
     if (pad->sticky_stream_start) zst_pad_event_unref(pad->sticky_stream_start);
     if (pad->sticky_caps) zst_pad_event_unref(pad->sticky_caps);
@@ -463,18 +507,22 @@ zst_pad_link(zst_pad_t* src, zst_pad_t* sink)
     if (sink->direction != ZST_PAD_SINK)
         return ZST_ERROR;
 
-    /* Refuse if either pad is already linked */
-    if (src->peer || sink->peer)
-        return ZST_ERROR;
-
     /* Negotiate caps first */
     zst_result_t ret = zst_pad_negotiate(src, sink);
     if (ret != ZST_OK) {
         return ret;
     }
 
-    src->peer = sink;
-    sink->peer = src;
+    pad_lock_pair(src, sink);
+    /* Refuse if either pad is already linked */
+    if (src->peer || sink->peer) {
+        pad_unlock_pair(src, sink);
+        return ZST_ERROR;
+    }
+
+    src->peer = zst_pad_ref(sink);
+    sink->peer = zst_pad_ref(src);
+    pad_unlock_pair(src, sink);
 
     /* Replay sticky events */
     if (src->sticky_stream_start) zst_pad_push_event(src, src->sticky_stream_start);
@@ -492,27 +540,62 @@ zst_pad_link(zst_pad_t* src, zst_pad_t* sink)
     return ZST_OK;
 }
 
+zst_pad_t*
+zst_pad_get_peer(zst_pad_t* pad)
+{
+    if (!pad) return NULL;
+    pthread_mutex_lock(&pad->link_lock);
+    zst_pad_t* peer = pad->peer ? zst_pad_ref(pad->peer) : NULL;
+    pthread_mutex_unlock(&pad->link_lock);
+    return peer;
+}
+
+int
+zst_pad_is_linked(zst_pad_t* pad)
+{
+    zst_pad_t* peer = zst_pad_get_peer(pad);
+    if (!peer) return 0;
+    zst_pad_unref(peer);
+    return 1;
+}
+
 void
 zst_pad_unlink(zst_pad_t* pad)
 {
     if (!pad) return;
 
-    zst_pad_t* peer = pad->peer;
+    pthread_mutex_lock(&pad->link_lock);
+    zst_pad_t* peer = pad->peer ? zst_pad_ref(pad->peer) : NULL;
+    pthread_mutex_unlock(&pad->link_lock);
     if (!peer) return;
 
     zst_pipeline_t* pad_pipe = pad->parent ? pad->parent->pipeline : NULL;
     zst_pipeline_t* peer_pipe = peer->parent ? peer->parent->pipeline : NULL;
+    int unlinked = 0;
 
-    /* Break the link from both sides */
-    pad->peer = NULL;
-    peer->peer = NULL;
+    pad_lock_pair(pad, peer);
+    if (pad->peer == peer) {
+        pad->peer = NULL;
+        if (peer->peer == pad) {
+            peer->peer = NULL;
+        }
+        unlinked = 1;
+    }
+    pad_unlock_pair(pad, peer);
 
-    if (pad_pipe) {
-        zst_pipeline_mark_buffer_pool_sizing_dirty(pad_pipe);
+    if (unlinked) {
+        if (pad_pipe) {
+            zst_pipeline_mark_buffer_pool_sizing_dirty(pad_pipe);
+        }
+        if (peer_pipe && peer_pipe != pad_pipe) {
+            zst_pipeline_mark_buffer_pool_sizing_dirty(peer_pipe);
+        }
+        /* Drop the reciprocal references created by zst_pad_link(). */
+        zst_pad_unref(peer);
+        zst_pad_unref(pad);
     }
-    if (peer_pipe && peer_pipe != pad_pipe) {
-        zst_pipeline_mark_buffer_pool_sizing_dirty(peer_pipe);
-    }
+
+    zst_pad_unref(peer);
 }
 
 zst_result_t
@@ -520,9 +603,14 @@ zst_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
 {
     if (!pad || !buf) return ZST_ERROR;
     if (pad->direction != ZST_PAD_SRC) return ZST_ERROR;
-    if (!pad->peer) return ZST_ERROR;
 
-    if (!pad_buffer_in_segment(pad, buf) || !pad_buffer_in_segment(pad->peer, buf)) {
+    pthread_mutex_lock(&pad->link_lock);
+    zst_pad_t* peer = pad->peer ? zst_pad_ref(pad->peer) : NULL;
+    pthread_mutex_unlock(&pad->link_lock);
+    if (!peer) return ZST_ERROR;
+
+    if (!pad_buffer_in_segment(pad, buf) || !pad_buffer_in_segment(peer, buf)) {
+        zst_pad_unref(peer);
         return ZST_OK;
     }
 
@@ -546,22 +634,25 @@ zst_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
     }
 
     if (pad_run_probes(pad, buf, ZST_PAD_PROBE_PRE_BUFFER) == ZST_PAD_PROBE_DROP) {
+        zst_pad_unref(peer);
         return ZST_OK;
     }
-    if (pad_run_probes(pad->peer, buf, ZST_PAD_PROBE_PRE_BUFFER) == ZST_PAD_PROBE_DROP) {
+    if (pad_run_probes(peer, buf, ZST_PAD_PROBE_PRE_BUFFER) == ZST_PAD_PROBE_DROP) {
+        zst_pad_unref(peer);
         return ZST_OK;
     }
 
     zst_result_t ret = ZST_ERROR;
-    if (pad->peer->push) {
-        ret = pad->peer->push(pad->peer, buf);
+    if (peer->push) {
+        ret = peer->push(peer, buf);
     }
 
     if (ret == ZST_OK) {
-        pad_run_probes(pad->peer, buf, ZST_PAD_PROBE_POST_BUFFER);
+        pad_run_probes(peer, buf, ZST_PAD_PROBE_POST_BUFFER);
         pad_run_probes(pad, buf, ZST_PAD_PROBE_POST_BUFFER);
     }
 
+    zst_pad_unref(peer);
     return ret;
 }
 
@@ -570,23 +661,35 @@ zst_pad_pull(zst_pad_t* pad, zst_buffer_t** out)
 {
     if (!pad || !out) return ZST_ERROR;
     if (pad->direction != ZST_PAD_SINK) return ZST_ERROR;
-    if (!pad->peer) return ZST_ERROR;
 
-    if (!pad->peer->pull) return ZST_ERROR;
+    pthread_mutex_lock(&pad->link_lock);
+    zst_pad_t* peer = pad->peer ? zst_pad_ref(pad->peer) : NULL;
+    pthread_mutex_unlock(&pad->link_lock);
+    if (!peer) return ZST_ERROR;
 
-    zst_result_t ret = pad->peer->pull(pad->peer, out);
-    if (ret != ZST_OK || !out || !*out) return ret;
+    if (!peer->pull) {
+        zst_pad_unref(peer);
+        return ZST_ERROR;
+    }
 
-    if (!pad_buffer_in_segment(pad->peer, *out) || !pad_buffer_in_segment(pad, *out) ||
-        pad_run_probes(pad->peer, *out, ZST_PAD_PROBE_PRE_BUFFER) == ZST_PAD_PROBE_DROP ||
+    zst_result_t ret = peer->pull(peer, out);
+    if (ret != ZST_OK || !out || !*out) {
+        zst_pad_unref(peer);
+        return ret;
+    }
+
+    if (!pad_buffer_in_segment(peer, *out) || !pad_buffer_in_segment(pad, *out) ||
+        pad_run_probes(peer, *out, ZST_PAD_PROBE_PRE_BUFFER) == ZST_PAD_PROBE_DROP ||
         pad_run_probes(pad, *out, ZST_PAD_PROBE_PRE_BUFFER) == ZST_PAD_PROBE_DROP ||
         pad_run_probes(pad, *out, ZST_PAD_PROBE_POST_BUFFER) == ZST_PAD_PROBE_DROP ||
-        pad_run_probes(pad->peer, *out, ZST_PAD_PROBE_POST_BUFFER) == ZST_PAD_PROBE_DROP) {
+        pad_run_probes(peer, *out, ZST_PAD_PROBE_POST_BUFFER) == ZST_PAD_PROBE_DROP) {
         zst_buffer_unref(*out);
         *out = NULL;
+        zst_pad_unref(peer);
         return ZST_AGAIN;
     }
 
+    zst_pad_unref(peer);
     return ret;
 }
 
@@ -853,25 +956,29 @@ zst_pad_get_media_jitter(zst_pad_t* pad, double* jitter_ns_out)
     return ZST_OK;
 }
 
-zst_result_t
-zst_pad_push_event(zst_pad_t* src, zst_pad_event_t* event)
+static zst_result_t
+zst_pad_push_event_internal(zst_pad_t* src, zst_pad_event_t* event, uint32_t depth)
 {
     if (!src || !event || src->direction != ZST_PAD_SRC) return ZST_ERROR;
+    if (depth > 256) return ZST_ERROR;
 
-    /* Update sticky events */
+    /* Update sticky events on the source pad. */
     pthread_mutex_lock(&src->probe_lock);
     if (event->type == ZST_PAD_EVENT_STREAM_START) {
-        if (src->sticky_stream_start) zst_pad_event_unref(src->sticky_stream_start);
+        zst_pad_event_t* old = src->sticky_stream_start;
         src->sticky_stream_start = zst_pad_event_ref(event);
+        if (old) zst_pad_event_unref(old);
     } else if (event->type == ZST_PAD_EVENT_CAPS) {
-        if (src->sticky_caps) zst_pad_event_unref(src->sticky_caps);
+        zst_pad_event_t* old = src->sticky_caps;
         src->sticky_caps = zst_pad_event_ref(event);
+        if (old) zst_pad_event_unref(old);
         if (event->as.caps.caps) {
             zst_pad_set_caps(src, event->as.caps.caps);
         }
     } else if (event->type == ZST_PAD_EVENT_SEGMENT) {
-        if (src->sticky_segment) zst_pad_event_unref(src->sticky_segment);
+        zst_pad_event_t* old = src->sticky_segment;
         src->sticky_segment = zst_pad_event_ref(event);
+        if (old) zst_pad_event_unref(old);
         src->segment = event->as.segment.segment;
         src->has_segment = 1;
     }
@@ -881,20 +988,50 @@ zst_pad_push_event(zst_pad_t* src, zst_pad_event_t* event)
         return ZST_OK;
     }
 
-    if (src->peer) {
-        if (pad_run_probes(src->peer, NULL, ZST_PAD_PROBE_PRE_EVENT) != ZST_PAD_PROBE_DROP) {
-            /* For now, we don't have a sink-side event handler,
-               but we can update peer caps/segment if needed. */
+    pthread_mutex_lock(&src->link_lock);
+    zst_pad_t* peer = src->peer ? zst_pad_ref(src->peer) : NULL;
+    pthread_mutex_unlock(&src->link_lock);
+
+    if (peer) {
+        if (pad_run_probes(peer, NULL, ZST_PAD_PROBE_PRE_EVENT) != ZST_PAD_PROBE_DROP) {
             if (event->type == ZST_PAD_EVENT_CAPS && event->as.caps.caps) {
-                zst_pad_set_caps(src->peer, event->as.caps.caps);
+                zst_pad_set_caps(peer, event->as.caps.caps);
             } else if (event->type == ZST_PAD_EVENT_SEGMENT) {
-                src->peer->segment = event->as.segment.segment;
-                src->peer->has_segment = 1;
+                pthread_mutex_lock(&peer->probe_lock);
+                peer->segment = event->as.segment.segment;
+                peer->has_segment = 1;
+                pthread_mutex_unlock(&peer->probe_lock);
             }
-            pad_run_probes(src->peer, NULL, ZST_PAD_PROBE_POST_EVENT);
+
+            zst_result_t ret = ZST_OK;
+            zst_element_t* downstream = peer->parent;
+            if (downstream && downstream->ops && downstream->ops->event) {
+                ret = downstream->ops->event(downstream, peer, event);
+            } else if (downstream) {
+                zst_pad_t** downstream_src_pads = NULL;
+                uint32_t nb_downstream_src_pads = 0;
+                if (zst_element_snapshot_src_pads(downstream, &downstream_src_pads,
+                                                  &nb_downstream_src_pads) == ZST_OK) {
+                    for (uint32_t i = 0; i < nb_downstream_src_pads; i++) {
+                        zst_pad_push_event_internal(downstream_src_pads[i], event, depth + 1);
+                    }
+                    zst_element_pad_snapshot_free(downstream_src_pads, nb_downstream_src_pads);
+                }
+            }
+            pad_run_probes(peer, NULL, ZST_PAD_PROBE_POST_EVENT);
+            zst_pad_unref(peer);
+            if (ret != ZST_OK) return ret;
+        } else {
+            zst_pad_unref(peer);
         }
     }
 
     pad_run_probes(src, NULL, ZST_PAD_PROBE_POST_EVENT);
     return ZST_OK;
+}
+
+zst_result_t
+zst_pad_push_event(zst_pad_t* src, zst_pad_event_t* event)
+{
+    return zst_pad_push_event_internal(src, event, 0);
 }

@@ -8,6 +8,7 @@
 #include "zst_clock.h"
 #include "zst_buffer.h"
 #include "zst_element_factory.h"
+#include "zst_pipeline.h"
 #include <errno.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -34,6 +35,9 @@ zst_element_create(const zst_element_ops_t* ops, void* priv)
     el->nb_src_pads  = 0;
     el->sink_pads    = NULL;
     el->nb_sink_pads = 0;
+    el->stream_infos = NULL;
+    el->stream_pads  = NULL;
+    el->nb_streams   = 0;
     el->priv         = priv;
     el->plugin       = NULL;
     el->desc         = NULL;
@@ -67,13 +71,23 @@ zst_element_destroy(zst_element_t* el)
     if (!el) return;
 
     /* Destroy all pads */
-    for (uint32_t i = 0; i < el->nb_src_pads; i++)
+    for (uint32_t i = 0; i < el->nb_src_pads; i++) {
+        zst_pad_unlink(el->src_pads[i]);
         zst_pad_unref(el->src_pads[i]);
+    }
     free(el->src_pads);
 
-    for (uint32_t i = 0; i < el->nb_sink_pads; i++)
+    for (uint32_t i = 0; i < el->nb_sink_pads; i++) {
+        zst_pad_unlink(el->sink_pads[i]);
         zst_pad_unref(el->sink_pads[i]);
+    }
     free(el->sink_pads);
+
+    for (uint32_t i = 0; i < el->nb_streams; i++) {
+        zst_stream_info_clear(&el->stream_infos[i]);
+    }
+    free(el->stream_infos);
+    free(el->stream_pads);
 
     if (el->clock) {
         zst_clock_unref(el->clock);
@@ -199,7 +213,7 @@ zst_element_add_pad(zst_element_t* el, zst_pad_t* pad)
             pthread_mutex_unlock(&el->state_lock);
             return ZST_ERROR;
         }
-        pads[el->nb_src_pads++] = zst_pad_ref(pad);
+        pads[el->nb_src_pads++] = pad;
         el->src_pads = pads;
     } else {
         zst_pad_t** pads = realloc(el->sink_pads,
@@ -208,7 +222,7 @@ zst_element_add_pad(zst_element_t* el, zst_pad_t* pad)
             pthread_mutex_unlock(&el->state_lock);
             return ZST_ERROR;
         }
-        pads[el->nb_sink_pads++] = zst_pad_ref(pad);
+        pads[el->nb_sink_pads++] = pad;
         el->sink_pads = pads;
     }
     pthread_mutex_unlock(&el->state_lock);
@@ -216,41 +230,39 @@ zst_element_add_pad(zst_element_t* el, zst_pad_t* pad)
     return ZST_OK;
 }
 
-uint32_t
-zst_element_get_stream_count(zst_element_t* el)
+static zst_result_t
+copy_stream_info(zst_stream_info_t* dest, const zst_stream_info_t* src)
 {
-    if (!el) return 0;
-    /* Default implementation: every source pad is a stream.
-     * Specific demuxers can override this if they have an internal stream table. */
-    pthread_mutex_lock(&el->state_lock);
-    uint32_t count = el->nb_src_pads;
-    pthread_mutex_unlock(&el->state_lock);
-    return count;
-}
-
-zst_result_t
-zst_element_get_stream_info(zst_element_t* el, uint32_t index, zst_stream_info_t* info_out)
-{
-    if (!el || !info_out) return ZST_ERROR;
-
-    pthread_mutex_lock(&el->state_lock);
-    if (index >= el->nb_src_pads) {
-        pthread_mutex_unlock(&el->state_lock);
+    if (!dest || !src) return ZST_ERROR;
+    memset(dest, 0, sizeof(*dest));
+    *dest = *src;
+    dest->struct_size = sizeof(*dest);
+    dest->name = src->name ? strdup(src->name) : NULL;
+    dest->language = src->language ? strdup(src->language) : NULL;
+    dest->caps = src->caps ? zst_caps_copy(src->caps) : NULL;
+    if ((src->name && !dest->name) ||
+        (src->language && !dest->language) ||
+        (src->caps && !dest->caps)) {
+        zst_stream_info_clear(dest);
         return ZST_ERROR;
     }
+    return ZST_OK;
+}
 
-    zst_pad_t* pad = el->src_pads[index];
+static void
+fill_stream_info_from_pad(zst_pad_t* pad, uint32_t index, zst_stream_info_t* info_out)
+{
     memset(info_out, 0, sizeof(*info_out));
     info_out->struct_size = sizeof(*info_out);
-    info_out->id = (zst_stream_id_t)index; /* Fallback ID */
+    info_out->id = (zst_stream_id_t)index;
     info_out->index = index;
     info_out->status = ZST_STREAM_STATUS_PRESENT;
 
-    if (pad->name) {
+    if (pad && pad->name) {
         info_out->name = strdup(pad->name);
     }
 
-    if (pad->caps) {
+    if (pad && pad->caps) {
         info_out->caps = zst_caps_copy(pad->caps);
         if (pad->caps->structs) {
             if (strstr(pad->caps->structs->media_type, "video")) {
@@ -259,9 +271,116 @@ zst_element_get_stream_info(zst_element_t* el, uint32_t index, zst_stream_info_t
                 info_out->kind = ZST_MEDIA_AUDIO;
             } else if (strstr(pad->caps->structs->media_type, "text")) {
                 info_out->kind = ZST_MEDIA_TEXT;
+            } else {
+                info_out->kind = ZST_MEDIA_DATA;
             }
         }
     }
+}
+
+static zst_result_t
+add_stream_entry_locked(zst_element_t* el, zst_pad_t* pad, const zst_stream_info_t* stream_info)
+{
+    zst_stream_info_t info;
+    if (stream_info) {
+        if (copy_stream_info(&info, stream_info) != ZST_OK) return ZST_ERROR;
+    } else {
+        fill_stream_info_from_pad(pad, el->nb_streams, &info);
+    }
+
+    if (info.struct_size == 0) info.struct_size = sizeof(info);
+    if (!info.name && pad && pad->name) info.name = strdup(pad->name);
+
+    zst_stream_info_t* infos = realloc(el->stream_infos,
+                                       (el->nb_streams + 1) * sizeof(*infos));
+    if (!infos) {
+        zst_stream_info_clear(&info);
+        return ZST_ERROR;
+    }
+    el->stream_infos = infos;
+
+    zst_pad_t** pads = realloc(el->stream_pads,
+                               (el->nb_streams + 1) * sizeof(*pads));
+    if (!pads) {
+        zst_stream_info_clear(&info);
+        return ZST_ERROR;
+    }
+    el->stream_pads = pads;
+
+    el->stream_infos[el->nb_streams] = info;
+    el->stream_pads[el->nb_streams] = pad;
+    el->nb_streams++;
+    return ZST_OK;
+}
+
+static int
+find_stream_entry_by_pad_locked(zst_element_t* el, zst_pad_t* pad)
+{
+    for (uint32_t i = 0; i < el->nb_streams; i++) {
+        if (el->stream_pads[i] == pad) return (int)i;
+    }
+    return -1;
+}
+
+static void
+remove_stream_entry_locked(zst_element_t* el, uint32_t index)
+{
+    if (!el || index >= el->nb_streams) return;
+    zst_stream_info_clear(&el->stream_infos[index]);
+    if (index + 1 < el->nb_streams) {
+        memmove(&el->stream_infos[index], &el->stream_infos[index + 1],
+                (el->nb_streams - index - 1) * sizeof(*el->stream_infos));
+        memmove(&el->stream_pads[index], &el->stream_pads[index + 1],
+                (el->nb_streams - index - 1) * sizeof(*el->stream_pads));
+    }
+    el->nb_streams--;
+    if (el->nb_streams == 0) {
+        free(el->stream_infos);
+        free(el->stream_pads);
+        el->stream_infos = NULL;
+        el->stream_pads = NULL;
+    }
+}
+
+uint32_t
+zst_element_get_stream_count(zst_element_t* el)
+{
+    if (!el) return 0;
+    if (el->ops && el->ops->get_stream_count) {
+        return el->ops->get_stream_count(el);
+    }
+
+    pthread_mutex_lock(&el->state_lock);
+    uint32_t count = el->nb_streams ? el->nb_streams : el->nb_src_pads;
+    pthread_mutex_unlock(&el->state_lock);
+    return count;
+}
+
+zst_result_t
+zst_element_get_stream_info(zst_element_t* el, uint32_t index, zst_stream_info_t* info_out)
+{
+    if (!el || !info_out) return ZST_ERROR;
+    if (el->ops && el->ops->get_stream_info) {
+        return el->ops->get_stream_info(el, index, info_out);
+    }
+
+    pthread_mutex_lock(&el->state_lock);
+    if (el->nb_streams > 0) {
+        if (index >= el->nb_streams) {
+            pthread_mutex_unlock(&el->state_lock);
+            return ZST_ERROR;
+        }
+        zst_result_t ret = copy_stream_info(info_out, &el->stream_infos[index]);
+        pthread_mutex_unlock(&el->state_lock);
+        return ret;
+    }
+
+    if (index >= el->nb_src_pads) {
+        pthread_mutex_unlock(&el->state_lock);
+        return ZST_ERROR;
+    }
+
+    fill_stream_info_from_pad(el->src_pads[index], index, info_out);
     pthread_mutex_unlock(&el->state_lock);
 
     return ZST_OK;
@@ -271,9 +390,19 @@ zst_pad_t*
 zst_element_get_stream_pad(zst_element_t* el, zst_stream_id_t stream_id)
 {
     if (!el) return NULL;
+    if (el->ops && el->ops->get_stream_pad) {
+        return el->ops->get_stream_pad(el, stream_id);
+    }
+
     pthread_mutex_lock(&el->state_lock);
     zst_pad_t* pad = NULL;
-    if (stream_id < el->nb_src_pads) {
+    for (uint32_t i = 0; i < el->nb_streams; i++) {
+        if (el->stream_infos[i].id == stream_id) {
+            pad = el->stream_pads[i];
+            break;
+        }
+    }
+    if (!pad && el->nb_streams == 0 && stream_id < el->nb_src_pads) {
         pad = el->src_pads[stream_id];
     }
     pthread_mutex_unlock(&el->state_lock);
@@ -283,14 +412,38 @@ zst_element_get_stream_pad(zst_element_t* el, zst_stream_id_t stream_id)
 zst_result_t
 zst_element_add_dynamic_pad(zst_element_t* el, zst_pad_t* pad, const zst_stream_info_t* stream_info)
 {
+    if (!el || !pad) return ZST_ERROR;
+
     zst_result_t ret = zst_element_add_pad(el, pad);
     if (ret != ZST_OK) return ret;
 
-    if (el->bus) {
-        zst_event_t* ev = zst_event_new_pad_added(el, pad, stream_info);
-        if (ev) zst_bus_post(el->bus, ev);
+    zst_stream_info_t event_info;
+    memset(&event_info, 0, sizeof(event_info));
+
+    pthread_mutex_lock(&el->state_lock);
+    ret = add_stream_entry_locked(el, pad, stream_info);
+    if (ret == ZST_OK) {
+        ret = copy_stream_info(&event_info, &el->stream_infos[el->nb_streams - 1]);
+    }
+    pthread_mutex_unlock(&el->state_lock);
+
+    if (ret != ZST_OK) {
+        zst_element_remove_pad(el, pad);
+        return ret;
     }
 
+    if (el->pipeline) {
+        zst_pipeline_mark_buffer_pool_sizing_dirty(el->pipeline);
+    }
+
+    if (el->bus) {
+        zst_event_t* stream_ev = zst_event_new_stream_added(el, &event_info);
+        if (stream_ev) zst_bus_post(el->bus, stream_ev);
+        zst_event_t* pad_ev = zst_event_new_pad_added(el, pad, &event_info);
+        if (pad_ev) zst_bus_post(el->bus, pad_ev);
+    }
+
+    zst_stream_info_clear(&event_info);
     return ZST_OK;
 }
 
@@ -301,20 +454,31 @@ zst_element_remove_dynamic_pad(zst_element_t* el, zst_pad_t* pad)
 
     zst_pad_ref(pad);
     zst_stream_id_t stream_id = 0;
-    /* Attempt to find stream_id if possible, otherwise 0 */
     pthread_mutex_lock(&el->state_lock);
-    for (uint32_t i = 0; i < el->nb_src_pads; i++) {
-        if (el->src_pads[i] == pad) {
-            stream_id = (zst_stream_id_t)i;
-            break;
+    int stream_index = find_stream_entry_by_pad_locked(el, pad);
+    if (stream_index >= 0) {
+        stream_id = el->stream_infos[stream_index].id;
+    } else {
+        for (uint32_t i = 0; i < el->nb_src_pads; i++) {
+            if (el->src_pads[i] == pad) {
+                stream_id = (zst_stream_id_t)i;
+                break;
+            }
         }
     }
     pthread_mutex_unlock(&el->state_lock);
 
     zst_result_t ret = zst_element_remove_pad(el, pad);
-    if (ret == ZST_OK && el->bus) {
-        zst_event_t* ev = zst_event_new_pad_removed(el, pad, stream_id);
-        if (ev) zst_bus_post(el->bus, ev);
+    if (ret == ZST_OK) {
+        if (el->pipeline) {
+            zst_pipeline_mark_buffer_pool_sizing_dirty(el->pipeline);
+        }
+        if (el->bus) {
+            zst_event_t* stream_ev = zst_event_new_stream_removed(el, stream_id);
+            if (stream_ev) zst_bus_post(el->bus, stream_ev);
+            zst_event_t* pad_ev = zst_event_new_pad_removed(el, pad, stream_id);
+            if (pad_ev) zst_bus_post(el->bus, pad_ev);
+        }
     }
     zst_pad_unref(pad);
     return ret;
@@ -401,10 +565,14 @@ zst_element_remove_pad(zst_element_t* el, zst_pad_t* pad)
     if (pad->direction == ZST_PAD_SRC) {
         for (uint32_t i = 0; i < el->nb_src_pads; i++) {
             if (el->src_pads[i] == pad) {
+                int stream_index = find_stream_entry_by_pad_locked(el, pad);
+                if (stream_index >= 0) remove_stream_entry_locked(el, (uint32_t)stream_index);
                 memmove(&el->src_pads[i], &el->src_pads[i + 1],
                         (el->nb_src_pads - i - 1) * sizeof(zst_pad_t*));
                 el->nb_src_pads--;
                 pthread_mutex_unlock(&el->state_lock);
+                zst_pad_unlink(pad);
+                pad->parent = NULL;
                 zst_pad_unref(pad);
                 return ZST_OK;
             }
@@ -412,10 +580,14 @@ zst_element_remove_pad(zst_element_t* el, zst_pad_t* pad)
     } else {
         for (uint32_t i = 0; i < el->nb_sink_pads; i++) {
             if (el->sink_pads[i] == pad) {
+                int stream_index = find_stream_entry_by_pad_locked(el, pad);
+                if (stream_index >= 0) remove_stream_entry_locked(el, (uint32_t)stream_index);
                 memmove(&el->sink_pads[i], &el->sink_pads[i + 1],
                         (el->nb_sink_pads - i - 1) * sizeof(zst_pad_t*));
                 el->nb_sink_pads--;
                 pthread_mutex_unlock(&el->state_lock);
+                zst_pad_unlink(pad);
+                pad->parent = NULL;
                 zst_pad_unref(pad);
                 return ZST_OK;
             }

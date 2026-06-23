@@ -276,7 +276,7 @@ zst_event_new_stream_removed(zst_element_t* src, zst_stream_id_t stream_id)
     if (!ev) return NULL;
     ev->type = ZST_EVENT_STREAM_REMOVED;
     ev->src = src;
-    ev->as.pad_removed.stream_id = stream_id;
+    ev->as.stream_removed.stream_id = stream_id;
     return ev;
 }
 

@@ -29,7 +29,10 @@ typedef enum {
 } zst_stream_status_t;
 
 typedef struct zst_caps zst_caps_t;
+typedef struct zst_stream_info zst_stream_info_t;
 
+/* Ownership: zst_stream_info_t snapshots returned by APIs own their name,
+ * language, and caps fields. Release them with zst_stream_info_clear(). */
 struct zst_stream_info {
     size_t struct_size;
 
@@ -50,6 +53,8 @@ struct zst_stream_info {
 
     uint32_t flags;
 };
+
+void zst_stream_info_clear(zst_stream_info_t* info);
 
 #ifdef __cplusplus
 }
