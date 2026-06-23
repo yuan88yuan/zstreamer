@@ -48,6 +48,7 @@
 #include "zst_rtsp_server.h"
 #include "zstreamer/elements/zst_fake_sink.h"
 #include "zstreamer/elements/zst_sdp_muxer.h"
+#include "zstreamer/elements/zst_rtp_sink.h"
 
 #include "zstreamer/elements/zst_srt_source.h"
 #include "zstreamer/elements/zst_srt_sink.h"
@@ -5096,6 +5097,91 @@ test_text_overlay(void)
 /* ═══════════════════════════════════════════════════════════════
    SDP Muxer Tests
    ═══════════════════════════════════════════════════════════════ */
+typedef struct {
+    int packets;
+    uint8_t payload_type;
+    uint16_t first_seq;
+    uint32_t timestamp;
+    uint32_t ssrc;
+    size_t last_size;
+} rtp_probe_state_t;
+
+static zst_pad_probe_return_t
+rtp_packet_probe_cb(zst_pad_t* pad, zst_buffer_t* buf,
+                    zst_pad_probe_type_t type, void* user_data)
+{
+    (void)pad;
+    (void)type;
+    rtp_probe_state_t* st = user_data;
+    if (!st || !buf || !buf->memory.data || buf->memory.size < 12) return ZST_PAD_PROBE_OK;
+
+    const uint8_t* p = (const uint8_t*)buf->memory.data;
+    assert((p[0] & 0xc0) == 0x80);
+    if (st->packets == 0) {
+        st->payload_type = (uint8_t)(p[1] & 0x7f);
+        st->first_seq = (uint16_t)((p[2] << 8) | p[3]);
+        st->timestamp = ((uint32_t)p[4] << 24) | ((uint32_t)p[5] << 16) | ((uint32_t)p[6] << 8) | p[7];
+        st->ssrc = ((uint32_t)p[8] << 24) | ((uint32_t)p[9] << 16) | ((uint32_t)p[10] << 8) | p[11];
+    }
+    st->packets++;
+    st->last_size = buf->memory.size;
+    return ZST_PAD_PROBE_OK;
+}
+
+static void
+test_rtp_sink_packetizer(void)
+{
+    TEST("rtpsink packetizes media to RTP buffers");
+
+    zst_element_t* rtp = zst_rtp_sink_create();
+    zst_element_t* sink = zst_fake_sink_create();
+    assert(rtp != NULL);
+    assert(sink != NULL);
+    assert(strcmp(rtp->ops->name, "rtpsink") == 0);
+
+    assert(zst_element_set_property(rtp, "codec", "h264") == ZST_OK);
+    assert(zst_element_set_property(rtp, "payload-type", "96") == ZST_OK);
+    assert(zst_element_set_property(rtp, "ssrc", "0x11223344") == ZST_OK);
+    assert(zst_element_set_property(rtp, "mtu", "20") == ZST_OK);
+
+    zst_pad_t* src = zst_element_get_pad(rtp, "src");
+    zst_pad_t* in = zst_element_get_pad(rtp, "sink");
+    zst_pad_t* fsink = zst_element_get_pad(sink, "sink");
+    assert(src != NULL && in != NULL && fsink != NULL);
+    assert(zst_pad_link(src, fsink) == ZST_OK);
+
+    rtp_probe_state_t probe = {0};
+    assert(zst_pad_add_probe(fsink, ZST_PAD_PROBE_PRE_BUFFER,
+                             rtp_packet_probe_cb, &probe) != 0);
+
+    assert(zst_element_set_state(rtp, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_element_set_state(sink, ZST_STATE_PLAYING) == ZST_OK);
+
+    uint8_t au[] = {
+        0x00, 0x00, 0x00, 0x01, 0x65,
+        0x01, 0x02, 0x03, 0x04, 0x05,
+        0x06, 0x07, 0x08, 0x09
+    };
+    zst_buffer_t* b = zst_buffer_create(ZST_BUFFER_VIDEO_PACKET);
+    assert(b != NULL);
+    b->pts = 1000000000ULL;
+    b->memory.data = au;
+    b->memory.size = sizeof(au);
+    assert(in->push(in, b) == ZST_OK);
+    zst_buffer_unref(b);
+
+    assert(probe.packets == 1);
+    assert(probe.payload_type == 96);
+    assert(probe.first_seq == 0x7000);
+    assert(probe.timestamp == 90000);
+    assert(probe.ssrc == 0x11223344u);
+    assert(probe.last_size == sizeof(au) - 4 + 12);
+
+    zst_element_destroy(rtp);
+    zst_element_destroy(sink);
+    PASS();
+}
+
 static void
 test_sdp_muxer_properties(void)
 {
@@ -7369,8 +7455,9 @@ int main(void)
     printf("  [SKIP] Freetype disabled\n");
 #endif
 
-    printf("[sdp muxer]\n");
+    printf("[sdp/rtp]\n");
     test_sdp_muxer_properties();
+    test_rtp_sink_packetizer();
 
     printf("[fakesink]\n");
     test_fakesink();

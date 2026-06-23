@@ -27,6 +27,7 @@
 typedef enum {
     NET_SINK_PROTOCOL_TCP_CLIENT,
     NET_SINK_PROTOCOL_TCP_SERVER,
+    NET_SINK_PROTOCOL_UDP_CLIENT,
     NET_SINK_PROTOCOL_UNIX_CLIENT,
     NET_SINK_PROTOCOL_UNIX_SERVER
 } net_sink_protocol_t;
@@ -41,6 +42,8 @@ typedef struct {
     uint64_t reconnect_delay_ms;
     uint64_t next_reconnect_time_ms;
     uint64_t write_timeout_ms;
+    int multicast_ttl;
+    int multicast_loop;
 } net_sink_t;
 
 static uint64_t
@@ -258,6 +261,7 @@ net_sink_protocol_to_string(net_sink_protocol_t protocol)
     switch (protocol) {
         case NET_SINK_PROTOCOL_TCP_CLIENT: return "tcp-client";
         case NET_SINK_PROTOCOL_TCP_SERVER: return "tcp-server";
+        case NET_SINK_PROTOCOL_UDP_CLIENT: return "udp-client";
         case NET_SINK_PROTOCOL_UNIX_CLIENT: return "unix-client";
         case NET_SINK_PROTOCOL_UNIX_SERVER: return "unix-server";
     }
@@ -268,10 +272,12 @@ static bool
 net_sink_string_to_protocol(const char* value, net_sink_protocol_t* out)
 {
     if (!value || !out) return false;
-    if (strcmp(value, "tcp-client") == 0) {
+    if (strcmp(value, "tcp-client") == 0 || strcmp(value, "tcp") == 0) {
         *out = NET_SINK_PROTOCOL_TCP_CLIENT;
     } else if (strcmp(value, "tcp-server") == 0) {
         *out = NET_SINK_PROTOCOL_TCP_SERVER;
+    } else if (strcmp(value, "udp-client") == 0 || strcmp(value, "udp") == 0) {
+        *out = NET_SINK_PROTOCOL_UDP_CLIENT;
     } else if (strcmp(value, "unix-client") == 0) {
         *out = NET_SINK_PROTOCOL_UNIX_CLIENT;
     } else if (strcmp(value, "unix-server") == 0) {
@@ -295,6 +301,19 @@ net_sink_open(zst_element_t* el)
 
     if (s->protocol == NET_SINK_PROTOCOL_TCP_SERVER) {
         return net_sink_create_listen_socket(s);
+    }
+
+    if (s->protocol == NET_SINK_PROTOCOL_UDP_CLIENT) {
+        s->conn_fd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (s->conn_fd < 0) {
+            ZST_LOG_ERROR("netsink", "UDP socket() failed: %s", strerror(errno));
+            return ZST_ERROR;
+        }
+        setsockopt(s->conn_fd, IPPROTO_IP, IP_MULTICAST_TTL,
+                   &s->multicast_ttl, sizeof(s->multicast_ttl));
+        unsigned char loop = (unsigned char)(s->multicast_loop ? 1 : 0);
+        setsockopt(s->conn_fd, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, sizeof(loop));
+        return ZST_OK;
     }
 
     if (s->protocol == NET_SINK_PROTOCOL_UNIX_SERVER) {
@@ -370,6 +389,27 @@ net_sink_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
     if (in->memory.size == 0 && in->memory.data == NULL) {
         net_sink_close_connection(s);
         return ZST_OK;
+    }
+
+    if (s->protocol == NET_SINK_PROTOCOL_UDP_CLIENT) {
+        if (s->conn_fd < 0) {
+            s->conn_fd = socket(AF_INET, SOCK_DGRAM, 0);
+            if (s->conn_fd < 0) return ZST_ERROR;
+        }
+        struct sockaddr_in addr = {0};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(s->port);
+        if (inet_pton(AF_INET, s->host, &addr.sin_addr) != 1) {
+            ZST_LOG_WARN("netsink", "invalid UDP host '%s'", s->host);
+            return ZST_ERROR;
+        }
+        ssize_t n = sendto(s->conn_fd, in->memory.data, in->memory.size, 0,
+                           (struct sockaddr*)&addr, sizeof(addr));
+        if (n >= 0 && (size_t)n == in->memory.size) return ZST_OK;
+        if (n >= 0) return ZST_TIMEOUT;
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return ZST_TIMEOUT;
+        ZST_LOG_WARN("netsink", "UDP sendto() failed: %s", strerror(errno));
+        return ZST_TIMEOUT;
     }
 
     zst_result_t connected = net_sink_ensure_connection(s);
@@ -476,6 +516,16 @@ net_sink_set_property(zst_element_t* el, const char* name, const char* value)
         s->write_timeout_ms = (uint64_t)atoi(value);
         return ZST_OK;
     }
+    if (strcmp(name, "ttl") == 0 || strcmp(name, "multicast-ttl") == 0) {
+        int ttl = atoi(value);
+        if (ttl < 0 || ttl > 255) return ZST_ERROR;
+        s->multicast_ttl = ttl;
+        return ZST_OK;
+    }
+    if (strcmp(name, "loop") == 0 || strcmp(name, "multicast-loop") == 0) {
+        s->multicast_loop = (strcmp(value, "1") == 0 || strcmp(value, "true") == 0 || strcmp(value, "yes") == 0 || strcmp(value, "on") == 0);
+        return ZST_OK;
+    }
     return ZST_ERROR;
 }
 
@@ -501,6 +551,14 @@ net_sink_get_property(zst_element_t* el, const char* name, char* value_out, size
     }
     if (strcmp(name, "write-timeout") == 0) {
         snprintf(value_out, max_len, "%llu", (unsigned long long)s->write_timeout_ms);
+        return ZST_OK;
+    }
+    if (strcmp(name, "ttl") == 0 || strcmp(name, "multicast-ttl") == 0) {
+        snprintf(value_out, max_len, "%d", s->multicast_ttl);
+        return ZST_OK;
+    }
+    if (strcmp(name, "loop") == 0 || strcmp(name, "multicast-loop") == 0) {
+        snprintf(value_out, max_len, "%s", s->multicast_loop ? "true" : "false");
         return ZST_OK;
     }
     return ZST_ERROR;
@@ -535,6 +593,8 @@ zst_net_sink_create(void)
     priv->reconnect_delay_ms = 500;
     priv->next_reconnect_time_ms = 0;
     priv->write_timeout_ms = 100;
+    priv->multicast_ttl = 16;
+    priv->multicast_loop = 1;
 
     el = zst_element_create(&g_ops, priv);
     sink = zst_pad_create("sink", ZST_PAD_SINK);
@@ -559,9 +619,11 @@ plugin_create_element(const char* name)
 static const zst_property_spec_t g_netsink_properties[] = {
     { "host", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "127.0.0.1", "Network host to connect to or listen on" },
     { "port", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5000", "Network port" },
-    { "protocol", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "tcp", "Network protocol (tcp, udp, unix, tcp-server, unix-server)" },
+    { "protocol", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "tcp", "Network protocol (tcp, udp, udp-client, unix, tcp-server, unix-server)" },
     { "path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Unix domain socket path" },
-    { "write-timeout", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1000", "Write timeout in milliseconds" }
+    { "write-timeout", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1000", "Write timeout in milliseconds" },
+    { "ttl", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "16", "Multicast TTL for UDP" },
+    { "loop", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "true", "Enable UDP multicast loopback" }
 };
 
 static const zst_pad_template_t g_netsink_pads[] = {

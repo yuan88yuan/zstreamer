@@ -8,7 +8,7 @@
       ./demo_sdp_multicast recv /tmp/zstreamer-demo.sdp 239.255.42.42 10
 
     Sender pipeline (manual demo driver):
-      videotestsrc + audiotestsrc -> x264enc + aacenc -> RTP multicast
+      videotestsrc + audiotestsrc -> x264enc + aacenc -> rtpsink -> netsink(udp) -> RTP multicast
       sdpmuxer observes encoded packets and writes the SDP file.
 
     Receiver pipeline:
@@ -36,6 +36,8 @@
 #include "zstreamer/elements/zst_aac_encoder.h"
 #include "zstreamer/elements/zst_audio_test_src.h"
 #include "zstreamer/elements/zst_fake_sink.h"
+#include "zstreamer/elements/zst_net_sink.h"
+#include "zstreamer/elements/zst_rtp_sink.h"
 #include "zstreamer/elements/zst_sdp_demuxer.h"
 #include "zstreamer/elements/zst_sdp_muxer.h"
 #include "zstreamer/elements/zst_video_test_src.h"
@@ -43,11 +45,6 @@
 
 #define DEMO_VIDEO_PORT 5004
 #define DEMO_AUDIO_PORT 5006
-#define DEMO_VIDEO_PT   96
-#define DEMO_AUDIO_PT   97
-#define DEMO_MTU        1200
-#define DEMO_VIDEO_SSRC 0x53545056u /* STPV */
-#define DEMO_AUDIO_SSRC 0x53545041u /* STPA */
 
 static volatile sig_atomic_t g_stop = 0;
 
@@ -74,141 +71,6 @@ static void sleep_until(uint64_t target_ns) {
     }
 }
 
-typedef struct {
-    int fd;
-    struct sockaddr_in addr;
-    uint16_t seq;
-    uint32_t ssrc;
-    uint8_t pt;
-    uint32_t clock_rate;
-} rtp_sender_t;
-
-static int make_sender(rtp_sender_t* s, const char* group, int port,
-                       uint8_t pt, uint32_t ssrc, uint32_t clock_rate) {
-    memset(s, 0, sizeof(*s));
-    s->fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (s->fd < 0) {
-        perror("socket");
-        return -1;
-    }
-
-    int ttl = 16;
-    setsockopt(s->fd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
-    unsigned char loop = 1;
-    setsockopt(s->fd, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, sizeof(loop));
-
-    s->addr.sin_family = AF_INET;
-    s->addr.sin_port = htons((uint16_t)port);
-    if (inet_pton(AF_INET, group, &s->addr.sin_addr) != 1) {
-        fprintf(stderr, "invalid multicast group: %s\n", group);
-        close(s->fd);
-        return -1;
-    }
-    s->seq = 0x7000; /* keep sdpdemux single-packet raw-RTP autodetect clamped */
-    s->ssrc = ssrc;
-    s->pt = pt;
-    s->clock_rate = clock_rate;
-    return 0;
-}
-
-static int send_rtp(rtp_sender_t* s, const uint8_t* payload, int payload_len,
-                    uint32_t rtp_ts, int marker) {
-    uint8_t pkt[DEMO_MTU + 32];
-    if (!s || !payload || payload_len < 0 || payload_len > DEMO_MTU) return -1;
-    pkt[0] = 0x80;
-    pkt[1] = (uint8_t)((marker ? 0x80 : 0x00) | (s->pt & 0x7f));
-    pkt[2] = (uint8_t)(s->seq >> 8);
-    pkt[3] = (uint8_t)(s->seq & 0xff);
-    pkt[4] = (uint8_t)(rtp_ts >> 24);
-    pkt[5] = (uint8_t)(rtp_ts >> 16);
-    pkt[6] = (uint8_t)(rtp_ts >> 8);
-    pkt[7] = (uint8_t)(rtp_ts);
-    pkt[8] = (uint8_t)(s->ssrc >> 24);
-    pkt[9] = (uint8_t)(s->ssrc >> 16);
-    pkt[10] = (uint8_t)(s->ssrc >> 8);
-    pkt[11] = (uint8_t)(s->ssrc);
-    memcpy(pkt + 12, payload, (size_t)payload_len);
-    ssize_t n = sendto(s->fd, pkt, (size_t)payload_len + 12, 0,
-                       (struct sockaddr*)&s->addr, sizeof(s->addr));
-    s->seq++;
-    return n >= 0 ? 0 : -1;
-}
-
-static int find_start_code(const uint8_t* data, int size, int offset, int* code_size) {
-    for (int i = offset; i + 3 <= size; i++) {
-        if (i + 4 <= size && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1) {
-            *code_size = 4;
-            return i;
-        }
-        if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
-            *code_size = 3;
-            return i;
-        }
-    }
-    return -1;
-}
-
-static int packetize_h264(rtp_sender_t* s, const uint8_t* data, int size, uint64_t pts_ns) {
-    uint32_t ts = (uint32_t)(pts_ns * 90000ULL / 1000000000ULL);
-    int code = 0;
-    int pos = find_start_code(data, size, 0, &code);
-    if (pos < 0) {
-        return send_rtp(s, data, size, ts, 1);
-    }
-
-    while (pos >= 0 && pos < size) {
-        int nal_start = pos + code;
-        int next_code = 0;
-        int next = find_start_code(data, size, nal_start, &next_code);
-        int nal_end = next >= 0 ? next : size;
-        while (nal_end > nal_start && data[nal_end - 1] == 0) nal_end--;
-        int nal_len = nal_end - nal_start;
-        int is_last = next < 0;
-        if (nal_len > 0) {
-            const uint8_t* nal = data + nal_start;
-            if (nal_len <= DEMO_MTU) {
-                send_rtp(s, nal, nal_len, ts, is_last);
-            } else {
-                uint8_t fu_ind = (uint8_t)((nal[0] & 0xe0) | 28);
-                uint8_t nal_type = nal[0] & 0x1f;
-                int off = 1;
-                int first = 1;
-                while (off < nal_len) {
-                    int chunk = nal_len - off;
-                    if (chunk > DEMO_MTU - 2) chunk = DEMO_MTU - 2;
-                    uint8_t fu[DEMO_MTU];
-                    fu[0] = fu_ind;
-                    fu[1] = nal_type;
-                    if (first) fu[1] |= 0x80;
-                    if (off + chunk >= nal_len) fu[1] |= 0x40;
-                    memcpy(fu + 2, nal + off, (size_t)chunk);
-                    send_rtp(s, fu, chunk + 2, ts, is_last && (off + chunk >= nal_len));
-                    off += chunk;
-                    first = 0;
-                }
-            }
-        }
-        if (next < 0) break;
-        pos = next;
-        code = next_code;
-    }
-    return 0;
-}
-
-static int packetize_aac(rtp_sender_t* s, const uint8_t* data, int size, uint64_t pts_ns) {
-    if (size <= 0 || size > 0x1fff) return -1;
-    uint8_t payload[DEMO_MTU + 8];
-    if (size + 4 > (int)sizeof(payload)) return -1;
-    uint16_t au_header = (uint16_t)(size << 3);
-    payload[0] = 0;
-    payload[1] = 16; /* one 16-bit AU-header */
-    payload[2] = (uint8_t)(au_header >> 8);
-    payload[3] = (uint8_t)(au_header & 0xff);
-    memcpy(payload + 4, data, (size_t)size);
-    uint32_t ts = (uint32_t)(pts_ns * s->clock_rate / 1000000000ULL);
-    return send_rtp(s, payload, size + 4, ts, 1);
-}
-
 static int write_sdp(zst_element_t* sdpmux, const char* path) {
     char sdp[4096];
     if (zst_element_get_property(sdpmux, "sdp", sdp, sizeof(sdp)) != ZST_OK) return -1;
@@ -229,7 +91,11 @@ static int run_sender(const char* sdp_path, const char* group, int seconds) {
     zst_element_t* venc = zst_x264_encoder_create();
     zst_element_t* aenc = zst_aac_encoder_create();
     zst_element_t* sdpmux = zst_sdp_muxer_create();
-    if (!vsrc || !asrc || !venc || !aenc || !sdpmux) {
+    zst_element_t* vrtp = zst_rtp_sink_create();
+    zst_element_t* artp = zst_rtp_sink_create();
+    zst_element_t* vudp = zst_net_sink_create();
+    zst_element_t* audp = zst_net_sink_create();
+    if (!vsrc || !asrc || !venc || !aenc || !sdpmux || !vrtp || !artp || !vudp || !audp) {
         fprintf(stderr, "failed to create elements\n");
         return 1;
     }
@@ -251,21 +117,44 @@ static int run_sender(const char* sdp_path, const char* group, int seconds) {
     zst_element_set_property(sdpmux, "channels", "2");
     zst_element_set_property(sdpmux, "video-port", "5004");
     zst_element_set_property(sdpmux, "audio-port", "5006");
+    zst_element_set_property(sdpmux, "video-payload-type", "96");
+    zst_element_set_property(sdpmux, "audio-payload-type", "97");
+
+    zst_element_set_property(vrtp, "codec", "h264");
+    zst_element_set_property(vrtp, "payload-type", "96");
+    zst_element_set_property(vrtp, "ssrc", "0x53545056");
+    zst_element_set_property(artp, "codec", "aac");
+    zst_element_set_property(artp, "payload-type", "97");
+    zst_element_set_property(artp, "ssrc", "0x53545041");
+    zst_element_set_property(artp, "sample-rate", "48000");
+
+    zst_element_set_property(vudp, "protocol", "udp");
+    zst_element_set_property(vudp, "host", group);
+    zst_element_set_property(vudp, "port", "5004");
+    zst_element_set_property(audp, "protocol", "udp");
+    zst_element_set_property(audp, "host", group);
+    zst_element_set_property(audp, "port", "5006");
+
+    zst_pad_link(zst_element_get_pad(vrtp, "src"), zst_element_get_pad(vudp, "sink"));
+    zst_pad_link(zst_element_get_pad(artp, "src"), zst_element_get_pad(audp, "sink"));
 
     zst_element_set_state(vsrc, ZST_STATE_PLAYING);
     zst_element_set_state(asrc, ZST_STATE_PLAYING);
     zst_element_set_state(venc, ZST_STATE_PLAYING);
     zst_element_set_state(aenc, ZST_STATE_PLAYING);
     zst_element_set_state(sdpmux, ZST_STATE_PLAYING);
-
-    rtp_sender_t vs, as;
-    if (make_sender(&vs, group, DEMO_VIDEO_PORT, DEMO_VIDEO_PT, DEMO_VIDEO_SSRC, 90000) < 0 ||
-        make_sender(&as, group, DEMO_AUDIO_PORT, DEMO_AUDIO_PT, DEMO_AUDIO_SSRC, 48000) < 0) {
+    if (zst_element_set_state(vudp, ZST_STATE_PLAYING) != ZST_OK ||
+        zst_element_set_state(audp, ZST_STATE_PLAYING) != ZST_OK ||
+        zst_element_set_state(vrtp, ZST_STATE_PLAYING) != ZST_OK ||
+        zst_element_set_state(artp, ZST_STATE_PLAYING) != ZST_OK) {
+        fprintf(stderr, "failed to start RTP/UDP output for %s\n", group);
         return 1;
     }
 
     zst_pad_t* sdpmux_video = zst_element_get_pad(sdpmux, "video");
     zst_pad_t* sdpmux_audio = zst_element_get_pad(sdpmux, "audio");
+    zst_pad_t* vrtp_sink = zst_element_get_pad(vrtp, "sink");
+    zst_pad_t* artp_sink = zst_element_get_pad(artp, "sink");
     int wrote_sdp = 0;
     uint64_t start = now_ns();
     uint64_t end = start + (uint64_t)seconds * 1000000000ULL;
@@ -289,7 +178,7 @@ static int run_sender(const char* sdp_path, const char* group, int seconds) {
                         write_sdp(sdpmux, sdp_path);
                         wrote_sdp = 1;
                     }
-                    packetize_h264(&vs, (const uint8_t*)enc->memory.data, (int)enc->memory.size, enc->pts);
+                    if (vrtp_sink) vrtp_sink->push(vrtp_sink, enc);
                     v_pkts++;
                     zst_buffer_unref(enc);
                 }
@@ -306,7 +195,7 @@ static int run_sender(const char* sdp_path, const char* group, int seconds) {
                         write_sdp(sdpmux, sdp_path);
                         wrote_sdp = 1;
                     }
-                    packetize_aac(&as, (const uint8_t*)enc->memory.data, (int)enc->memory.size, enc->pts);
+                    if (artp_sink) artp_sink->push(artp_sink, enc);
                     a_pkts++;
                     zst_buffer_unref(enc);
                 }
@@ -320,13 +209,19 @@ static int run_sender(const char* sdp_path, const char* group, int seconds) {
 
     printf("Sender done: video access-units=%llu audio access-units=%llu\n",
            (unsigned long long)v_pkts, (unsigned long long)a_pkts);
-    close(vs.fd);
-    close(as.fd);
+    zst_element_set_state(vrtp, ZST_STATE_NULL);
+    zst_element_set_state(artp, ZST_STATE_NULL);
+    zst_element_set_state(vudp, ZST_STATE_NULL);
+    zst_element_set_state(audp, ZST_STATE_NULL);
     zst_element_destroy(vsrc);
     zst_element_destroy(asrc);
     zst_element_destroy(venc);
     zst_element_destroy(aenc);
     zst_element_destroy(sdpmux);
+    zst_element_destroy(vrtp);
+    zst_element_destroy(artp);
+    zst_element_destroy(vudp);
+    zst_element_destroy(audp);
     return 0;
 }
 

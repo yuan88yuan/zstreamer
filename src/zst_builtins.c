@@ -97,6 +97,7 @@ zst_element_t* zst_rtsp_sink_create(void);
 #endif
 zst_element_t* zst_rtsp_server_create(void);
 zst_element_t* zst_sdp_muxer_create(void);
+zst_element_t* zst_rtp_sink_create(void);
 #ifdef HAS_FFMPEG
 zst_element_t* zst_rtmp_source_create(const char* url);
 zst_element_t* zst_rtmp_sink_create(void);
@@ -225,6 +226,10 @@ static const zst_pad_template_t g_pad_sdpmuxer[] = {
     { "video", ZST_PAD_SINK, "video/x-h264;video/x-h265" },
     { "audio", ZST_PAD_SINK, "audio/aac" },
     { "src",   ZST_PAD_SRC,  "application/sdp" }
+};
+static const zst_pad_template_t g_pad_rtpsink[] = {
+    { "sink", ZST_PAD_SINK, "video/x-h264;video/x-h265;audio/x-aac;audio/aac;audio/x-raw" },
+    { "src",  ZST_PAD_SRC,  "application/x-rtp" }
 };
 
 #ifdef HAS_FFMPEG
@@ -507,9 +512,25 @@ static const zst_property_spec_t g_builtin_netsrc_props[] = {
 static const zst_property_spec_t g_builtin_netsink_props[] = {
     { "host", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "127.0.0.1", "Network host to connect to or listen on" },
     { "port", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5000", "Network port" },
-    { "protocol", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "tcp", "Network protocol (tcp, udp, unix, tcp-server, unix-server)" },
+    { "protocol", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "tcp", "Network protocol (tcp, udp, udp-client, unix, tcp-server, unix-server)" },
     { "path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Unix domain socket path" },
-    { "write-timeout", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1000", "Write timeout in milliseconds" }
+    { "write-timeout", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1000", "Write timeout in milliseconds" },
+    { "ttl", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "16", "Multicast TTL for UDP" },
+    { "loop", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "true", "Enable UDP multicast loopback" }
+};
+
+static const zst_property_spec_t g_builtin_rtpsink_props[] = {
+    { "codec", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "h264", "RTP payload codec: h264, h265, aac, pcm" },
+    { "payload-type", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "96", "RTP payload type" },
+    { "ssrc", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1398030928", "RTP SSRC" },
+    { "clock-rate", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "90000", "RTP clock rate" },
+    { "sample-rate", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "90000", "Alias for clock-rate" },
+    { "mtu", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1200", "Maximum RTP payload bytes" },
+    { "channels", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "2", "PCM channel count" },
+    { "sample-size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "2", "PCM bytes per sample" },
+    { "seq", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "28672", "Next RTP sequence number" },
+    { "packets", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE, "0", "RTP packets produced" },
+    { "bytes", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE, "0", "RTP bytes produced" }
 };
 
 static const zst_property_spec_t g_builtin_sdpmuxer_props[] = {
@@ -652,6 +673,7 @@ create_builtin_element(const char* name)
 #endif
     if (strcmp(name, "rtsp_server") == 0)  return zst_rtsp_server_create();
     if (strcmp(name, "sdpmuxer") == 0 || strcmp(name, "sdpmux") == 0) return zst_sdp_muxer_create();
+    if (strcmp(name, "rtpsink") == 0 || strcmp(name, "rtp_sink") == 0) return zst_rtp_sink_create();
 #ifdef HAS_FFMPEG
     if (strcmp(name, "rtmpsrc") == 0)      return zst_rtmp_source_create(NULL);
     if (strcmp(name, "rtmpsink") == 0)     return zst_rtmp_sink_create();
@@ -732,6 +754,7 @@ static const zst_element_desc_t g_builtin_descs[] = {
 #endif
     DESC("rtsp_server", "RTSP Server",  "Sink/Network", "Serves RTP streams over RTSP",                                                                                         g_builtin_rtspserver_props,     sizeof(g_builtin_rtspserver_props) / sizeof(g_builtin_rtspserver_props[0]), g_pad_rtsp_server),
     DESC("sdpmuxer", "SDP Muxer",        "Muxer/RTP",    "Generates SDP descriptions for H.264/H.265/AAC RTP sessions",                                                          g_builtin_sdpmuxer_props,       sizeof(g_builtin_sdpmuxer_props) / sizeof(g_builtin_sdpmuxer_props[0]), g_pad_sdpmuxer),
+    DESC("rtpsink", "RTP Packetizer",    "RTP",          "Packetizes H.264/H.265/AAC/PCM buffers into RTP packet buffers",                                                        g_builtin_rtpsink_props,        sizeof(g_builtin_rtpsink_props) / sizeof(g_builtin_rtpsink_props[0]), g_pad_rtpsink),
 #ifdef HAS_FFMPEG
     DESC("rtmpsrc",  "RTMP Source",      "Source/Network","Receives audio/video from an RTMP endpoint",                                                                          g_builtin_rtmpsrc_props,        sizeof(g_builtin_rtmpsrc_props) / sizeof(g_builtin_rtmpsrc_props[0]), g_pad_rtmp_src),
     DESC("rtmpsink", "RTMP Sink",        "Sink/Network", "Publishes audio/video to an RTMP endpoint",                                                                             g_builtin_rtmpsink_props,       sizeof(g_builtin_rtmpsink_props) / sizeof(g_builtin_rtmpsink_props[0]), g_pad_rtmp_sink),
