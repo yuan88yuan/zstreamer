@@ -1,3 +1,5 @@
+@page tutorials_getting_started Getting Started
+
 # Getting Started with zstreamer: Recording a webcam to MP4 in 5 steps
 
 Welcome to zstreamer! This tutorial will walk you through building a simple C program that captures video from a webcam, encodes it into H.264, muxes it into an MP4 container, and saves it to a file.
