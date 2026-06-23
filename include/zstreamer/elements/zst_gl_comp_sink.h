@@ -48,6 +48,14 @@ zst_element_t* zst_gl_comp_sink_create_with_config(const zst_gl_comp_sink_config
 zst_pad_t* zst_gl_comp_sink_request_pad(zst_element_t* el, const char* name);
 zst_result_t zst_gl_comp_sink_release_pad(zst_element_t* el, zst_pad_t* pad);
 
+/* Capture the current composited output into an RGBA pixel buffer.
+ * width/height: pixel dimensions for the capture.
+ * rgba_out: caller-allocated buffer of width*height*4 bytes.
+ * Returns ZST_OK on success, ZST_ERROR if in null mode or no GL context. */
+zst_result_t zst_gl_comp_sink_capture(zst_element_t* el,
+                                        uint32_t width, uint32_t height,
+                                        uint8_t* rgba_out);
+
 #ifdef __cplusplus
 }
 #endif

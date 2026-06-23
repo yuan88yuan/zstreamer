@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <ctype.h>
 #include <pthread.h>
+#include <errno.h>
 
 #include <X11/X.h>
 #include <X11/Xlib.h>
@@ -34,6 +35,7 @@
 #include "zst_bus.h"
 #include "zst_log.h"
 #include "zst_pipeline.h"
+#include "zst_queue.h"
 
 #define GLCOMP_MAX_NAME 32
 
@@ -126,6 +128,12 @@ typedef struct {
     bool textures_valid;
 } gl_comp_input_t;
 
+typedef enum {
+    CAPTURE_IDLE,
+    CAPTURE_REQUESTED,
+    CAPTURE_DONE
+} capture_state_t;
+
 struct gl_comp_sink {
     char window_title[256];
     uint32_t canvas_width;
@@ -168,6 +176,18 @@ struct gl_comp_sink {
     pthread_cond_t cond;
     pthread_t worker_thread;
     bool running;
+
+    /* GL readiness flags: the GL context is created on the worker thread. */
+    bool gl_ready;
+    bool gl_init_error;
+
+    /* Capture request: the worker thread reads pixels on our behalf
+     * since the GL context is bound to that thread. */
+    uint8_t* capture_buf;
+    uint32_t capture_w;
+    uint32_t capture_h;
+    volatile capture_state_t capture_state;
+    pthread_cond_t capture_cond;
 };
 
 /* ─── GL helpers ─────────────────────────────────────────────────────── */
@@ -589,6 +609,47 @@ comp_render_locked(gl_comp_sink_t* s)
     return comp_check_events(s) ? ZST_EOF : ZST_OK;
 }
 
+static int
+comp_worker_init_gl(gl_comp_sink_t* s)
+{
+    /* Create the GL context on the worker thread so it stays thread-local */
+    s->gl_context = glXCreateContext(s->x_display, s->visual_info, None, True);
+    if (!s->gl_context) {
+        ZST_LOG_ERROR("glcompsink", "glXCreateContext failed on worker thread");
+        glXMakeCurrent(s->x_display, None, NULL);
+        return -1;
+    }
+    if (!glXMakeCurrent(s->x_display, s->x_window, s->gl_context)) {
+        ZST_LOG_ERROR("glcompsink", "glXMakeCurrent failed on worker thread");
+        glXDestroyContext(s->x_display, s->gl_context);
+        s->gl_context = NULL;
+        return -1;
+    }
+
+    int dbuf = 0;
+    glXGetConfig(s->x_display, s->visual_info, GLX_DOUBLEBUFFER, &dbuf);
+    s->double_buffered = dbuf ? True : False;
+
+    if (comp_build_shaders(s) != 0) {
+        ZST_LOG_ERROR("glcompsink", "shader compilation failed on worker thread");
+        glXDestroyContext(s->x_display, s->gl_context);
+        s->gl_context = NULL;
+        return -1;
+    }
+
+    if (s->vsync) {
+        typedef void (*SwapIntervalFunc)(Display*, GLXDrawable, int);
+        SwapIntervalFunc swapInterval = (SwapIntervalFunc)glXGetProcAddress((const GLubyte*)"glXSwapIntervalEXT");
+        if (swapInterval) swapInterval(s->x_display, glXGetCurrentDrawable(), 1);
+    }
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDisable(GL_DEPTH_TEST);
+
+    return 0;
+}
+
 static void*
 glcomp_worker_thread(void* arg)
 {
@@ -598,39 +659,111 @@ glcomp_worker_thread(void* arg)
     ZST_LOG_INFO("glcompsink", "starting compositor worker thread (rate=%.2f fps)", s->display_rate);
 
     pthread_mutex_lock(&s->lock);
-    if (s->x_display && s->x_window && s->gl_context) {
-        glXMakeCurrent(s->x_display, s->x_window, s->gl_context);
+
+    /* Initialize GL on this thread */
+    if (s->x_display && s->x_window && !s->null_mode) {
+        if (comp_worker_init_gl(s) != 0) {
+            ZST_LOG_ERROR("glcompsink", "worker thread GL init failed — falling back to null mode");
+            s->null_mode = 1;
+            s->gl_init_error = true;
+            pthread_cond_broadcast(&s->cond);
+        } else {
+            s->gl_ready = true;
+            pthread_cond_broadcast(&s->cond);
+        }
+    } else {
+        s->gl_ready = true;
+        pthread_cond_broadcast(&s->cond);
     }
 
     struct timespec next_render;
     clock_gettime(CLOCK_REALTIME, &next_render);
 
     while (s->running) {
+        /* Compute the next render time */
         double interval = 1.0 / s->display_rate;
         long long nsec = next_render.tv_nsec + (long long)(interval * 1000000000.0);
         next_render.tv_sec += nsec / 1000000000LL;
         next_render.tv_nsec = nsec % 1000000000LL;
 
-        /* Wait until it's time to render the next frame */
-        while (s->running) {
-            int res = pthread_cond_timedwait(&s->cond, &s->lock, &next_render);
-            if (res == ETIMEDOUT) break;
-            /* If signaled by new data, we still wait until the next_render time
-             * to maintain a stable display rate. */
+        /* Wait until it's time to render the next frame, or until signaled.
+         * If a capture is pending, skip the timed wait and render immediately. */
+        if (s->capture_state != CAPTURE_REQUESTED) {
+            while (s->running) {
+                int res = pthread_cond_timedwait(&s->cond, &s->lock, &next_render);
+                if (res == ETIMEDOUT) break;
+            }
         }
 
         if (!s->running) break;
 
         if (comp_render_locked(s) == ZST_EOF) {
             ZST_LOG_INFO("glcompsink", "worker thread detected window close");
-            /* Switch to null mode and stop trying to render to X11 */
             s->null_mode = 1;
         }
+
+        /* Handle capture request: read back pixels and signal caller */
+        if (s->capture_state == CAPTURE_REQUESTED && s->gl_context && !s->null_mode) {
+            glReadPixels(0, 0, (GLsizei)s->capture_w, (GLsizei)s->capture_h,
+                         GL_RGBA, GL_UNSIGNED_BYTE, s->capture_buf);
+            s->capture_state = CAPTURE_DONE;
+            pthread_cond_signal(&s->capture_cond);
+        } else if (s->capture_state == CAPTURE_REQUESTED) {
+            /* Null mode — can't capture, signal done with NULL result */
+            s->capture_state = CAPTURE_DONE;
+            pthread_cond_signal(&s->capture_cond);
+        }
     }
+
+    /* Clean up GL resources on the worker thread before exiting */
+    if (s->gl_context && s->x_display) {
+        for (uint32_t i = 0; i < s->nb_inputs; i++) comp_delete_input_textures(s->inputs[i]);
+        if (s->program_yuv420p) glDeleteProgram(s->program_yuv420p);
+        if (s->program_nv12) glDeleteProgram(s->program_nv12);
+        if (s->program_rgb) glDeleteProgram(s->program_rgb);
+        s->program_yuv420p = s->program_nv12 = s->program_rgb = 0;
+        glXMakeCurrent(s->x_display, None, NULL);
+        glXDestroyContext(s->x_display, s->gl_context);
+        s->gl_context = NULL;
+    }
+
     pthread_mutex_unlock(&s->lock);
 
     ZST_LOG_INFO("glcompsink", "compositor worker thread exiting");
     return NULL;
+}
+
+/* ─── Public capture API ──────────────────────────────────────────────── */
+
+zst_result_t
+zst_gl_comp_sink_capture(zst_element_t* el, uint32_t width, uint32_t height,
+                          uint8_t* rgba_out)
+{
+    if (!el || !el->priv || !rgba_out) return ZST_ERROR;
+    gl_comp_sink_t* s = el->priv;
+
+    pthread_mutex_lock(&s->lock);
+
+    if (s->null_mode || !s->gl_context || !s->x_display) {
+        pthread_mutex_unlock(&s->lock);
+        return ZST_ERROR;
+    }
+
+    /* Request a capture from the worker thread (which owns the GL context) */
+    s->capture_buf = rgba_out;
+    s->capture_w = width;
+    s->capture_h = height;
+    s->capture_state = CAPTURE_REQUESTED;
+    pthread_cond_signal(&s->cond);
+
+    /* Wait for the worker thread to complete the capture */
+    while (s->capture_state != CAPTURE_DONE) {
+        pthread_cond_wait(&s->capture_cond, &s->lock);
+    }
+    s->capture_state = CAPTURE_IDLE;
+
+    pthread_mutex_unlock(&s->lock);
+    return ZST_OK;
 }
 
 /* ─── Pad and property helpers ───────────────────────────────────────── */
@@ -967,23 +1100,15 @@ comp_sink_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
 static void
 comp_cleanup_display(gl_comp_sink_t* s)
 {
-    if (s->gl_context) {
-        if (s->x_display && s->window_open) {
-            glXMakeCurrent(s->x_display, s->x_window, s->gl_context);
-        }
-        for (uint32_t i = 0; i < s->nb_inputs; i++) comp_delete_input_textures(s->inputs[i]);
-        if (s->program_yuv420p) glDeleteProgram(s->program_yuv420p);
-        if (s->program_nv12) glDeleteProgram(s->program_nv12);
-        if (s->program_rgb) glDeleteProgram(s->program_rgb);
-        s->program_yuv420p = s->program_nv12 = s->program_rgb = 0;
-        glXMakeCurrent(s->x_display, None, NULL);
-        glXDestroyContext(s->x_display, s->gl_context);
-        s->gl_context = NULL;
-    }
-    if (s->x_display && s->window_open) {
+    /* GL context cleanup is handled by the worker thread on exit.
+     * If the worker thread already cleaned up (e.g. gl_init_error before
+     * the worker reached its cleanup block), s->gl_context is NULL and
+     * no GL operations are performed here. */
+    if (s->x_display && s->x_window) {
         XDestroyWindow(s->x_display, s->x_window);
-        s->window_open = 0;
+        s->x_window = 0;
     }
+    s->window_open = 0;
     if (s->colormap) {
         XFreeColormap(s->x_display, s->colormap);
         s->colormap = 0;
@@ -1072,39 +1197,31 @@ glcomp_open(zst_element_t* el)
     if (s->fullscreen) comp_apply_fullscreen(s, 1);
     XFlush(s->x_display);
 
-    s->gl_context = glXCreateContext(s->x_display, s->visual_info, None, GL_TRUE);
-    if (!s->gl_context || !glXMakeCurrent(s->x_display, s->x_window, s->gl_context)) {
-        ZST_LOG_ERROR("glcompsink", "failed to create/make-current GLX context — falling back to null mode");
-        comp_cleanup_display(s);
-        s->null_mode = 1;
-        pthread_mutex_unlock(&s->lock);
-        return ZST_OK;
-    }
-
-    int dbuf = 0;
-    glXGetConfig(s->x_display, s->visual_info, GLX_DOUBLEBUFFER, &dbuf);
-    s->double_buffered = dbuf ? True : False;
-
-    if (comp_build_shaders(s) != 0) {
-        ZST_LOG_ERROR("glcompsink", "shader compilation failed — falling back to null mode");
-        comp_cleanup_display(s);
-        s->null_mode = 1;
-        pthread_mutex_unlock(&s->lock);
-        return ZST_OK;
-    }
-
-    if (s->vsync) {
-        typedef void (*SwapIntervalFunc)(Display*, GLXDrawable, int);
-        SwapIntervalFunc swapInterval = (SwapIntervalFunc)glXGetProcAddress((const GLubyte*)"glXSwapIntervalEXT");
-        if (swapInterval) swapInterval(s->x_display, glXGetCurrentDrawable(), 1);
-    }
-
+    /* GL context is created on the worker thread. Start the worker now. */
     s->running = true;
     pthread_create(&s->worker_thread, NULL, glcomp_worker_thread, el);
 
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glDisable(GL_DEPTH_TEST);
+    /* Wait for the worker thread to finish GL init (or fail)
+     * pthread_cond_timedwait requires an absolute time. */
+    while (!s->gl_ready && !s->gl_init_error) {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_sec += 5; /* 5-second timeout */
+        int res = pthread_cond_timedwait(&s->cond, &s->lock, &ts);
+        if (res == ETIMEDOUT) {
+            ZST_LOG_ERROR("glcompsink", "timed out (5s) waiting for worker thread GL init");
+            break;
+        }
+    }
+
+    if (s->gl_init_error || !s->gl_ready) {
+        ZST_LOG_WARN("glcompsink", "GL initialization failed on worker thread — falling back to null mode");
+        comp_cleanup_display(s);
+        s->null_mode = 1;
+        pthread_mutex_unlock(&s->lock);
+        return ZST_OK;
+    }
+
     s->window_open = 1;
 
     ZST_LOG_INFO("glcompsink", "opened compositor window '%s' (%ux%u, inputs=%u)",
@@ -1277,9 +1394,12 @@ zst_gl_comp_sink_create(void)
     priv->display_rate = 30.0;
     pthread_mutex_init(&priv->lock, NULL);
     pthread_cond_init(&priv->cond, NULL);
+    pthread_cond_init(&priv->capture_cond, NULL);
 
     zst_element_t* el = zst_element_create(&g_glcompsink_ops, priv);
     if (!el) {
+        pthread_cond_destroy(&priv->capture_cond);
+        pthread_cond_destroy(&priv->cond);
         pthread_mutex_destroy(&priv->lock);
         free(priv);
         return NULL;

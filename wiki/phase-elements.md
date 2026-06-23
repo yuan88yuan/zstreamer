@@ -624,7 +624,7 @@ Video compositor display sink that composites multiple raw video streams into on
 - [x] **Caps metadata**: sink pad template advertises `video/x-raw` for built-in and dynamic plugin introspection
 - [x] **Properties API**: exposes canvas-level typed properties and pad-level layout properties via `sink_N::property` names; includes a public convenience API header
 - [x] **Tests**: factory/property coverage, dynamic pad creation, request-pad API, null-mode multi-input processing, EOS handling per pad and global EOS behavior
-- [x] **GL validation tests**: Xvfb/Mesa smoke test composing two synthetic inputs; pixel readback assertions still pending
+- [x] **GL validation tests**: Xvfb/Mesa smoke test composing two synthetic inputs; pixel readback assertions (z-order, alpha, background, scaling) added via `test_gl_comp_sink.c`
 - [x] **CMake integration**: guarded with `ENABLE_GLCOMPSINK` (default ON when OpenGL/X11 dependencies are available) and shares GL dependency detection with `glsink`
 - [x] **Plugin packaging**: built into `zstreamer-elements` and as dynamic plugin `libzst_glcompsink.so`
 - [x] **Docker test environment**: `Dockerfile.gl` enables `ENABLE_GLCOMPSINK` and runs `test_gl_comp_sink` alongside `test_gl_sink` and `test_core`
@@ -634,7 +634,7 @@ Video compositor display sink that composites multiple raw video streams into on
 - [x] Add input pad removal/release API for READY/PLAYING, not just add/close cleanup.
 - [x] Apply initial fullscreen mode and F11 fullscreen toggle parity with `glsink`.
 - [x] Add stricter layout validation against canvas bounds and richer caps negotiation per pad.
-- [ ] Add pixel readback assertions for z-order, alpha, background, and scaling correctness.
+- [x] Add pixel readback assertions for z-order, alpha, background, and scaling correctness via `zst_gl_comp_sink_capture()` API and `test_gl_comp_sink.c` tests.
 - [x] Implement optional per-input border/background controls.
 
 **Dependencies:** `libx11-dev`, `libxext-dev`, `libgl1-mesa-dev` / `libgl-dev`, `libglx-dev`, `libglu1-mesa-dev`; test environment reuses the `Dockerfile.gl` Xvfb/Mesa setup
