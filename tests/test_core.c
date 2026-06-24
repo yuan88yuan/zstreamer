@@ -30,6 +30,7 @@
 #include "zstreamer/elements/zst_fake_sink.h"
 #include "zstreamer/elements/zst_video_test_src.h"
 #include "zstreamer/elements/zst_audio_test_src.h"
+#include "zstreamer/elements/zst_audio_mixer.h"
 #include "zstreamer/elements/zst_text_overlay.h"
 #include "zstreamer/elements/zst_mp4_muxer.h"
 #include "zst_allocator.h"
@@ -7048,11 +7049,53 @@ test_mixer_sink_push(zst_pad_t* pad, zst_buffer_t* buf)
     (void)pad;
     zst_buffer_t** out_buf = (zst_buffer_t**)pad->priv;
     if (out_buf && !(*out_buf) && !(buf->flags & ZST_BUFFER_FLAG_EOS)) {
-        *out_buf = buf;
-    } else {
-        zst_buffer_unref(buf);
+        *out_buf = zst_buffer_ref(buf);
     }
     return ZST_OK;
+}
+
+static void test_audio_frame_full_destructor(zst_buffer_t* buf)
+{
+    if (buf->memory.data) {
+        free(buf->memory.data);
+        buf->memory.data = NULL;
+    }
+    if (buf->payload) {
+        free(buf->payload);
+        buf->payload = NULL;
+    }
+}
+
+static zst_buffer_t* test_make_f32_audio_buffer(uint32_t samples, uint32_t channels, float value, zst_time_t pts)
+{
+    zst_buffer_t* buf = zst_buffer_create(ZST_BUFFER_AUDIO_FRAME);
+    assert(buf != NULL);
+    zst_audio_frame_t* af = calloc(1, sizeof(*af));
+    assert(af != NULL);
+    float* data = calloc((size_t)samples * channels, sizeof(float));
+    assert(data != NULL);
+    for (uint32_t i = 0; i < samples * channels; i++) data[i] = value;
+    af->sample_rate = 48000;
+    af->channels = channels;
+    af->format = 3; /* F32LE */
+    af->nb_samples = samples;
+    af->data = data;
+    buf->payload = af;
+    buf->memory.data = data;
+    buf->memory.size = (size_t)samples * channels * sizeof(float);
+    buf->pts = pts;
+    buf->duration = samples * 1000000000ULL / 48000ULL;
+    buf->destroy = test_audio_frame_full_destructor;
+    return buf;
+}
+
+static int test_wait_for_mixer_output(zst_buffer_t** out_buf)
+{
+    int retries = 500;
+    while (!*out_buf && retries-- > 0) {
+        usleep(10000);
+    }
+    return *out_buf != NULL;
 }
 
 static void test_audiomixer_pan(void)
@@ -7121,17 +7164,21 @@ static void test_audiomixer_pan(void)
     buf2->memory.size = 8 * sizeof(float);
     buf2->destroy = test_buffer_free_destructor;
 
-    zst_pad_push(in1, buf1);
-    zst_pad_push(in2, buf2);
+    in1->push(in1, buf1);
+    zst_buffer_unref(buf1);
+    in2->push(in2, buf2);
+    zst_buffer_unref(buf2);
 
     /* Push EOS to both to make it flush and stop waiting */
     zst_buffer_t* eos1 = zst_buffer_create(ZST_BUFFER_AUDIO_FRAME);
     eos1->flags |= ZST_BUFFER_FLAG_EOS;
-    zst_pad_push(in1, eos1);
+    in1->push(in1, eos1);
+    zst_buffer_unref(eos1);
 
     zst_buffer_t* eos2 = zst_buffer_create(ZST_BUFFER_AUDIO_FRAME);
     eos2->flags |= ZST_BUFFER_FLAG_EOS;
-    zst_pad_push(in2, eos2);
+    in2->push(in2, eos2);
+    zst_buffer_unref(eos2);
 
     /* Wait for output. The mixer thread should mix them and push */
     int retries = 500;
@@ -7172,6 +7219,153 @@ static void test_audiomixer_pan(void)
     zst_pad_destroy(dummysink);
     zst_element_destroy(mixer);
 
+    PASS();
+}
+
+static void test_audiomixer_alignment_silence(void)
+{
+    TEST("audiomixer PTS alignment fills missing input with silence");
+
+    zst_plugin_registry_init();
+    assert(zst_register_builtin_elements() == ZST_OK);
+
+    zst_element_t* mixer = zst_element_factory_make("audiomixer");
+    assert(mixer != NULL);
+    assert(zst_element_set_property_string(mixer, "latency", "1") == ZST_OK);
+
+    zst_buffer_t* out_buf = NULL;
+    zst_pad_t* dummysink = zst_pad_create("dummysink", ZST_PAD_SINK);
+    dummysink->push = test_mixer_sink_push;
+    dummysink->priv = &out_buf;
+    assert(zst_pad_link(zst_element_get_pad(mixer, "src"), dummysink) == ZST_OK);
+
+    zst_pad_t* in1 = zst_audio_mixer_request_pad(mixer, "in1");
+    zst_pad_t* in2 = zst_audio_mixer_request_pad(mixer, "in2");
+    assert(in1 && in2);
+    assert(zst_element_set_state(mixer, ZST_STATE_PLAYING) == ZST_OK);
+
+    zst_buffer_t* buf = test_make_f32_audio_buffer(8, 2, 0.25f, 0);
+    assert(in1->push(in1, buf) == ZST_OK);
+    zst_buffer_unref(buf);
+
+    assert(test_wait_for_mixer_output(&out_buf));
+    zst_audio_frame_t* af = (zst_audio_frame_t*)out_buf->payload;
+    assert(af && af->format == 3 && af->nb_samples == 8);
+    float* out = (float*)af->data;
+    assert(out[0] > 0.24f && out[0] < 0.26f);
+    assert(out[1] > 0.24f && out[1] < 0.26f);
+    zst_buffer_unref(out_buf);
+
+    zst_audio_mixer_release_pad(mixer, in2);
+    zst_element_set_state(mixer, ZST_STATE_NULL);
+    zst_pad_destroy(dummysink);
+    zst_element_destroy(mixer);
+    PASS();
+}
+
+static void test_audiomixer_max_lateness(void)
+{
+    TEST("audiomixer max-lateness drops late input");
+
+    zst_element_t* mixer = zst_audio_mixer_create();
+    assert(mixer != NULL);
+    zst_clock_t* clock = zst_clock_system_create();
+    assert(clock != NULL);
+    zst_element_set_clock(mixer, clock);
+    zst_clock_unref(clock);
+
+    zst_pad_t* in = zst_audio_mixer_request_pad(mixer, "late");
+    assert(in != NULL);
+    assert(zst_element_set_property_string(mixer, "max-lateness", "1") == ZST_OK);
+    assert(zst_element_set_state(mixer, ZST_STATE_PLAYING) == ZST_OK);
+
+    zst_buffer_t* late = test_make_f32_audio_buffer(8, 2, 0.5f, 1);
+    assert(in->push(in, late) == ZST_OK);
+    zst_buffer_unref(late);
+
+    char value[64];
+    assert(zst_element_get_property(mixer, "dropped-late", value, sizeof(value)) == ZST_OK);
+    assert(strtoull(value, NULL, 10) == 1ULL);
+
+    zst_element_set_state(mixer, ZST_STATE_NULL);
+    zst_element_destroy(mixer);
+    PASS();
+}
+
+static void test_audiomixer_dynamic_pad_release(void)
+{
+    TEST("audiomixer dynamic pad removal while PLAYING");
+
+    zst_element_t* mixer = zst_audio_mixer_create();
+    assert(mixer != NULL);
+    zst_buffer_t* out_buf = NULL;
+    zst_pad_t* dummysink = zst_pad_create("dummysink", ZST_PAD_SINK);
+    dummysink->push = test_mixer_sink_push;
+    dummysink->priv = &out_buf;
+    assert(zst_pad_link(zst_element_get_pad(mixer, "src"), dummysink) == ZST_OK);
+
+    zst_pad_t* keep = zst_audio_mixer_request_pad(mixer, "keep");
+    zst_pad_t* drop = zst_audio_mixer_request_pad(mixer, "drop");
+    assert(keep && drop);
+    assert(zst_element_set_state(mixer, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_audio_mixer_release_pad(mixer, drop) == ZST_OK);
+    assert(zst_element_get_pad(mixer, "drop") == NULL);
+
+    zst_buffer_t* buf = test_make_f32_audio_buffer(8, 2, 0.5f, 0);
+    assert(keep->push(keep, buf) == ZST_OK);
+    zst_buffer_unref(buf);
+    assert(test_wait_for_mixer_output(&out_buf));
+    zst_buffer_unref(out_buf);
+
+    zst_element_set_state(mixer, ZST_STATE_NULL);
+    zst_pad_destroy(dummysink);
+    zst_element_destroy(mixer);
+    PASS();
+}
+
+static void test_audiomixer_audiotestsrc_integration(void)
+{
+    TEST("audiomixer integration with audio_test_src");
+
+    zst_element_t* src = zst_audio_test_src_create();
+    zst_element_t* mixer = zst_audio_mixer_create();
+    assert(src && mixer);
+    assert(zst_element_set_property_string(src, "sample-rate", "48000") == ZST_OK);
+    assert(zst_element_set_property_string(src, "channels", "2") == ZST_OK);
+    assert(zst_element_set_property_string(src, "sample-format", "F32LE") == ZST_OK);
+    assert(zst_element_set_property_string(src, "wave", "sine") == ZST_OK);
+    assert(zst_element_set_property_string(src, "samples-per-buffer", "32") == ZST_OK);
+    assert(zst_element_set_property_string(src, "num-buffers", "1") == ZST_OK);
+    assert(zst_element_set_property_string(src, "real-time-pacing", "false") == ZST_OK);
+
+    zst_pad_t* mix_sink = zst_audio_mixer_request_pad(mixer, "sink_0");
+    assert(mix_sink != NULL);
+    zst_buffer_t* out_buf = NULL;
+    zst_pad_t* dummysink = zst_pad_create("dummysink", ZST_PAD_SINK);
+    dummysink->push = test_mixer_sink_push;
+    dummysink->priv = &out_buf;
+    assert(zst_pad_link(zst_element_get_pad(src, "src"), mix_sink) == ZST_OK);
+    assert(zst_pad_link(zst_element_get_pad(mixer, "src"), dummysink) == ZST_OK);
+
+    assert(zst_element_set_state(src, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_element_set_state(mixer, ZST_STATE_PLAYING) == ZST_OK);
+
+    zst_buffer_t* buf = NULL;
+    assert(src->ops->process(src, NULL, &buf) == ZST_OK);
+    assert(buf != NULL);
+    assert(zst_pad_push(zst_element_get_pad(src, "src"), buf) == ZST_OK);
+    zst_buffer_unref(buf);
+
+    assert(test_wait_for_mixer_output(&out_buf));
+    zst_audio_frame_t* af = (zst_audio_frame_t*)out_buf->payload;
+    assert(af && af->nb_samples == 32 && af->channels == 2 && af->format == 3);
+    zst_buffer_unref(out_buf);
+
+    zst_element_set_state(mixer, ZST_STATE_NULL);
+    zst_element_set_state(src, ZST_STATE_NULL);
+    zst_pad_destroy(dummysink);
+    zst_element_destroy(mixer);
+    zst_element_destroy(src);
     PASS();
 }
 
@@ -7439,6 +7633,10 @@ int main(void)
 
     printf("[audiomixer]\n");
     test_audiomixer_pan();
+    test_audiomixer_alignment_silence();
+    test_audiomixer_max_lateness();
+    test_audiomixer_dynamic_pad_release();
+    test_audiomixer_audiotestsrc_integration();
 
     /* ── Decoders (Phase 4v/4y) ── */
     printf("[decoders]\n");

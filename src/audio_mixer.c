@@ -10,6 +10,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <pthread.h>
+#include <time.h>
+#include <errno.h>
 
 #include "zst_element.h"
 #include "zst_element_factory.h"
@@ -32,10 +34,12 @@ typedef struct {
     char        name[32];
     zst_pad_t*  pad;
     zst_queue_t* queue;
+    zst_buffer_t* pending;
     double      volume;
     double      pan;        /* -1.0 (left) to 1.0 (right) */
     bool        mute;
     bool        eos;
+    bool        active;
 } audio_mixer_input_t;
 
 typedef struct {
@@ -54,7 +58,13 @@ typedef struct {
     uint32_t            sample_rate;
     uint32_t            channels;
     uint32_t            format;     /* 0=S16LE, 3=F32LE */
-    uint32_t            latency;    /* target latency in ms (reserved) */
+    uint32_t            latency;    /* max wait for missing aligned inputs, in ms */
+    zst_time_t          max_lateness; /* QoS drop threshold in ns; 0 disables */
+    uint64_t            dropped_late;
+    uint32_t            block_samples;
+    zst_time_t          block_duration;
+    zst_time_t          next_pts;
+    bool                have_next_pts;
 
     bool                eos_sent;
 } audio_mixer_t;
@@ -119,6 +129,7 @@ zst_audio_mixer_create_with_config(const zst_audio_mixer_config_t* config)
     s->sample_rate = 48000;
     s->channels    = 2;
     s->format      = ZST_AUDIO_FMT_F32LE;
+    s->latency     = 20;
 
     if (config) {
         if (config->latency > 0) s->latency = config->latency;
@@ -154,12 +165,19 @@ audio_mixer_close(zst_element_t* el)
         s->thread = 0;
     }
 
-    /* Destroy per-input queues */
+    /* Destroy per-input queues and pending buffers */
     for (uint32_t i = 0; i < s->num_inputs; i++) {
+        if (s->inputs[i].pending) {
+            zst_buffer_unref(s->inputs[i].pending);
+            s->inputs[i].pending = NULL;
+        }
         if (s->inputs[i].queue) {
             zst_queue_destroy(s->inputs[i].queue);
             s->inputs[i].queue = NULL;
         }
+        s->inputs[i].pad = NULL;
+        s->inputs[i].active = false;
+        s->inputs[i].eos = false;
     }
     s->num_inputs = 0;
 
@@ -169,6 +187,7 @@ audio_mixer_close(zst_element_t* el)
     }
 
     s->eos_sent = false;
+    s->have_next_pts = false;
 
     return ZST_OK;
 }
@@ -179,6 +198,7 @@ audio_mixer_start(zst_element_t* el)
     audio_mixer_t* s = el->priv;
     s->running  = true;
     s->eos_sent = false;
+    s->have_next_pts = false;
     pthread_create(&s->thread, NULL, audio_mixer_worker, el);
     return ZST_OK;
 }
@@ -241,24 +261,32 @@ audio_mixer_sink_push(zst_pad_t* pad, zst_buffer_t* buf)
 
     if (buf->flags & ZST_BUFFER_FLAG_EOS) {
         pthread_mutex_lock(&s->mutex);
-        in->eos = true;
+        if (in->active) in->eos = true;
         pthread_cond_signal(&s->cond);
         pthread_mutex_unlock(&s->mutex);
-        zst_buffer_unref(buf);
         return ZST_OK;
     }
 
-    /* Guard against double-stop (worker may have been stopped while we push) */
-    if (!s->running) {
-        zst_buffer_unref(buf);
+    pthread_mutex_lock(&s->mutex);
+    bool accept = s->running && in->active && in->queue != NULL;
+    zst_time_t max_lateness = s->max_lateness;
+    pthread_mutex_unlock(&s->mutex);
+    if (!accept) {
         return ZST_OK;
     }
 
-    zst_buffer_ref(buf);
+    if (max_lateness > 0 && el->clock && buf->pts > 0) {
+        zst_time_t current = zst_clock_get_time(el->clock);
+        if (current > buf->pts && (current - buf->pts) > max_lateness) {
+            pthread_mutex_lock(&s->mutex);
+            s->dropped_late++;
+            pthread_mutex_unlock(&s->mutex);
+            return ZST_OK;
+        }
+    }
+
     zst_result_t res = zst_queue_push(in->queue, buf, UINT32_MAX);
-    if (res != ZST_OK) {
-        zst_buffer_unref(buf);
-    } else {
+    if (res == ZST_OK) {
         pthread_mutex_lock(&s->mutex);
         pthread_cond_signal(&s->cond);
         pthread_mutex_unlock(&s->mutex);
@@ -272,7 +300,7 @@ static audio_mixer_input_t*
 audio_mixer_find_input_by_name(audio_mixer_t* s, const char* name)
 {
     for (uint32_t i = 0; i < s->num_inputs; i++) {
-        if (strcmp(s->inputs[i].name, name) == 0)
+        if (s->inputs[i].active && strcmp(s->inputs[i].name, name) == 0)
             return &s->inputs[i];
     }
     return NULL;
@@ -327,12 +355,20 @@ zst_audio_mixer_request_pad(zst_element_t* el, const char* name)
 
     pthread_mutex_lock(&s->mutex);
 
-    if (s->num_inputs >= MAX_INPUTS) {
+    uint32_t slot = MAX_INPUTS;
+    for (uint32_t i = 0; i < MAX_INPUTS; i++) {
+        if (!s->inputs[i].active && !s->inputs[i].queue && !s->inputs[i].pad) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot == MAX_INPUTS) {
         pthread_mutex_unlock(&s->mutex);
         return NULL;
     }
 
-    audio_mixer_input_t* in = &s->inputs[s->num_inputs];
+    audio_mixer_input_t* in = &s->inputs[slot];
+    memset(in, 0, sizeof(*in));
     if (name && strlen(name) > 0) {
         strncpy(in->name, name, sizeof(in->name) - 1);
         in->name[sizeof(in->name) - 1] = '\0';
@@ -344,6 +380,7 @@ zst_audio_mixer_request_pad(zst_element_t* el, const char* name)
     in->pan    = 0.0;
     in->mute   = false;
     in->eos    = false;
+    in->active = true;
 
     zst_queue_config_t qcfg = {
         .mode         = ZST_QUEUE_SYNC,
@@ -353,6 +390,7 @@ zst_audio_mixer_request_pad(zst_element_t* el, const char* name)
     };
     in->queue = zst_queue_create(&qcfg);
     if (!in->queue) {
+        in->active = false;
         pthread_mutex_unlock(&s->mutex);
         return NULL;
     }
@@ -360,6 +398,8 @@ zst_audio_mixer_request_pad(zst_element_t* el, const char* name)
     zst_pad_t* pad = zst_pad_create(in->name, ZST_PAD_SINK);
     if (!pad) {
         zst_queue_destroy(in->queue);
+        in->queue = NULL;
+        in->active = false;
         pthread_mutex_unlock(&s->mutex);
         return NULL;
     }
@@ -372,15 +412,55 @@ zst_audio_mixer_request_pad(zst_element_t* el, const char* name)
     if (zst_element_add_pad(el, pad) != ZST_OK) {
         zst_pad_destroy(pad);
         zst_queue_destroy(in->queue);
+        in->pad = NULL;
+        in->queue = NULL;
+        in->active = false;
         pthread_mutex_unlock(&s->mutex);
         return NULL;
     }
 
-    s->num_inputs++;
+    if (slot >= s->num_inputs) s->num_inputs = slot + 1;
     pthread_cond_signal(&s->cond);
     pthread_mutex_unlock(&s->mutex);
 
     return pad;
+}
+
+zst_result_t
+zst_audio_mixer_release_pad(zst_element_t* el, zst_pad_t* pad)
+{
+    if (!el || !el->priv || !pad) return ZST_ERROR;
+    audio_mixer_t* s = el->priv;
+
+    zst_queue_t* queue = NULL;
+    zst_buffer_t* pending = NULL;
+    bool found = false;
+
+    pthread_mutex_lock(&s->mutex);
+    for (uint32_t i = 0; i < s->num_inputs; i++) {
+        audio_mixer_input_t* in = &s->inputs[i];
+        if (in->active && in->pad == pad) {
+            found = true;
+            in->active = false;
+            in->eos = true;
+            queue = in->queue;
+            pending = in->pending;
+            in->queue = NULL;
+            in->pending = NULL;
+            if (in->pad) in->pad->priv = NULL;
+            in->pad = NULL;
+            in->name[0] = '\0';
+            break;
+        }
+    }
+    pthread_cond_signal(&s->cond);
+    pthread_mutex_unlock(&s->mutex);
+
+    if (!found) return ZST_ERROR;
+
+    if (queue) zst_queue_destroy(queue);
+    if (pending) zst_buffer_unref(pending);
+    return zst_element_remove_pad(el, pad);
 }
 
 /* ── Property splitter (pad_name::prop syntax) ───────────────────────── */
@@ -416,8 +496,18 @@ audio_mixer_set_property(zst_element_t* el, const char* name, const char* value)
     } else if (strcmp(name, "request-pad") == 0) {
         zst_pad_t* p = zst_audio_mixer_request_pad(el, (strlen(value) > 0) ? value : NULL);
         return p ? ZST_OK : ZST_ERROR;
+    } else if (strcmp(name, "release-pad") == 0) {
+        zst_pad_t* p = zst_element_get_pad(el, value);
+        return p ? zst_audio_mixer_release_pad(el, p) : ZST_ERROR;
     } else if (strcmp(name, "latency") == 0) {
+        pthread_mutex_lock(&s->mutex);
         s->latency = (uint32_t)strtoul(value, NULL, 10);
+        pthread_mutex_unlock(&s->mutex);
+        return ZST_OK;
+    } else if (strcmp(name, "max-lateness") == 0) {
+        pthread_mutex_lock(&s->mutex);
+        s->max_lateness = (zst_time_t)strtoull(value, NULL, 10);
+        pthread_mutex_unlock(&s->mutex);
         return ZST_OK;
     }
 
@@ -438,7 +528,22 @@ audio_mixer_get_property(zst_element_t* el, const char* name, char* out, size_t 
         pthread_mutex_unlock(&s->mutex);
         return r;
     } else if (strcmp(name, "latency") == 0) {
-        snprintf(out, max, "%u", s->latency);
+        pthread_mutex_lock(&s->mutex);
+        uint32_t latency = s->latency;
+        pthread_mutex_unlock(&s->mutex);
+        snprintf(out, max, "%u", latency);
+        return ZST_OK;
+    } else if (strcmp(name, "max-lateness") == 0) {
+        pthread_mutex_lock(&s->mutex);
+        zst_time_t max_lateness = s->max_lateness;
+        pthread_mutex_unlock(&s->mutex);
+        snprintf(out, max, "%llu", (unsigned long long)max_lateness);
+        return ZST_OK;
+    } else if (strcmp(name, "dropped-late") == 0) {
+        pthread_mutex_lock(&s->mutex);
+        uint64_t dropped = s->dropped_late;
+        pthread_mutex_unlock(&s->mutex);
+        snprintf(out, max, "%llu", (unsigned long long)dropped);
         return ZST_OK;
     }
 
@@ -450,10 +555,49 @@ audio_mixer_get_property(zst_element_t* el, const char* name, char* out, size_t 
 static void
 audio_mixer_buf_free(zst_buffer_t* buf)
 {
-    if (buf && buf->payload) {
+    if (!buf) return;
+    if (!buf->pool && !buf->memory.release && buf->memory.data) {
+        free(buf->memory.data);
+        buf->memory.data = NULL;
+    }
+    if (buf->payload) {
         free(buf->payload);
         buf->payload = NULL;
     }
+}
+
+static zst_time_t
+audio_mixer_samples_to_ns(uint32_t samples, uint32_t rate)
+{
+    if (rate == 0) return 0;
+    return (zst_time_t)(((uint64_t)samples * 1000000000ULL) / rate);
+}
+
+static uint32_t
+audio_mixer_ns_to_samples(zst_time_t ns, uint32_t rate)
+{
+    if (rate == 0) return 0;
+    return (uint32_t)(((uint64_t)ns * rate) / 1000000000ULL);
+}
+
+static int
+audio_mixer_cond_timedwait_ms(pthread_cond_t* cond, pthread_mutex_t* mutex, uint32_t ms)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec += ms / 1000;
+    ts.tv_nsec += (long)(ms % 1000) * 1000000L;
+    if (ts.tv_nsec >= 1000000000L) {
+        ts.tv_sec++;
+        ts.tv_nsec -= 1000000000L;
+    }
+    return pthread_cond_timedwait(cond, mutex, &ts);
+}
+
+static bool
+audio_mixer_input_has_data(audio_mixer_input_t* in)
+{
+    return in && in->active && (in->pending || (in->queue && zst_queue_size(in->queue) > 0));
 }
 
 /* ── Worker thread ───────────────────────────────────────────────────── */
@@ -464,29 +608,30 @@ audio_mixer_worker(void* arg)
     zst_element_t* el = (zst_element_t*)arg;
     audio_mixer_t* s = el->priv;
 
-    zst_buffer_t* in_bufs[MAX_INPUTS];
-
     while (1) {
-        /* ── Wait until all active inputs have data or all are EOS ── */
         pthread_mutex_lock(&s->mutex);
 
         while (s->running) {
-            bool all_ready   = true;
-            bool any_active  = false;
-            bool all_eos     = true;
+            bool all_ready = true;
+            bool any_ready = false;
+            bool all_eos = true;
+            uint32_t active_count = 0;
 
             for (uint32_t i = 0; i < s->num_inputs; i++) {
-                if (s->inputs[i].eos) continue;
+                audio_mixer_input_t* in = &s->inputs[i];
+                if (!in->active) continue;
+                active_count++;
+                bool has_data = audio_mixer_input_has_data(in);
+                if (in->eos && !has_data) continue;
                 all_eos = false;
-                if (zst_queue_size(s->inputs[i].queue) == 0) {
-                    all_ready = false;
+                if (has_data) {
+                    any_ready = true;
                 } else {
-                    any_active = true;
+                    all_ready = false;
                 }
             }
 
-            /* All inputs reached EOS — send EOS downstream and exit */
-            if (all_eos && s->num_inputs > 0) {
+            if (all_eos && active_count > 0) {
                 s->eos_sent = true;
                 pthread_mutex_unlock(&s->mutex);
 
@@ -494,16 +639,23 @@ audio_mixer_worker(void* arg)
                 if (eos_buf) {
                     eos_buf->flags |= ZST_BUFFER_FLAG_EOS;
                     zst_pad_push(s->srcpad, eos_buf);
+                    zst_buffer_unref(eos_buf);
                 }
 
                 pthread_mutex_lock(&s->mutex);
-                /* Break out of the cond-wait loop */
                 goto worker_done;
             }
 
-            /* Some inputs have data and none are missing — start mixing */
-            if (all_ready && any_active) {
-                break;
+            if (any_ready && all_ready) break;
+
+            /* Once the timeline is established, or after the configured
+             * latency window expires, produce a block and fill missing pads
+             * with silence instead of stalling the whole mixer. */
+            if (any_ready && (s->have_next_pts || s->latency > 0)) {
+                if (s->latency == 0) break;
+                int wait_res = audio_mixer_cond_timedwait_ms(&s->cond, &s->mutex, s->latency);
+                if (wait_res == ETIMEDOUT) break;
+                continue;
             }
 
             pthread_cond_wait(&s->cond, &s->mutex);
@@ -514,166 +666,234 @@ audio_mixer_worker(void* arg)
             break;
         }
 
-        /* ── Pop one buffer from each active input ── */
-        memset(in_bufs, 0, sizeof(in_bufs));
-        uint32_t  samples_to_mix = 0;
-        zst_time_t mix_pts       = 0;
-        zst_time_t mix_duration  = 0;
-        bool       have_pts      = false;
+        /* Pull one queued head into each pad's pending slot.  The pending slot
+         * lets us keep a future PTS buffer while generating silence for gaps. */
+        for (uint32_t i = 0; i < s->num_inputs; i++) {
+            audio_mixer_input_t* in = &s->inputs[i];
+            if (!in->active || in->pending || !in->queue) continue;
+            zst_buffer_t* buf = NULL;
+            if (zst_queue_pop(in->queue, &buf, 0) == ZST_OK && buf) {
+                in->pending = buf;
+            }
+        }
+
+        zst_time_t mix_pts = s->have_next_pts ? s->next_pts : 0;
+        bool have_target = s->have_next_pts;
+        uint32_t samples_to_mix = s->block_samples;
+        zst_time_t mix_duration = s->block_duration;
 
         for (uint32_t i = 0; i < s->num_inputs; i++) {
-            if (s->inputs[i].eos) continue;
-            zst_buffer_t* buf = NULL;
-            if (zst_queue_pop(s->inputs[i].queue, &buf, 0) == ZST_OK && buf) {
-                in_bufs[i] = buf;
+            audio_mixer_input_t* in = &s->inputs[i];
+            if (!in->active || !in->pending) continue;
+            zst_audio_frame_t* af = (zst_audio_frame_t*)in->pending->payload;
+            if (!af) continue;
+            zst_time_t pts = in->pending->pts;
+            if (!have_target || pts < mix_pts) {
+                mix_pts = pts;
+                have_target = true;
+            }
+            if (samples_to_mix == 0 && af->nb_samples > 0) {
+                samples_to_mix = af->nb_samples;
+            }
+            if (mix_duration == 0) {
+                mix_duration = in->pending->duration ? in->pending->duration
+                                                     : audio_mixer_samples_to_ns(af->nb_samples, af->sample_rate ? af->sample_rate : s->sample_rate);
+            }
+        }
 
-                zst_audio_frame_t* af = (zst_audio_frame_t*)buf->payload;
-                if (af && af->nb_samples > samples_to_mix) {
-                    samples_to_mix = af->nb_samples;
+        if (!have_target || samples_to_mix == 0) {
+            pthread_mutex_unlock(&s->mutex);
+            continue;
+        }
+        if (mix_duration == 0) mix_duration = audio_mixer_samples_to_ns(samples_to_mix, s->sample_rate);
+        if (mix_duration == 0) mix_duration = 10000000ULL; /* 10ms fallback */
+        s->block_samples = samples_to_mix;
+        s->block_duration = mix_duration;
+
+        /* Drop fully stale pending buffers and replace them with newer queued
+         * data if available.  This is the alignment-side QoS path; the clock
+         * based max-lateness path runs at ingress in audio_mixer_sink_push(). */
+        for (uint32_t i = 0; i < s->num_inputs; i++) {
+            audio_mixer_input_t* in = &s->inputs[i];
+            if (!in->active) continue;
+            bool changed = true;
+            while (changed) {
+                changed = false;
+                if (in->pending) {
+                    zst_audio_frame_t* af = (zst_audio_frame_t*)in->pending->payload;
+                    zst_time_t dur = in->pending->duration;
+                    if (!dur && af) dur = audio_mixer_samples_to_ns(af->nb_samples, af->sample_rate ? af->sample_rate : s->sample_rate);
+                    zst_time_t end = in->pending->pts + dur;
+                    if (dur > 0 && end <= mix_pts) {
+                        zst_buffer_unref(in->pending);
+                        in->pending = NULL;
+                        s->dropped_late++;
+                        changed = true;
+                    }
                 }
-                if (!have_pts && buf->pts > 0) {
-                    mix_pts      = buf->pts;
-                    mix_duration = buf->duration;
-                    have_pts     = true;
+                if (!in->pending && in->queue && zst_queue_pop(in->queue, &in->pending, 0) == ZST_OK && in->pending) {
+                    changed = true;
                 }
             }
         }
 
-        /* ── Mix into a double-precision accumulation buffer ── */
-        double* fmix = NULL;
-        if (samples_to_mix > 0) {
-            fmix = calloc(samples_to_mix * s->channels, sizeof(double));
+        double* fmix = calloc((size_t)samples_to_mix * s->channels, sizeof(double));
+        if (!fmix) {
+            pthread_mutex_unlock(&s->mutex);
+            continue;
         }
 
+        zst_buffer_t* consumed[MAX_INPUTS];
+        memset(consumed, 0, sizeof(consumed));
+
         for (uint32_t i = 0; i < s->num_inputs; i++) {
-            if (!in_bufs[i] || s->inputs[i].mute) {
-                /* Muted or no buffer: skip */
+            audio_mixer_input_t* in = &s->inputs[i];
+            if (!in->active || !in->pending) continue;
+
+            zst_buffer_t* buf = in->pending;
+            zst_audio_frame_t* af = (zst_audio_frame_t*)buf->payload;
+            if (!af || !af->data || af->channels == 0) continue;
+
+            zst_time_t start = buf->pts;
+            if (start > mix_pts) {
+                /* Future buffer: leave it pending and emit silence for this pad. */
                 continue;
             }
 
-            zst_buffer_t*      buf = in_bufs[i];
-            zst_audio_frame_t* af  = (zst_audio_frame_t*)buf->payload;
-            if (!af || !af->data) continue;
-
-            double volume = s->inputs[i].volume;
-            uint32_t n = af->nb_samples * af->channels;
-            if (n > samples_to_mix * s->channels) {
-                n = samples_to_mix * s->channels;
+            if (in->mute) {
+                consumed[i] = in->pending;
+                in->pending = NULL;
+                continue;
             }
+
+            uint32_t offset_samples = 0;
+            if (mix_pts > start) {
+                offset_samples = audio_mixer_ns_to_samples(mix_pts - start, af->sample_rate ? af->sample_rate : s->sample_rate);
+                if (offset_samples >= af->nb_samples) continue;
+            }
+
+            uint32_t available = af->nb_samples - offset_samples;
+            uint32_t frames = available < samples_to_mix ? available : samples_to_mix;
+            uint32_t in_channels = af->channels;
+            uint32_t out_channels = s->channels;
+            double volume = in->volume;
 
             if (af->format == ZST_AUDIO_FMT_S16LE) {
                 int16_t* src = (int16_t*)af->data;
-                for (uint32_t j = 0; j < n; j++) {
-                    double gain = volume;
-                    if (s->channels >= 2) {
-                        uint32_t c = j % s->channels;
-                        if (c == 0) {
-                            gain *= (s->inputs[i].pan <= 0.0 ? 1.0 : (1.0 - s->inputs[i].pan));
-                        } else if (c == 1) {
-                            gain *= (s->inputs[i].pan >= 0.0 ? 1.0 : (1.0 + s->inputs[i].pan));
+                for (uint32_t f = 0; f < frames; f++) {
+                    for (uint32_t c = 0; c < out_channels; c++) {
+                        uint32_t sc = (c < in_channels) ? c : (in_channels - 1);
+                        double gain = volume;
+                        if (out_channels >= 2) {
+                            if (c == 0) gain *= (in->pan <= 0.0 ? 1.0 : (1.0 - in->pan));
+                            else if (c == 1) gain *= (in->pan >= 0.0 ? 1.0 : (1.0 + in->pan));
                         }
+                        size_t si = ((size_t)offset_samples + f) * in_channels + sc;
+                        size_t di = (size_t)f * out_channels + c;
+                        fmix[di] += ((double)src[si] / 32768.0) * gain;
                     }
-                    fmix[j] += ((double)src[j] / 32768.0) * gain;
                 }
             } else if (af->format == ZST_AUDIO_FMT_F32LE) {
                 float* src = (float*)af->data;
-                for (uint32_t j = 0; j < n; j++) {
-                    double gain = volume;
-                    if (s->channels >= 2) {
-                        uint32_t c = j % s->channels;
-                        if (c == 0) {
-                            gain *= (s->inputs[i].pan <= 0.0 ? 1.0 : (1.0 - s->inputs[i].pan));
-                        } else if (c == 1) {
-                            gain *= (s->inputs[i].pan >= 0.0 ? 1.0 : (1.0 + s->inputs[i].pan));
+                for (uint32_t f = 0; f < frames; f++) {
+                    for (uint32_t c = 0; c < out_channels; c++) {
+                        uint32_t sc = (c < in_channels) ? c : (in_channels - 1);
+                        double gain = volume;
+                        if (out_channels >= 2) {
+                            if (c == 0) gain *= (in->pan <= 0.0 ? 1.0 : (1.0 - in->pan));
+                            else if (c == 1) gain *= (in->pan >= 0.0 ? 1.0 : (1.0 + in->pan));
                         }
+                        size_t si = ((size_t)offset_samples + f) * in_channels + sc;
+                        size_t di = (size_t)f * out_channels + c;
+                        fmix[di] += (double)src[si] * gain;
                     }
-                    fmix[j] += (double)src[j] * gain;
                 }
             }
+
+            /* This implementation consumes one complete input buffer per mixed
+             * block.  Future buffers remain pending; gaps are filled above. */
+            consumed[i] = in->pending;
+            in->pending = NULL;
         }
 
         pthread_mutex_unlock(&s->mutex);
 
-        /* ── Build and push the output buffer (mutex is unlocked) ── */
-        if (samples_to_mix > 0 && fmix) {
-            zst_buffer_t* out_buf = zst_buffer_create_with_pool(s->pool);
-            if (!out_buf) {
-                /* Fallback: allocate manually */
-                out_buf = zst_buffer_create(ZST_BUFFER_AUDIO_FRAME);
-                if (out_buf) {
-                    zst_audio_frame_t* oaf = calloc(1, sizeof(zst_audio_frame_t));
-                    if (!oaf) {
-                        zst_buffer_unref(out_buf);
-                        out_buf = NULL;
-                    } else {
-                        uint32_t bpf = (s->format == ZST_AUDIO_FMT_S16LE) ? 2 : 4;
-                        size_t data_size = (size_t)samples_to_mix * s->channels * bpf;
-                        out_buf->payload = oaf;
-                        out_buf->destroy = audio_mixer_buf_free;
-                        out_buf->memory.data = calloc(1, data_size);
-                        out_buf->memory.size = data_size;
-                        oaf->data        = out_buf->memory.data;
-                        oaf->sample_rate = s->sample_rate;
-                        oaf->channels    = s->channels;
-                        oaf->format      = s->format;
-                        oaf->nb_samples  = samples_to_mix;
-                    }
-                }
-            } else {
-                /* Pool provided the buffer — ensure payload is set up */
-                zst_audio_frame_t* oaf = (zst_audio_frame_t*)out_buf->payload;
+        zst_buffer_t* out_buf = zst_buffer_create_with_pool(s->pool);
+        if (!out_buf) {
+            out_buf = zst_buffer_create(ZST_BUFFER_AUDIO_FRAME);
+            if (out_buf) {
+                zst_audio_frame_t* oaf = calloc(1, sizeof(zst_audio_frame_t));
                 if (!oaf) {
-                    oaf = calloc(1, sizeof(zst_audio_frame_t));
+                    zst_buffer_unref(out_buf);
+                    out_buf = NULL;
+                } else {
+                    uint32_t bpf = (s->format == ZST_AUDIO_FMT_S16LE) ? 2 : 4;
+                    size_t data_size = (size_t)samples_to_mix * s->channels * bpf;
                     out_buf->payload = oaf;
                     out_buf->destroy = audio_mixer_buf_free;
+                    out_buf->memory.data = calloc(1, data_size);
+                    out_buf->memory.size = data_size;
+                    oaf->data        = out_buf->memory.data;
+                    oaf->sample_rate = s->sample_rate;
+                    oaf->channels    = s->channels;
+                    oaf->format      = s->format;
+                    oaf->nb_samples  = samples_to_mix;
                 }
+            }
+        } else {
+            zst_audio_frame_t* oaf = (zst_audio_frame_t*)out_buf->payload;
+            if (!oaf) {
+                oaf = calloc(1, sizeof(zst_audio_frame_t));
+                out_buf->payload = oaf;
+                out_buf->destroy = audio_mixer_buf_free;
+            }
+            if (oaf) {
                 oaf->sample_rate = s->sample_rate;
                 oaf->channels    = s->channels;
                 oaf->format      = s->format;
                 oaf->nb_samples  = samples_to_mix;
                 oaf->data        = out_buf->memory.data;
             }
+        }
 
-            if (out_buf) {
-                out_buf->pts      = mix_pts;
-                out_buf->duration = mix_duration;
+        if (out_buf) {
+            out_buf->pts      = mix_pts;
+            out_buf->duration = mix_duration;
 
-                zst_audio_frame_t* oaf = (zst_audio_frame_t*)out_buf->payload;
-                if (oaf && oaf->data) {
-                    if (s->format == ZST_AUDIO_FMT_S16LE) {
-                        int16_t* dst = (int16_t*)oaf->data;
-                        for (uint32_t j = 0; j < samples_to_mix * s->channels; j++) {
-                            double val = fmix[j];
-                            if (val > 1.0)  val = 1.0;
-                            if (val < -1.0) val = -1.0;
-                            dst[j] = (int16_t)(val * 32767.0);
-                        }
-                    } else { /* F32LE */
-                        float* dst = (float*)oaf->data;
-                        for (uint32_t j = 0; j < samples_to_mix * s->channels; j++) {
-                            double val = fmix[j];
-                            if (val > 1.0)  val = 1.0;
-                            if (val < -1.0) val = -1.0;
-                            dst[j] = (float)val;
-                        }
+            zst_audio_frame_t* oaf = (zst_audio_frame_t*)out_buf->payload;
+            if (oaf && oaf->data) {
+                if (s->format == ZST_AUDIO_FMT_S16LE) {
+                    int16_t* dst = (int16_t*)oaf->data;
+                    for (uint32_t j = 0; j < samples_to_mix * s->channels; j++) {
+                        double val = fmix[j];
+                        if (val > 1.0)  val = 1.0;
+                        if (val < -1.0) val = -1.0;
+                        dst[j] = (int16_t)(val * 32767.0);
+                    }
+                } else {
+                    float* dst = (float*)oaf->data;
+                    for (uint32_t j = 0; j < samples_to_mix * s->channels; j++) {
+                        double val = fmix[j];
+                        if (val > 1.0)  val = 1.0;
+                        if (val < -1.0) val = -1.0;
+                        dst[j] = (float)val;
                     }
                 }
-
-                zst_pad_push(s->srcpad, out_buf);
             }
 
-            free(fmix);
+            zst_pad_push(s->srcpad, out_buf);
+            zst_buffer_unref(out_buf);
         }
 
-        /* Release input buffers */
-        for (uint32_t i = 0; i < s->num_inputs; i++) {
-            if (in_bufs[i]) {
-                zst_buffer_unref(in_bufs[i]);
-            }
-        }
+        pthread_mutex_lock(&s->mutex);
+        s->next_pts = mix_pts + mix_duration;
+        s->have_next_pts = true;
+        pthread_mutex_unlock(&s->mutex);
 
-        /* If all inputs are now EOS (checked without lock, approximate),
-         * continue the loop — the top will send EOS on next iteration. */
+        for (uint32_t i = 0; i < MAX_INPUTS; i++) {
+            if (consumed[i]) zst_buffer_unref(consumed[i]);
+        }
+        free(fmix);
         continue;
 
     worker_done:

@@ -651,7 +651,7 @@ Video compositor display sink that composites multiple raw video streams into on
 
 ---
 
-### 4am — Audio Mixer (audiomixer)  (✅ Basic implementation)
+### 4am — Audio Mixer (audiomixer)  (✅ Done)
 
 Audio mixing element that accepts multiple synchronized audio frame streams and generates one mixed audio output stream. This is a transform/aggregator element, not a terminal sink: it has multiple input pads and one source pad for downstream encoders, sinks, or muxers.
 
@@ -671,12 +671,12 @@ Audio mixing element that accepts multiple synchronized audio frame streams and 
 
 **Dependencies:** core zstreamer audio frame APIs only.  ASRC for asynchronous inputs requires inserting `audioresampler asrc-mode=pts` upstream.
 
-**Follow-ups (not yet implemented):**
+**Follow-ups (completed):**
 - [x] Per-pad `pan`/balance
-- [ ] PTS-based input alignment with silence fill for missing/late inputs
-- [ ] Latency/QoS: `max-lateness` dropping
-- [ ] Dynamic pad removal during PLAYING
-- [ ] Dedicated integration tests with `audio_test_src`
+- [x] PTS-based input alignment with silence fill for missing/late inputs
+- [x] Latency/QoS: `max-lateness` dropping
+- [x] Dynamic pad removal during PLAYING
+- [x] Dedicated integration tests with `audio_test_src`
 
 ---
 
