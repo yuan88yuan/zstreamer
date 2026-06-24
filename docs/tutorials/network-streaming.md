@@ -24,11 +24,11 @@ Let's look at the complete C program to set this up.
 ```c
 #include <stdio.h>
 #include <stdlib.h>
-#include "zstreamer/zst_pipeline.h"
-#include "zstreamer/zst_scheduler.h"
-#include "zstreamer/zst_element_factory.h"
-#include "zstreamer/zst_pad.h"
-#include "zstreamer/zst_bus.h"
+#include <zstreamer/zst_pipeline.h>
+#include <zstreamer/zst_scheduler.h>
+#include <zstreamer/zst_element_factory.h>
+#include <zstreamer/zst_pad.h>
+#include <zstreamer/zst_bus.h>
 
 int main() {
     // 1. Initialization

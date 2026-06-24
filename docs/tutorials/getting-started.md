@@ -22,11 +22,11 @@ First, we need to include the necessary zstreamer headers and initialize the bui
 ```c
 #include <stdio.h>
 #include <stdlib.h>
-#include "zstreamer/zst_pipeline.h"
-#include "zstreamer/zst_scheduler.h"
-#include "zstreamer/zst_element_factory.h"
-#include "zstreamer/zst_pad.h"
-#include "zstreamer/zst_bus.h"
+#include <zstreamer/zst_pipeline.h>
+#include <zstreamer/zst_scheduler.h>
+#include <zstreamer/zst_element_factory.h>
+#include <zstreamer/zst_pad.h>
+#include <zstreamer/zst_bus.h>
 
 int main() {
     // Register built-in elements like v4l2src, x264enc, etc.
