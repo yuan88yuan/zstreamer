@@ -22,7 +22,7 @@ All phases are now documented in separate files for easier maintenance.
 | Post-P0 | [OpenGL Sink](phase-elements.md#4ak--opengl-sink-glsink) | ~45 | ✅ Initial implementation; review follow-ups tracked |
 | Post-P0 | [OpenGL Compositor Sink](phase-elements.md#4al--opengl-compositor-sink-glcompsink) | ~25 | ✅ Initial implementation; follow-ups tracked |
 | Post-P0 | [Audio Mixer](phase-elements.md#4am--audio-mixer-audiomixer) | ~25 | ✅ Implemented (basic synchronous mixer) |
-| Post-P0 | [SDP Muxer](phase-elements.md#4an--sdp-muxer--generator-sdpmuxer) | ~25 | 🔄 Initial implementation started |
+| Post-P0 | [SDP Muxer](phase-elements.md#4an--sdp-muxer--generator-sdpmuxer) | ~25 | ✅ Done |
 | Post-P0 | [ASRC Drift Compensation](phase-advanced.md#asrc-drift-compensation-in-audioresampler) | ~50 | ✅ Implemented (PTS-based drift compensation in audioresampler; passthrough bypass fix for ASRC with equal nominal rates) |
 | Post-P0 | [Fractional Rate Override](phase-advanced.md#fractional-rate-override-rate-numer--rate-denom) | ~30 | ✅ Implemented (rate-numer/rate-denom properties on audioresampler for explicit fractional target rates) |
 | Post-P0 | VA-API Encoder DMABUF zero-copy import path | ~TBD | ✅ Done |
@@ -40,7 +40,7 @@ All phases are now documented in separate files for easier maintenance.
 | Scheduler (2) | ✅ Done | Topological sort, push/pull, EOS |
 | Queue Element (3) | ✅ Done | First-class queue with worker thread |
 | Logging (3.5) | ✅ Done | Compile-time log levels, thread-safe |
-| Elements (4) | ✅ Done + ongoing | 40 elements implemented/started; sdpmuxer initial implementation added; audiomixer implemented as synchronous mixer; ASRC drift compensation + passthrough bypass fix + fractional rate override added to audioresampler; glcompsink has initial implementation |
+| Elements (4) | ✅ Done + ongoing | 40 elements implemented/started; sdpmuxer implementation completed with caps-derived defaults, SDP file output, additional payload descriptions, and tests; audiomixer implemented as synchronous mixer; ASRC drift compensation + passthrough bypass fix + fractional rate override added to audioresampler; glcompsink has initial implementation |
 | Caps Negotiation (5) | ✅ Done | Intersection, auto-negotiation |
 | Event Bus (6) | ✅ Done | Error/state/EOS notifications |
 | Dynamic Plugins (7) | ✅ Done | dlopen-based loading |

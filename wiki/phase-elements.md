@@ -680,25 +680,29 @@ Audio mixing element that accepts multiple synchronized audio frame streams and 
 
 ---
 
-### 4an — SDP Muxer / Generator (`sdpmuxer`)  (🔄 Initial implementation started)
+### 4an — SDP Muxer / Generator (`sdpmuxer`)  (✅ Done)
 
-Generates Session Description Protocol (SDP) text for RTP-oriented H.264/H.265/AAC sessions. This complements `sdpdemux`: `sdpmuxer` describes media streams and RTP payload mappings, while transport/RTP packetization remains the responsibility of RTSP/RTP-capable elements.
+Generates Session Description Protocol (SDP) text for RTP-oriented media sessions. This complements `sdpdemux`: `sdpmuxer` describes media streams, RTP payload mappings, and optional out-of-band codec configuration, while transport/RTP packetization remains the responsibility of RTSP/RTP-capable elements.
+
+**Implementation status:** complete for the currently supported SDP-generator role. The element is implemented in core + dynamic-plugin form, has public API coverage, can generate in-memory and file-backed SDP, derives useful defaults from negotiated caps, extracts common codec setup data from observed buffers, and now has dedicated unit/plugin-introspection coverage. SDP generation for newer codecs is present, but end-to-end streaming for those codecs still depends on matching RTP packetizer/depacketizer support elsewhere in the pipeline.
 
 - [x] `sdpmuxer` element with optional `video` and `audio` sink pads plus one `src` pad emitting `application/sdp`
 - [x] Generate core SDP lines: `v=`, `o=`, `s=`, `c=`, `t=`, media sections, `rtpmap`, `fmtp`, and `control`
-- [x] Configurable properties: address, session name, video codec, enable/disable video/audio, RTP ports, payload types, AAC sample rate/channels, and `emit-once`
+- [x] Configurable properties: address, session name, video/audio codec, enable/disable video/audio, RTP ports, payload types, AAC sample rate/channels, optional SDP file output path, and `emit-once`
 - [x] H.264 SDP: `H264/90000`, `packetization-mode=1`, and optional `sprop-parameter-sets` extracted from Annex-B SPS/PPS observed on the video sink
 - [x] H.265 SDP: `H265/90000` and optional `sprop-vps`, `sprop-sps`, `sprop-pps` extracted from Annex-B VPS/SPS/PPS
 - [x] AAC SDP: `MPEG4-GENERIC/<rate>/<channels>` with AAC-hbr fmtp and generated/observed AudioSpecificConfig
 - [x] Public header: `include/zstreamer/elements/zst_sdp_muxer.h`
 - [x] CMake integration: built into `zstreamer-elements` and as dynamic plugin `libzst_sdpmuxer.so`
 - [x] Factory registration: registered in `zst_builtins.c` under factory name `"sdpmuxer"` (`"sdpmux"` alias)
+- [x] Caps-aware defaults: derives video/audio codec, AAC sample rate/channels, H.264 profile-level-id/sprop fields, H.265 sprop fields, and AAC codec data from negotiated sink-pad caps when present
+- [x] Additional SDP payload descriptions: VP8, VP9, AV1, Opus, PCMU, PCMA, and L16/PCM can be generated when selected by properties or caps
 - [x] Basic unit test for default H.264 + AAC SDP generation and configurable properties
 - [x] Demo: `demo_sdp_multicast` shows `sdpmuxer` + test sources + H.264/AAC RTP multicast and `sdpdemuxer` + fakesinks receiving from the generated SDP
 
-**Follow-ups:**
-- [ ] Add dedicated unit tests for H.264/H.265 parameter-set extraction, AAC ADTS config extraction, and plugin introspection
-- [ ] Derive codec/track defaults from negotiated caps once caps metadata carries stream-format/profile-level details
-- [ ] Add optional SDP file output property for offline publishing workflows
-- [ ] Support additional RTP payloads (Opus, PCMU/PCMA, VP8/VP9/AV1) when matching depacketizers/packetizers are available
+**Follow-ups (completed):**
+- [x] Add dedicated unit tests for H.264/H.265 parameter-set extraction, AAC ADTS config extraction, and plugin introspection
+- [x] Derive codec/track defaults from negotiated caps once caps metadata carries stream-format/profile-level details
+- [x] Add optional SDP file output property for offline publishing workflows
+- [x] Support additional RTP payload descriptions (Opus, PCMU/PCMA, VP8/VP9/AV1) when selected by properties/caps; matching RTP packetizer/depacketizer support remains the responsibility of the transport payload elements
 

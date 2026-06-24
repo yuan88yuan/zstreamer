@@ -223,8 +223,8 @@ static const zst_pad_template_t g_pad_rtsp_server[]  = {
     { "video_%u", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-h264" }, { "audio_%u", ZST_PAD_SINK, ZST_PAD_ALWAYS, "audio/x-aac" }
 };
 static const zst_pad_template_t g_pad_sdpmuxer[] = {
-    { "video", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-h264;video/x-h265" },
-    { "audio", ZST_PAD_SINK, ZST_PAD_ALWAYS, "audio/aac" },
+    { "video", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-h264;video/x-h265;video/x-vp8;video/x-vp9;video/x-av1" },
+    { "audio", ZST_PAD_SINK, ZST_PAD_ALWAYS, "audio/aac;audio/opus;audio/PCMU;audio/PCMA;audio/L16" },
     { "src",   ZST_PAD_SRC,  ZST_PAD_ALWAYS, "application/sdp" }
 };
 static const zst_pad_template_t g_pad_rtppay[] = {
@@ -544,7 +544,9 @@ static const zst_property_spec_t g_builtin_sdpmuxer_props[] = {
     { "sdp", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE, "", "Generated SDP text" },
     { "address", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "127.0.0.1", "Connection address for c=/o= lines" },
     { "session-name", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "zstreamer", "SDP session name" },
-    { "video-codec", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "h264", "Video codec: h264 or h265" },
+    { "sdp-file", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Optional path to write generated SDP" },
+    { "video-codec", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "h264", "Video codec: h264, h265, vp8, vp9, or av1" },
+    { "audio-codec", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "aac", "Audio codec: aac, opus, pcmu, pcma, or l16" },
     { "enable-video", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "true", "Include video media section" },
     { "enable-audio", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Include audio media section" },
     { "video-port", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5004", "Video RTP port" },

@@ -5214,6 +5214,170 @@ test_sdp_muxer_properties(void)
     PASS();
 }
 
+static void
+test_sdp_muxer_parameter_extraction(void)
+{
+    TEST("sdp_muxer extracts H.264/H.265 parameter sets and AAC ADTS config");
+
+    char sdp[4096];
+
+    zst_element_t* h264 = zst_sdp_muxer_create();
+    assert(h264 != NULL);
+    zst_pad_t* vpad = zst_element_get_pad(h264, "video");
+    assert(vpad != NULL);
+    uint8_t h264_au[] = {
+        0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1f, 0x95, 0xa8,
+        0x00, 0x00, 0x00, 0x01, 0x68, 0xce, 0x06, 0xe2
+    };
+    zst_buffer_t* b = zst_buffer_create(ZST_BUFFER_VIDEO_PACKET);
+    assert(b != NULL);
+    b->memory.data = h264_au;
+    b->memory.size = sizeof(h264_au);
+    assert(vpad->push(vpad, b) == ZST_OK);
+    zst_buffer_unref(b);
+    assert(zst_element_get_property(h264, "sdp", sdp, sizeof(sdp)) == ZST_OK);
+    assert(strstr(sdp, "a=rtpmap:96 H264/90000\r\n") != NULL);
+    assert(strstr(sdp, "sprop-parameter-sets=") != NULL);
+    zst_element_destroy(h264);
+
+    zst_element_t* h265 = zst_sdp_muxer_create();
+    assert(h265 != NULL);
+    assert(zst_element_set_property(h265, "video-codec", "h265") == ZST_OK);
+    vpad = zst_element_get_pad(h265, "video");
+    assert(vpad != NULL);
+    uint8_t h265_au[] = {
+        0x00, 0x00, 0x00, 0x01, 0x40, 0x01, 0x0c, 0x01,
+        0x00, 0x00, 0x00, 0x01, 0x42, 0x01, 0x01, 0x60,
+        0x00, 0x00, 0x00, 0x01, 0x44, 0x01, 0xc0
+    };
+    b = zst_buffer_create(ZST_BUFFER_VIDEO_PACKET);
+    assert(b != NULL);
+    b->memory.data = h265_au;
+    b->memory.size = sizeof(h265_au);
+    assert(vpad->push(vpad, b) == ZST_OK);
+    zst_buffer_unref(b);
+    assert(zst_element_get_property(h265, "sdp", sdp, sizeof(sdp)) == ZST_OK);
+    assert(strstr(sdp, "a=rtpmap:96 H265/90000\r\n") != NULL);
+    assert(strstr(sdp, "sprop-vps=") != NULL);
+    assert(strstr(sdp, "sprop-sps=") != NULL);
+    assert(strstr(sdp, "sprop-pps=") != NULL);
+    zst_element_destroy(h265);
+
+    zst_element_t* aac = zst_sdp_muxer_create();
+    assert(aac != NULL);
+    assert(zst_element_set_property(aac, "enable-video", "false") == ZST_OK);
+    zst_pad_t* apad = zst_element_get_pad(aac, "audio");
+    assert(apad != NULL);
+    uint8_t adts[] = { 0xff, 0xf1, 0x50, 0x80, 0x01, 0x7f, 0xfc, 0x00 };
+    b = zst_buffer_create(ZST_BUFFER_AUDIO_PACKET);
+    assert(b != NULL);
+    b->memory.data = adts;
+    b->memory.size = sizeof(adts);
+    assert(apad->push(apad, b) == ZST_OK);
+    zst_buffer_unref(b);
+    assert(zst_element_get_property(aac, "sdp", sdp, sizeof(sdp)) == ZST_OK);
+    assert(strstr(sdp, "a=rtpmap:97 MPEG4-GENERIC/44100/2\r\n") != NULL);
+    assert(strstr(sdp, "config=1210") != NULL);
+    zst_element_destroy(aac);
+
+    PASS();
+}
+
+static void
+test_sdp_muxer_caps_file_and_payloads(void)
+{
+    TEST("sdp_muxer derives defaults from caps, writes SDP files, and describes extra RTP payloads");
+
+    zst_element_t* mux = zst_sdp_muxer_create();
+    assert(mux != NULL);
+    assert(zst_element_set_property(mux, "enable-audio", "true") == ZST_OK);
+
+    zst_pad_t* vpad = zst_element_get_pad(mux, "video");
+    zst_pad_t* apad = zst_element_get_pad(mux, "audio");
+    assert(vpad != NULL && apad != NULL);
+
+    zst_caps_t* vcaps = zst_caps_new_simple("video/x-vp9");
+    assert(vcaps != NULL);
+    assert(zst_pad_set_caps(vpad, vcaps) == ZST_OK);
+    zst_caps_destroy(vcaps);
+
+    zst_caps_t* acaps = zst_caps_create();
+    assert(acaps != NULL);
+    zst_caps_append(acaps, zst_caps_struct_create_audio("audio/opus", 2, 48000, ""));
+    assert(zst_pad_set_caps(apad, acaps) == ZST_OK);
+    zst_caps_destroy(acaps);
+
+    uint8_t dummy = 0;
+    zst_buffer_t* b = zst_buffer_create(ZST_BUFFER_VIDEO_PACKET);
+    assert(b != NULL);
+    b->memory.data = &dummy;
+    b->memory.size = 1;
+    assert(vpad->push(vpad, b) == ZST_OK);
+    zst_buffer_unref(b);
+
+    b = zst_buffer_create(ZST_BUFFER_AUDIO_PACKET);
+    assert(b != NULL);
+    b->memory.data = &dummy;
+    b->memory.size = 1;
+    assert(apad->push(apad, b) == ZST_OK);
+    zst_buffer_unref(b);
+
+    char path[] = "/tmp/zstreamer-sdpmuxer-XXXXXX";
+    int fd = mkstemp(path);
+    assert(fd >= 0);
+    close(fd);
+    assert(zst_element_set_property(mux, "sdp-file", path) == ZST_OK);
+
+    char sdp[4096];
+    assert(zst_element_get_property(mux, "sdp", sdp, sizeof(sdp)) == ZST_OK);
+    assert(strstr(sdp, "a=rtpmap:96 VP9/90000\r\n") != NULL);
+    assert(strstr(sdp, "a=rtpmap:97 OPUS/48000/2\r\n") != NULL);
+
+    FILE* fp = fopen(path, "rb");
+    assert(fp != NULL);
+    char file_sdp[4096];
+    size_t n = fread(file_sdp, 1, sizeof(file_sdp) - 1, fp);
+    fclose(fp);
+    file_sdp[n] = '\0';
+    assert(strcmp(file_sdp, sdp) == 0);
+
+    assert(zst_element_set_property(mux, "video-codec", "av1") == ZST_OK);
+    assert(zst_element_set_property(mux, "audio-codec", "pcmu") == ZST_OK);
+    assert(zst_element_get_property(mux, "sdp", sdp, sizeof(sdp)) == ZST_OK);
+    assert(strstr(sdp, "a=rtpmap:96 AV1/90000\r\n") != NULL);
+    assert(strstr(sdp, "a=rtpmap:97 PCMU/8000/1\r\n") != NULL);
+    unlink(path);
+
+    zst_element_destroy(mux);
+    PASS();
+}
+
+static void
+test_sdp_muxer_plugin_introspection(void)
+{
+    TEST("sdp_muxer plugin introspection metadata");
+
+    zst_plugin_registry_init();
+    zst_plugin_registry_scan(test_plugin_path());
+    const zst_element_desc_t* desc = zst_element_factory_get_desc("sdpmuxer");
+    assert(desc != NULL);
+    assert(desc->nb_pads == 3);
+    assert(desc->nb_properties >= 15);
+
+    int saw_sdp_file = 0;
+    int saw_audio_codec = 0;
+    for (uint32_t i = 0; i < desc->nb_properties; i++) {
+        if (strcmp(desc->properties[i].name, "sdp-file") == 0) saw_sdp_file = 1;
+        if (strcmp(desc->properties[i].name, "audio-codec") == 0) saw_audio_codec = 1;
+    }
+    assert(saw_sdp_file && saw_audio_codec);
+    assert(strstr(desc->pads[0].caps, "video/x-h265") != NULL);
+    assert(strstr(desc->pads[0].caps, "video/x-vp9") != NULL);
+    assert(strstr(desc->pads[1].caps, "audio/opus") != NULL);
+
+    PASS();
+}
+
 /* ═══════════════════════════════════════════════════════════════
    Fake Sink Tests
    ═══════════════════════════════════════════════════════════════ */
@@ -7324,6 +7488,9 @@ int main(void)
 
     printf("[sdp/rtp]\n");
     test_sdp_muxer_properties();
+    test_sdp_muxer_parameter_extraction();
+    test_sdp_muxer_caps_file_and_payloads();
+    test_sdp_muxer_plugin_introspection();
     test_rtp_payloader();
 
     printf("[fakesink]\n");
