@@ -693,15 +693,15 @@ Tasks:
 Add tests for:
 
 - [x] Pad added while `PLAYING`. (Tested in `tests/test_core.c` via TS/MP4 demuxer elements)
-- [ ] Pad removed while `PLAYING`.
-- [ ] Caps changed while `PLAYING`.
-- [ ] Signal lost / signal present events.
+- [x] Pad removed while `PLAYING`. (Tested in `tests/test_dynamic.c`)
+- [x] Caps changed while `PLAYING`. (Tested in `tests/test_dynamic.c`)
+- [x] Signal lost / signal present events. (Tested in `tests/test_dynamic.c`)
 - [x] Application links a pad after it appears. (Tested in `tests/test_core.c` via `test_mpegts_elements`)
 - [x] Sticky caps/stream/segment events are replayed after late linking. (Tested in `tests/test_dynamic.c`)
-- [ ] Multi-thread scheduler does not crash during dynamic pad removal.
-- [ ] Unlinked pad policies: drop, block, queue.
-- [ ] MPEG-TS PMT changes and stream count changes.
-- [ ] MP4 fragmented-stream late track discovery.
+- [x] Multi-thread scheduler does not crash during dynamic pad removal. (Tested in `tests/test_dynamic.c`)
+- [x] Unlinked pad policies: drop, block, queue. (Tested in `tests/test_dynamic.c`)
+- [x] MPEG-TS PMT changes and stream count changes. (Tested in `tests/test_dynamic.c`)
+- [x] MP4 fragmented-stream late track discovery. (Tested in `tests/test_dynamic.c`)
 
 ---
 
