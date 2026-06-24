@@ -34,6 +34,7 @@ zst_scheduler_attach(zst_scheduler_t* sched, zst_pipeline_t* pipe)
 {
     if (!sched || !pipe) return ZST_ERROR;
     sched->pipeline = pipe;
+    pipe->priv = sched;
     return ZST_OK;
 }
 
@@ -52,13 +53,32 @@ zst_scheduler_queue_task(zst_scheduler_t* sched, zst_element_t* el)
      * task token (`sched_token`) embedded directly within the element structure. */
     zst_buffer_t* token = el->sched_token ? zst_buffer_ref(el->sched_token) : NULL;
     if (token) {
-        if (zst_queue_push(p->ready_queue, token, 0) != ZST_OK) {
+        atomic_fetch_add_explicit(&el->sched_task_refs, 1, memory_order_acq_rel);
+        if (zst_queue_push(p->ready_queue, token, 0) == ZST_OK) {
+            /* zst_queue_push() takes its own reference for the queued slot. */
+            zst_buffer_unref(token);
+        } else {
+            atomic_fetch_sub_explicit(&el->sched_task_refs, 1, memory_order_acq_rel);
             zst_buffer_unref(token);
             atomic_store_explicit(&el->is_queued, false, memory_order_release);
         }
     } else {
         atomic_store_explicit(&el->is_queued, false, memory_order_release);
     }
+}
+
+static void
+zst_scheduler_release_task_buffer(zst_buffer_t* task_buffer, bool reset_queued)
+{
+    if (!task_buffer) return;
+    zst_element_t* el = (zst_element_t*)task_buffer->memory.priv;
+    if (el) {
+        if (reset_queued) {
+            atomic_store_explicit(&el->is_queued, false, memory_order_release);
+        }
+        atomic_fetch_sub_explicit(&el->sched_task_refs, 1, memory_order_acq_rel);
+    }
+    zst_buffer_unref(task_buffer);
 }
 
 static void 
@@ -163,7 +183,7 @@ worker_pool_loop(void* arg)
             if (el && sched->pipeline) {
                 execute_element_task(sched, el, sched->pipeline);
             }
-            zst_buffer_unref(task_buffer);
+            zst_scheduler_release_task_buffer(task_buffer, false);
         } else {
             zst_pipeline_t* pipe = sched->pipeline;
             if (pipe) {
@@ -303,6 +323,49 @@ zst_scheduler_stop(zst_scheduler_t* sched)
         free(p->threads);
         p->threads = NULL;
         p->nb_threads = 0;
+    }
+
+    /* Discard any source tasks that were still queued but not picked up before
+     * workers exited, releasing the corresponding element task references. */
+    zst_buffer_t* task_buffer = NULL;
+    while (zst_queue_pop(p->ready_queue, &task_buffer, 0) == ZST_OK) {
+        zst_scheduler_release_task_buffer(task_buffer, true);
+        task_buffer = NULL;
+    }
+    return ZST_OK;
+}
+
+zst_result_t
+zst_scheduler_wake(zst_scheduler_t* sched)
+{
+    if (!sched) return ZST_ERROR;
+    sched_priv_t* p = sched->priv;
+    if (!p || !atomic_load_explicit(&p->running, memory_order_acquire)) return ZST_OK;
+
+    zst_pipeline_t* pipe = sched->pipeline;
+    if (pipe) {
+        pthread_rwlock_rdlock(&pipe->elements_lock);
+        for (uint32_t i = 0; i < pipe->nb_elements; i++) {
+            zst_element_t* el = pipe->elements[i];
+            if (atomic_load_explicit(&el->state, memory_order_acquire) == ZST_STATE_PLAYING) {
+                bool is_src = true;
+                zst_pad_t** sink_pads = NULL;
+                uint32_t nb_sink_pads = 0;
+                if (zst_element_snapshot_sink_pads(el, &sink_pads, &nb_sink_pads) == ZST_OK) {
+                    for (uint32_t p_idx = 0; p_idx < nb_sink_pads; p_idx++) {
+                        if (sink_pads[p_idx] && zst_pad_is_linked(sink_pads[p_idx])) {
+                            is_src = false;
+                            break;
+                        }
+                    }
+                    zst_element_pad_snapshot_free(sink_pads, nb_sink_pads);
+                }
+                if (is_src) {
+                    zst_scheduler_queue_task(sched, el);
+                }
+            }
+        }
+        pthread_rwlock_unlock(&pipe->elements_lock);
     }
     return ZST_OK;
 }

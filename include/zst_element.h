@@ -95,6 +95,7 @@ struct zst_element {
     zst_time_t clock_sync_last_clock;
 
     _Atomic(bool) is_queued;
+    _Atomic(uint32_t) sched_task_refs;
     zst_buffer_t* sched_token;
 
     /* Downstream graph rank representation for localized dependency sorting */

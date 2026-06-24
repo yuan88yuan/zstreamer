@@ -30,6 +30,11 @@ struct zst_pipeline {
     /* Lock protecting structural topological modifications of the graph */
     pthread_rwlock_t elements_lock;
 
+    /* Tracks explicit graph-reconfiguration transactions so dynamic helpers can
+     * be used safely either inside begin/end or as self-contained operations. */
+    _Atomic(bool) reconfiguration_active;
+    pthread_t reconfiguration_owner;
+
     /* Buffer-pool sizing is topology-dependent but expensive (graph walk).
      * Mark dirty on topology changes and coalesce updates to avoid O(N)
      * traversal in per-frame hot paths. */
@@ -77,6 +82,22 @@ void zst_pipeline_update_buffer_pool_sizing(
 void zst_pipeline_update_buffer_pool_sizing_if_needed(
     zst_pipeline_t* pipe,
     zst_element_t* changed_el);
+
+zst_result_t zst_pipeline_reconfigure_begin(zst_pipeline_t* pipe);
+zst_result_t zst_pipeline_reconfigure_end(zst_pipeline_t* pipe);
+
+zst_result_t zst_pipeline_add_element_dynamic(zst_pipeline_t* pipe, zst_element_t* el);
+zst_result_t zst_pipeline_remove_element_dynamic(zst_pipeline_t* pipe, zst_element_t* el);
+
+zst_result_t zst_pipeline_link_pads_dynamic(
+    zst_pipeline_t* pipe,
+    zst_pad_t* src,
+    zst_pad_t* sink);
+
+zst_result_t zst_pipeline_unlink_pads_dynamic(
+    zst_pipeline_t* pipe,
+    zst_pad_t* src,
+    zst_pad_t* sink);
 
 #ifdef __cplusplus
 }

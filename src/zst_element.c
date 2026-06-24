@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 extern int zst_bin_element_is_bin(zst_element_t* el);
 extern zst_result_t zst_bin_element_change_state(zst_element_t* el,
@@ -45,6 +46,7 @@ zst_element_create(const zst_element_ops_t* ops, void* priv)
     el->pipeline     = NULL;
     el->graph_rank   = 0;
     atomic_init(&el->is_queued, false);
+    atomic_init(&el->sched_task_refs, 0);
     atomic_init(&el->pool_sizing_seen_pool, NULL);
     atomic_init(&el->pool_sizing_seen_min_buffers, 0);
     atomic_init(&el->pool_sizing_seen_max_buffers, 0);
@@ -91,6 +93,19 @@ zst_element_destroy(zst_element_t* el)
 
     if (el->clock) {
         zst_clock_unref(el->clock);
+    }
+
+    /* Scheduler task tokens carry a raw element pointer.  Wait for any queued
+     * or executing scheduler dispatches to release that pointer before the
+     * element storage goes away. */
+    for (uint32_t spins = 0;
+         atomic_load_explicit(&el->sched_task_refs, memory_order_acquire) > 0 && spins < 10000;
+         spins++) {
+        struct timespec req = {0, 100000};
+        nanosleep(&req, NULL);
+    }
+    if (el->sched_token) {
+        el->sched_token->memory.priv = NULL;
     }
 
     /* Release the pre-allocated scheduling token */

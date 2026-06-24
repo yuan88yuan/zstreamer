@@ -982,6 +982,28 @@ if(BUILD_TESTS)
     )
     add_test(NAME test_dynamic COMMAND test_dynamic)
 
+    add_executable(test_reconfigure
+        tests/test_reconfigure.c
+    )
+    target_include_directories(test_reconfigure
+        PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+    )
+    target_link_libraries(test_reconfigure
+        PRIVATE zstreamer-elements
+    )
+    add_test(NAME test_reconfigure COMMAND test_reconfigure)
+
+    add_executable(test_caps_v2
+        tests/test_caps_v2.c
+    )
+    target_include_directories(test_caps_v2
+        PRIVATE ${ZSTREAMER_INCLUDE_DIR}
+    )
+    target_link_libraries(test_caps_v2
+        PRIVATE zstreamer-elements
+    )
+    add_test(NAME test_caps_v2 COMMAND test_caps_v2)
+
     add_executable(test_videotestsrc_timing
         tests/test_videotestsrc_timing.c
     )

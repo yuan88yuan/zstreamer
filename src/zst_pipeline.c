@@ -5,6 +5,8 @@
 #define _POSIX_C_SOURCE 200809L  /* clock_gettime */
 
 #include "zst_pipeline.h"
+#include "zst_scheduler.h"
+#include "zst_pad.h"
 #include "zst_bus.h"
 #include "zst_clock.h"
 #include "zst_buffer_pool.h"
@@ -28,6 +30,8 @@ zst_pipeline_create(void)
     pipe->bus         = zst_bus_create();
     pipe->clock       = NULL;
     atomic_store_explicit(&pipe->buffer_pool_sizing_dirty, true, memory_order_relaxed);
+    atomic_store_explicit(&pipe->reconfiguration_active, false, memory_order_relaxed);
+    memset(&pipe->reconfiguration_owner, 0, sizeof(pipe->reconfiguration_owner));
     pthread_rwlock_init(&pipe->elements_lock, NULL);
     pthread_mutex_init(&pipe->buffer_pool_sizing_lock, NULL);
 
@@ -89,19 +93,16 @@ zst_pipeline_get_clock(zst_pipeline_t* pipe)
     return pipe ? pipe->clock : NULL;
 }
 
-zst_result_t
-zst_pipeline_add(zst_pipeline_t* pipe, zst_element_t* el)
+static zst_result_t
+pipeline_add_locked(zst_pipeline_t* pipe, zst_element_t* el)
 {
     if (!pipe || !el) return ZST_ERROR;
 
-    pthread_rwlock_wrlock(&pipe->elements_lock);
-
-    /* Amortized exponential dynamic resizing to reduce lock-contested heap reallocations */
+    /* Amortized exponential dynamic resizing */
     if (pipe->nb_elements >= pipe->capacity) {
         uint32_t new_cap = (pipe->capacity == 0) ? 8 : pipe->capacity * 2;
         zst_element_t** els = realloc(pipe->elements, new_cap * sizeof(zst_element_t*));
         if (!els) {
-            pthread_rwlock_unlock(&pipe->elements_lock);
             return ZST_ERROR;
         }
         pipe->elements = els;
@@ -111,19 +112,20 @@ zst_pipeline_add(zst_pipeline_t* pipe, zst_element_t* el)
     pipe->elements[pipe->nb_elements++] = el;
     el->bus = pipe->bus;
     el->pipeline = pipe;
-    pthread_rwlock_unlock(&pipe->elements_lock);
+    if (el->sched_token) {
+        el->sched_token->memory.priv = el;
+    }
 
     zst_element_set_clock(el, pipe->clock);
     zst_pipeline_mark_buffer_pool_sizing_dirty(pipe);
     return ZST_OK;
 }
 
-zst_result_t
-zst_pipeline_remove(zst_pipeline_t* pipe, zst_element_t* el)
+static zst_result_t
+pipeline_remove_locked(zst_pipeline_t* pipe, zst_element_t* el)
 {
     if (!pipe || !el) return ZST_ERROR;
 
-    pthread_rwlock_wrlock(&pipe->elements_lock);
     int found = 0;
     for (uint32_t i = 0; i < pipe->nb_elements; i++) {
         if (pipe->elements[i] == el) {
@@ -136,15 +138,37 @@ zst_pipeline_remove(zst_pipeline_t* pipe, zst_element_t* el)
             break;
         }
     }
-    pthread_rwlock_unlock(&pipe->elements_lock);
 
     if (found) {
         el->bus = NULL;
         el->pipeline = NULL;
+        if (el->sched_token) {
+            el->sched_token->memory.priv = NULL;
+        }
         zst_pipeline_mark_buffer_pool_sizing_dirty(pipe);
         return ZST_OK;
     }
     return ZST_ERROR;
+}
+
+zst_result_t
+zst_pipeline_add(zst_pipeline_t* pipe, zst_element_t* el)
+{
+    if (!pipe || !el) return ZST_ERROR;
+    pthread_rwlock_wrlock(&pipe->elements_lock);
+    zst_result_t r = pipeline_add_locked(pipe, el);
+    pthread_rwlock_unlock(&pipe->elements_lock);
+    return r;
+}
+
+zst_result_t
+zst_pipeline_remove(zst_pipeline_t* pipe, zst_element_t* el)
+{
+    if (!pipe || !el) return ZST_ERROR;
+    pthread_rwlock_wrlock(&pipe->elements_lock);
+    zst_result_t r = pipeline_remove_locked(pipe, el);
+    pthread_rwlock_unlock(&pipe->elements_lock);
+    return r;
 }
 
 static int
@@ -508,29 +532,96 @@ zst_pipeline_get_clock_sync(zst_pipeline_t* pipe)
 }
 
 
-void
-zst_pipeline_update_ranks_from(zst_pipeline_t* pipe, zst_element_t* start_el)
+static void
+update_ranks_dfs(zst_element_t* el, uint32_t current_rank, int* visited, zst_pipeline_t* pipe)
 {
-    (void)pipe;
-    (void)start_el;
+    int idx = -1;
+    for (uint32_t i = 0; i < pipe->nb_elements; i++) {
+        if (pipe->elements[i] == el) {
+            idx = (int)i;
+            break;
+        }
+    }
+    if (idx == -1) return;
+
+    if (current_rank > el->graph_rank) {
+        el->graph_rank = current_rank;
+    }
+
+    if (visited[idx]) return;
+    visited[idx] = 1;
+
+    zst_pad_t** src_pads = NULL;
+    uint32_t nb_src_pads = 0;
+    if (zst_element_snapshot_src_pads(el, &src_pads, &nb_src_pads) == ZST_OK) {
+        for (uint32_t i = 0; i < nb_src_pads; i++) {
+            zst_pad_t* peer = zst_pad_get_peer(src_pads[i]);
+            zst_element_t* child = peer ? peer->parent : NULL;
+            if (peer) zst_pad_unref(peer);
+            if (child) {
+                update_ranks_dfs(child, el->graph_rank + 1, visited, pipe);
+            }
+        }
+        zst_element_pad_snapshot_free(src_pads, nb_src_pads);
+    }
+    visited[idx] = 0;
 }
 
 void
-zst_pipeline_topological_sort(zst_pipeline_t* pipe)
+zst_pipeline_update_ranks_from(zst_pipeline_t* pipe, zst_element_t* start_el)
+{
+    if (!pipe || !start_el) return;
+
+    int* visited = calloc(pipe->nb_elements, sizeof(int));
+    if (!visited) return;
+
+    uint32_t start_rank = start_el->graph_rank;
+    update_ranks_dfs(start_el, start_rank, visited, pipe);
+
+    free(visited);
+}
+
+static void
+pipeline_recalculate_ranks_locked(zst_pipeline_t* pipe)
+{
+    for (uint32_t i = 0; i < pipe->nb_elements; i++) {
+        pipe->elements[i]->graph_rank = 0;
+    }
+
+    for (uint32_t i = 0; i < pipe->nb_elements; i++) {
+        zst_element_t* el = pipe->elements[i];
+        bool is_src = true;
+        zst_pad_t** sink_pads = NULL;
+        uint32_t nb_sink_pads = 0;
+        if (zst_element_snapshot_sink_pads(el, &sink_pads, &nb_sink_pads) == ZST_OK) {
+            for (uint32_t p_idx = 0; p_idx < nb_sink_pads; p_idx++) {
+                if (sink_pads[p_idx] && zst_pad_is_linked(sink_pads[p_idx])) {
+                    is_src = false;
+                    break;
+                }
+            }
+            zst_element_pad_snapshot_free(sink_pads, nb_sink_pads);
+        }
+
+        if (is_src) {
+            zst_pipeline_update_ranks_from(pipe, el);
+        }
+    }
+}
+
+static void
+pipeline_topological_sort_locked(zst_pipeline_t* pipe)
 {
     if (!pipe || pipe->nb_elements <= 1) return;
 
-    pthread_rwlock_wrlock(&pipe->elements_lock);
     zst_element_t** temp = malloc(pipe->nb_elements * sizeof(zst_element_t*));
     if (!temp) {
-        pthread_rwlock_unlock(&pipe->elements_lock);
         return;
     }
 
     int* visited = calloc(pipe->nb_elements, sizeof(int));
     if (!visited) {
         free(temp);
-        pthread_rwlock_unlock(&pipe->elements_lock);
         return;
     }
 
@@ -552,7 +643,231 @@ zst_pipeline_topological_sort(zst_pipeline_t* pipe)
 
     free(visited);
     free(temp);
+}
+
+void
+zst_pipeline_topological_sort(zst_pipeline_t* pipe)
+{
+    if (!pipe || pipe->nb_elements <= 1) return;
+    pthread_rwlock_wrlock(&pipe->elements_lock);
+    pipeline_topological_sort_locked(pipe);
     pthread_rwlock_unlock(&pipe->elements_lock);
+}
+
+static int
+pipeline_reconfiguration_owned_by_current_thread(zst_pipeline_t* pipe)
+{
+    if (!pipe) return 0;
+    if (!atomic_load_explicit(&pipe->reconfiguration_active, memory_order_acquire)) {
+        return 0;
+    }
+    return pthread_equal(pipe->reconfiguration_owner, pthread_self()) != 0;
+}
+
+static void
+pipeline_wait_for_foreign_reconfiguration(zst_pipeline_t* pipe)
+{
+    if (!pipe) return;
+    while (atomic_load_explicit(&pipe->reconfiguration_active, memory_order_acquire) &&
+           !pipeline_reconfiguration_owned_by_current_thread(pipe)) {
+        struct timespec req = {0, 100000};
+        nanosleep(&req, NULL);
+    }
+}
+
+static void
+pipeline_reconfiguration_finish_locked(zst_pipeline_t* pipe)
+{
+    pipeline_recalculate_ranks_locked(pipe);
+    pipeline_topological_sort_locked(pipe);
+    zst_pipeline_mark_buffer_pool_sizing_dirty(pipe);
+
+    pthread_rwlock_unlock(&pipe->elements_lock);
+
+    if (pipe->priv) {
+        zst_scheduler_wake((zst_scheduler_t*)pipe->priv);
+    }
+
+    zst_pipeline_update_buffer_pool_sizing(pipe);
+}
+
+static void
+pipeline_wait_for_element_scheduler_tasks(zst_element_t* el)
+{
+    if (!el) return;
+    while (atomic_load_explicit(&el->sched_task_refs, memory_order_acquire) > 0) {
+        struct timespec req = {0, 100000};
+        nanosleep(&req, NULL);
+    }
+}
+
+zst_result_t
+zst_pipeline_reconfigure_begin(zst_pipeline_t* pipe)
+{
+    if (!pipe) return ZST_ERROR;
+    if (pipeline_reconfiguration_owned_by_current_thread(pipe)) return ZST_ERROR;
+    pipeline_wait_for_foreign_reconfiguration(pipe);
+    pthread_rwlock_wrlock(&pipe->elements_lock);
+    pipe->reconfiguration_owner = pthread_self();
+    atomic_store_explicit(&pipe->reconfiguration_active, true, memory_order_release);
+    return ZST_OK;
+}
+
+zst_result_t
+zst_pipeline_reconfigure_end(zst_pipeline_t* pipe)
+{
+    if (!pipe || !pipeline_reconfiguration_owned_by_current_thread(pipe)) return ZST_ERROR;
+
+    atomic_store_explicit(&pipe->reconfiguration_active, false, memory_order_release);
+    pipeline_reconfiguration_finish_locked(pipe);
+    return ZST_OK;
+}
+
+zst_result_t
+zst_pipeline_add_element_dynamic(zst_pipeline_t* pipe, zst_element_t* el)
+{
+    if (!pipe || !el) return ZST_ERROR;
+
+    int in_transaction = pipeline_reconfiguration_owned_by_current_thread(pipe);
+    if (!in_transaction) {
+        pipeline_wait_for_foreign_reconfiguration(pipe);
+        pthread_rwlock_wrlock(&pipe->elements_lock);
+    }
+
+    zst_result_t r = pipeline_add_locked(pipe, el);
+    if (r != ZST_OK) {
+        if (!in_transaction) pthread_rwlock_unlock(&pipe->elements_lock);
+        return r;
+    }
+
+    zst_state_t pipe_state = pipe->state;
+    if (pipe_state > ZST_STATE_NULL) {
+        if (pipe_state >= ZST_STATE_READY) {
+            r = zst_element_set_state(el, ZST_STATE_READY);
+            if (r != ZST_OK) {
+                pipeline_remove_locked(pipe, el);
+                if (!in_transaction) pthread_rwlock_unlock(&pipe->elements_lock);
+                return r;
+            }
+        }
+        if (pipe_state == ZST_STATE_PLAYING) {
+            r = zst_element_set_state(el, ZST_STATE_PLAYING);
+            if (r != ZST_OK) {
+                zst_element_set_state(el, ZST_STATE_NULL);
+                pipeline_remove_locked(pipe, el);
+                if (!in_transaction) pthread_rwlock_unlock(&pipe->elements_lock);
+                return r;
+            }
+        }
+    }
+
+    if (!in_transaction) {
+        pipeline_reconfiguration_finish_locked(pipe);
+    }
+    return ZST_OK;
+}
+
+zst_result_t
+zst_pipeline_remove_element_dynamic(zst_pipeline_t* pipe, zst_element_t* el)
+{
+    if (!pipe || !el) return ZST_ERROR;
+
+    int in_transaction = pipeline_reconfiguration_owned_by_current_thread(pipe);
+
+    zst_element_set_state(el, ZST_STATE_NULL);
+    if (in_transaction) {
+        /* Do not wait for in-flight scheduler callbacks while holding the graph
+         * write lock: a finishing callback may need a read lock for deferred
+         * pool-sizing checks. Keep reconfiguration_active set so other dynamic
+         * helpers wait until this transaction resumes. */
+        pthread_rwlock_unlock(&pipe->elements_lock);
+        pipeline_wait_for_element_scheduler_tasks(el);
+        pthread_rwlock_wrlock(&pipe->elements_lock);
+    } else {
+        pipeline_wait_for_foreign_reconfiguration(pipe);
+        pipeline_wait_for_element_scheduler_tasks(el);
+        pthread_rwlock_wrlock(&pipe->elements_lock);
+    }
+
+    /* Unlink all pads using snapshots because unlinking may mutate pad arrays. */
+    zst_pad_t** sink_pads = NULL;
+    uint32_t nb_sink_pads = 0;
+    if (zst_element_snapshot_sink_pads(el, &sink_pads, &nb_sink_pads) == ZST_OK) {
+        for (uint32_t i = 0; i < nb_sink_pads; i++) {
+            if (sink_pads[i]) zst_pad_unlink(sink_pads[i]);
+        }
+        zst_element_pad_snapshot_free(sink_pads, nb_sink_pads);
+    }
+
+    zst_pad_t** src_pads = NULL;
+    uint32_t nb_src_pads = 0;
+    if (zst_element_snapshot_src_pads(el, &src_pads, &nb_src_pads) == ZST_OK) {
+        for (uint32_t i = 0; i < nb_src_pads; i++) {
+            if (src_pads[i]) zst_pad_unlink(src_pads[i]);
+        }
+        zst_element_pad_snapshot_free(src_pads, nb_src_pads);
+    }
+
+    zst_result_t r = pipeline_remove_locked(pipe, el);
+    if (!in_transaction) {
+        pipeline_reconfiguration_finish_locked(pipe);
+    }
+    return r;
+}
+
+zst_result_t
+zst_pipeline_link_pads_dynamic(zst_pipeline_t* pipe, zst_pad_t* src, zst_pad_t* sink)
+{
+    if (!pipe || !src || !sink) return ZST_ERROR;
+
+    int in_transaction = pipeline_reconfiguration_owned_by_current_thread(pipe);
+    if (!in_transaction) {
+        pipeline_wait_for_foreign_reconfiguration(pipe);
+        pthread_rwlock_wrlock(&pipe->elements_lock);
+    }
+
+    zst_result_t r = zst_pad_link(src, sink);
+    if (r == ZST_OK) {
+        if (src->parent) {
+            zst_pipeline_update_ranks_from(pipe, src->parent);
+        }
+        zst_pipeline_mark_buffer_pool_sizing_dirty(pipe);
+    }
+
+    if (!in_transaction) {
+        if (r == ZST_OK) pipeline_reconfiguration_finish_locked(pipe);
+        else pthread_rwlock_unlock(&pipe->elements_lock);
+    }
+    return r;
+}
+
+zst_result_t
+zst_pipeline_unlink_pads_dynamic(zst_pipeline_t* pipe, zst_pad_t* src, zst_pad_t* sink)
+{
+    if (!pipe || !src || !sink) return ZST_ERROR;
+
+    int in_transaction = pipeline_reconfiguration_owned_by_current_thread(pipe);
+    if (!in_transaction) {
+        pipeline_wait_for_foreign_reconfiguration(pipe);
+        pthread_rwlock_wrlock(&pipe->elements_lock);
+    }
+
+    zst_pad_t* peer = zst_pad_get_peer(src);
+    if (peer != sink) {
+        if (peer) zst_pad_unref(peer);
+        if (!in_transaction) pthread_rwlock_unlock(&pipe->elements_lock);
+        return ZST_ERROR;
+    }
+    zst_pad_unref(peer);
+
+    zst_pad_unlink(src);
+    pipeline_recalculate_ranks_locked(pipe);
+    zst_pipeline_mark_buffer_pool_sizing_dirty(pipe);
+
+    if (!in_transaction) {
+        pipeline_reconfiguration_finish_locked(pipe);
+    }
+    return ZST_OK;
 }
 
 int

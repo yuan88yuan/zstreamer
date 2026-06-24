@@ -48,6 +48,9 @@ zst_result_t zst_scheduler_run(
 zst_result_t zst_scheduler_stop(
     zst_scheduler_t* sched);
 
+zst_result_t zst_scheduler_wake(
+    zst_scheduler_t* sched);
+
 #ifdef __cplusplus
 }
 #endif

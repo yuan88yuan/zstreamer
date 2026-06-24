@@ -636,10 +636,10 @@ src/zst_scheduler.c
 
 Tasks:
 
-- [ ] Add reconfiguration transaction APIs.
-- [ ] Add dynamic element add/remove helpers.
-- [ ] Wake scheduler after topology changes.
-- [ ] Recalculate ranks and buffer-pool sizing after dynamic link/unlink.
+- [x] Add reconfiguration transaction APIs.
+- [x] Add dynamic element add/remove helpers.
+- [x] Wake scheduler after topology changes.
+- [x] Recalculate ranks and buffer-pool sizing after dynamic link/unlink.
 
 ### Phase E — Caps v2
 
@@ -652,10 +652,10 @@ src/zst_caps.c
 
 Tasks:
 
-- [ ] Add generic key/value caps fields.
-- [ ] Add copy/intersect/fixate support for generic fields.
-- [ ] Preserve compatibility with existing video/audio helpers.
-- [ ] Add codec metadata fields used by demuxers and decoders.
+- [x] Add generic key/value caps fields.
+- [x] Add copy/intersect/fixate support for generic fields.
+- [x] Preserve compatibility with existing video/audio helpers.
+- [x] Add codec metadata fields used by demuxers and decoders.
 
 ### Phase F — Refactor demuxers
 
