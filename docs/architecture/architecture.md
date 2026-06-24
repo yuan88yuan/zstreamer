@@ -142,7 +142,7 @@ In multi-thread mode each worker pops from its input queue, calls `process()`, a
 
 ### Element Implementations
 
-All six pipeline elements are fully implemented with real hardware/codec integration:
+The framework includes a wide variety of element implementations (37+ built-in and plugin elements) with real hardware/codec integration:
 
 | Element         | Library            | Status |
 |-----------------|--------------------|--------|
@@ -152,8 +152,13 @@ All six pipeline elements are fully implemented with real hardware/codec integra
 | AAC Encoder     | `libavcodec`       | ✅ FFmpeg AAC, S16→FLTP conversion |
 | MP4 Muxer       | `libavformat`      | ✅ Fragmented MP4, custom AVIO, EOS tracking |
 | File Sink       | stdio `FILE*`      | ✅ fwrite of buffer data |
-| Video Scaler    | `libswscale`       | 📝 Planned — scaling + pixel format conversion |
-| Audio Resampler | `libswresample`    | 📝 Planned — sample rate + format conversion |
+| Video Scaler    | `libswscale`       | ✅ Video format/resolution conversion |
+| Audio Resampler | `libswresample`    | ✅ Sample rate/format conversion + ASRC drift compensation |
+| MPEG-TS Demuxer (tsdemux) | `libavformat` | ✅ Stream-table-backed dynamic output pads (`video_%u`, `audio_%u`, etc.) |
+| MP4 Demuxer (mp4demux) | `libavformat` | ✅ Direct-file & push-mode with dynamic output pads |
+| OpenGL Sink (glsink) | OpenGL/X11 | ✅ Hardware-accelerated display rendering |
+| OpenGL Compositor | OpenGL/X11 | ✅ Multi-pad video composition |
+| Audio Mixer (audiomixer) | Core | ✅ Multi-channel synchronous mixing |
 
 ### Plugin (zst_plugin)
 Dynamic element loading via `dlopen()`:
@@ -220,3 +225,16 @@ Pads now carry rich caps with dimensions, format, framerate, channels, sample ra
 - [x] Pipeline-level clock selection (`zst_pipeline_set_clock`)
 - [x] Clock slaving for A/V sync
 - [x] Jitter measurement
+
+### Adaptive Stream Demuxing  (🔄 In Progress — Post-P0)
+
+Support for dynamic demuxers whose streams and caps can change while running:
+- [x] First-class stream model (`zst_stream_info_t`) and stream query APIs
+- [x] Pad presence templates (`always` / `sometimes` / `request`)
+- [x] Deferred pad destruction and safe dynamic pad add/remove helpers
+- [x] Bus events (`PAD_ADDED`, `PAD_REMOVED`, `STREAM_ADDED`, `STREAM_REMOVED`, `CAPS_CHANGED`, etc.)
+- [x] Downstream in-band pad events and sticky event replay on late linking
+- [x] Caps v2 generic fields (`codec_data`, `profile`, `stream-format`, `alignment`, `language`)
+- [x] Safe pipeline reconfiguration transaction APIs
+- [x] Refactored `tsdemux` and `mp4demux` to use the dynamic stream model
+- [x] Initial dynamic/late-linking tests

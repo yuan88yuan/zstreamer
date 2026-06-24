@@ -8,9 +8,15 @@ In zstreamer, capabilities are represented by the `zst_caps_t` structure. A `zst
 
 A `zst_caps_struct_t` includes:
 - `media_type`: A string representing the broad category and format (e.g., `video/x-raw`, `audio/x-raw`, `video/x-h264`).
-- A generic dictionary or properties list for format-specific fields:
-  - For video: `format` (e.g., RGB, YUV), `width`, `height`, `framerate`.
+- Format-specific fields:
+  - For video: `format` (e.g., I420, NV12), `width`, `height`, `framerate`.
   - For audio: `format` (e.g., S16LE, F32LE), `rate` (sample rate), `channels`.
+- Generic metadata and codec fields (Caps v2):
+  - `codec_data`: Extradata buffer (e.g. SPS/PPS for H.264/H.265).
+  - `stream-format`: Codec stream format configuration (e.g., `avc`, `byte-stream`, `hvc1`, `hev1`).
+  - `alignment`: Buffer alignment boundaries (e.g., `au`, `nal`).
+  - `profile` / `level` / `tier` specifications.
+  - `language`: Audio or subtitle language string (e.g., `eng`, `zho`).
 
 Elements can expose multiple structures in their caps if they support multiple formats.
 

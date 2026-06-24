@@ -14,6 +14,7 @@ configurable scheduler.
 - **Dynamic plugins** — `dlopen`-based element loading at runtime
 - **Async event bus** — error, EOS, state-change, and warning notifications
 - **Clock & A/V sync** — system clock, QoS dropping, clock slaving
+- **Adaptive Stream Demuxing** — dynamic pads, stream info queries, and safe runtime graph reconfiguration
 - **Lightweight logging** — compile-time level filtering with custom handler support
 
 For more details on how to use zstreamer, please refer to the [Getting Started](@ref tutorials_getting_started) guide and the [Architecture](@ref architecture_architecture) documentation.

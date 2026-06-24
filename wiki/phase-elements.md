@@ -424,7 +424,7 @@ Adds MPEG-TS container support for broadcast, SRT contribution, HLS segmenting, 
 - [x] Caps negotiation: `video/mp2t` container caps and elementary stream caps on demuxed pads
 - [x] Tests: H.264/AAC and H.265/AAC mux → demux roundtrip preserves payload boundaries and timestamps
 
-**Adaptive demuxing follow-up:** `tsdemux` is the first target for the [Adaptive Stream Demuxing Plan](phase-adaptive-stream-demuxing.md). Refactor from fixed `video` / `audio` outputs to stream-table-backed dynamic pads (`video_%u`, `audio_%u`, `text_%u`, `data_%u`) with pad-added/removed, stream-status, caps-changed, and signal-lost/present events.
+**Adaptive demuxing follow-up (Completed):** `tsdemux` has been refactored from fixed `video` / `audio` outputs to stream-table-backed dynamic pads (`video_%u`, `audio_%u`, `text_%u`, `data_%u`) with pad-added/removed, stream-status, caps-changed, and signal-lost/present events. See [Adaptive Stream Demuxing Plan](phase-adaptive-stream-demuxing.md).
 
 **Dependencies:** `libavformat-dev`, `libavcodec-dev`, `libavutil-dev` (if FFmpeg-backed)
 
@@ -442,7 +442,7 @@ Demuxes MP4/fragmented-MP4 files or byte streams into encoded elementary audio/v
 - [x] Caps negotiation: `video/x-h264`, `video/x-h265`, `audio/aac` (and more) output pads
 - [x] Tests: MP4 mux→demux roundtrip with H.264/AAC; verify packet counts, timestamps; property/factory tests
 
-**Adaptive demuxing follow-up:** after the core adaptive-demuxing APIs land, migrate `mp4demux` to the same stream-table and dynamic-pad model so fragmented MP4 / late track discovery can expose new pads and caps changes at runtime. See [Adaptive Stream Demuxing Plan](phase-adaptive-stream-demuxing.md).
+**Adaptive demuxing follow-up (Completed):** `mp4demux` has been migrated to the stream-table and dynamic-pad model so fragmented MP4 / late track discovery can expose new pads and caps changes at runtime. See [Adaptive Stream Demuxing Plan](phase-adaptive-stream-demuxing.md).
 
 **Dependencies:** `libavformat-dev`, `libavcodec-dev`, `libavutil-dev`
 

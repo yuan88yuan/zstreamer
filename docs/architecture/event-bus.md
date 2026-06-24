@@ -42,6 +42,17 @@ Segment events communicate timing and boundaries for the media stream. They are 
 -   **Propagation:** Segment events travel downstream via pads.
 -   **Handling:** Elements use segment information to adjust timestamps, drop buffers outside the valid range (clipping), and handle playback speed (`rate`). Applications can also monitor segment events on the bus to update UI elements like playback progress bars.
 
+### 5. Dynamic Media and Pad Events
+
+For adaptive streaming/demuxing pipelines, elements dynamically post events to notify applications when pads appear, disappear, or when caps/signals change.
+
+-   **Events:**
+    -   `ZST_EVENT_PAD_ADDED` / `ZST_EVENT_PAD_REMOVED`: Triggered when dynamic pads (e.g., `video_%u`, `audio_%u`) are added or removed.
+    -   `ZST_EVENT_STREAM_ADDED` / `ZST_EVENT_STREAM_REMOVED` / `ZST_EVENT_STREAM_CHANGED`: Posted when tracks or stream metadata are discovered, vanished, or modified.
+    -   `ZST_EVENT_CAPS_CHANGED`: Posted when media parameters change at runtime.
+    -   `ZST_EVENT_SIGNAL_LOST` / `ZST_EVENT_SIGNAL_PRESENT`: Posted by live sources/demuxers when input signals drop or restore.
+-   **Handling:** Applications use `ZST_EVENT_PAD_ADDED` and `ZST_EVENT_PAD_REMOVED` to dynamically link or unlink downstream branches (e.g., auto-plugging decoders/sinks) while the pipeline is running.
+
 ## Async Event Handling
 
 The typical pattern for an application is to have a dedicated thread polling the bus, or to integrate the bus file descriptor into a main event loop (like glib's GMainLoop or Qt's event loop).
@@ -60,6 +71,14 @@ while (zst_bus_pop(bus, &event, 1000) == ZST_OK) {
         case ZST_EVENT_EOS:
             printf("Got EOS!\n");
             // Handle EOS...
+            break;
+        case ZST_EVENT_PAD_ADDED:
+            printf("Dynamic pad added: %s\n", event->as.pad_added.pad->name);
+            // Reconfigure and link downstream elements...
+            break;
+        case ZST_EVENT_PAD_REMOVED:
+            printf("Dynamic pad removed from %s\n", event->src->name);
+            // Unlink/tear down downstream elements...
             break;
         // ... handle other events
     }

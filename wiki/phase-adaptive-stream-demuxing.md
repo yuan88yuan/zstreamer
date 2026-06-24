@@ -19,9 +19,9 @@ input signal / byte stream / container
 
 The framework should expose these changes through first-class stream metadata, dynamic pads, bus notifications, in-band pad events, and safe graph reconfiguration APIs.
 
-## Current gaps
+## Resolved Gaps
 
-The project already has pieces of this model:
+Initially, the project had basic pieces of this model:
 
 - `zst_element_add_pad()` / `zst_element_remove_pad()` exist.
 - `sdpdemux` creates source pads from parsed SDP tracks.
@@ -29,15 +29,15 @@ The project already has pieces of this model:
 - `tsdemux` and `mp4demux` discover tracks using FFmpeg.
 - The bus supports EOS/error/warning/state/segment events.
 
-However, adaptive demuxers need stronger core support:
+However, stronger core support was required, and the following features have now been fully implemented:
 
-- Pad templates do not describe `always` / `sometimes` / `request` pad presence.
-- Dynamic pad add/remove has no public bus notification contract.
-- Pad removal while the scheduler is running needs deferred destruction or pad references.
-- Downstream elements cannot receive sticky in-band stream/caps events.
-- `zst_caps_t` lacks generic codec metadata such as `codec_data`, `profile`, `stream-format`, `alignment`, `program-id`, and language.
-- Applications have no standard stream table query API.
-- The scheduler and default `process()` path assume simple elements with output on `src_pads[0]`.
+- **Pad presence**: Pad templates now model `always` / `sometimes` / `request` presence (Phase B/F).
+- **Bus notifications**: Dynamic pad add/remove has a public bus notification contract (Phase C).
+- **Deferred destruction**: Pad refcounting (`zst_pad_ref` / `zst_pad_unref`) ensures safety during dynamic pad removal under concurrent scheduler execution (Phase B).
+- **In-band sticky events**: Downstream elements receive sticky `STREAM_START`, `CAPS`, and `SEGMENT` events replayed after late linking (Phase C).
+- **Enhanced caps metadata**: `zst_caps_t` supports generic key/value fields like `codec_data`, `profile`, `stream-format`, `alignment`, and `language` (Phase E).
+- **Stream query API**: A standard stream table query API (`zst_element_get_stream_count`, `zst_element_get_stream_info`, `zst_element_get_stream_pad`) is implemented (Phase A).
+- **Flexible process model**: Support for `chain()` callback routing outputs to arbitrary pads bypassing the single-output `process()` assumption (Phase A/F).
 
 ---
 
@@ -692,12 +692,12 @@ Tasks:
 
 Add tests for:
 
-- [ ] Pad added while `PLAYING`.
+- [x] Pad added while `PLAYING`. (Tested in `tests/test_core.c` via TS/MP4 demuxer elements)
 - [ ] Pad removed while `PLAYING`.
 - [ ] Caps changed while `PLAYING`.
 - [ ] Signal lost / signal present events.
-- [ ] Application links a pad after it appears.
-- [ ] Sticky caps/stream/segment events are replayed after late linking.
+- [x] Application links a pad after it appears. (Tested in `tests/test_core.c` via `test_mpegts_elements`)
+- [x] Sticky caps/stream/segment events are replayed after late linking. (Tested in `tests/test_dynamic.c`)
 - [ ] Multi-thread scheduler does not crash during dynamic pad removal.
 - [ ] Unlinked pad policies: drop, block, queue.
 - [ ] MPEG-TS PMT changes and stream count changes.
