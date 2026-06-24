@@ -360,10 +360,10 @@ asrc_apply_compensation(audio_resampler_t* s, int next_out_samples, int out_rate
         s->cum_drift_output -= (double)sample_delta;
         s->drift_adjust_count++;
 
-        ZST_LOG_DEBUG("[audioresampler] drift compensation: delta=%d over %d out-samples "
-                       "(cum_remaining=%.1f, total_adjusts=%d, out_rate=%d)",
-                       sample_delta, next_out_samples,
-                       s->cum_drift_output, s->drift_adjust_count, out_rate);
+        ZST_LOG_DEBUG("audioresampler", "drift compensation: delta=%d over %d out-samples "
+                      "(cum_remaining=%.1f, total_adjusts=%d, out_rate=%d)",
+                      sample_delta, next_out_samples,
+                      s->cum_drift_output, s->drift_adjust_count, out_rate);
     }
 }
 

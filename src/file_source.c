@@ -57,6 +57,8 @@ determine_media_type(const char* path)
         return "text/plain";
     } else if (has_extension(ext, ".mp4")) {
         return "video/mp4";
+    } else if (has_extension(ext, ".ts")) {
+        return "video/mpegts";
     } else if (has_extension(ext, ".yuv")) {
         return "video/x-raw";
     } else if (has_extension(ext, ".pcm")) {
@@ -110,7 +112,7 @@ file_source_open(zst_element_t* el)
 
     zst_buffer_pool_config_t pool_cfg = {
         .min_buffers = 4,
-        .max_buffers = 8,
+        .max_buffers = 2048,
         .buffer_size = (size_t)s->chunk_size,
         .buffer_type = buffer_type
     };

@@ -89,16 +89,10 @@ execute_element_task(zst_scheduler_t* sched, zst_element_t* el, zst_pipeline_t* 
         return;
     }
 
-    bool is_source = true;
     zst_pad_t** sink_pads = NULL;
     uint32_t nb_sink_pads = 0;
     zst_element_snapshot_sink_pads(el, &sink_pads, &nb_sink_pads);
-    for (uint32_t p_idx = 0; p_idx < nb_sink_pads; p_idx++) {
-        if (sink_pads[p_idx] && zst_pad_is_linked(sink_pads[p_idx])) {
-            is_source = false;
-            break;
-        }
-    }
+    bool is_source = (nb_sink_pads == 0);
     zst_element_pad_snapshot_free(sink_pads, nb_sink_pads);
 
     if (el->ops && el->ops->process) {
@@ -123,8 +117,8 @@ execute_element_task(zst_scheduler_t* sched, zst_element_t* el, zst_pipeline_t* 
                     }
                     
                     zst_pad_push(src_pads[0], out_buf);
-                    zst_buffer_unref(out_buf);
                 }
+                zst_buffer_unref(out_buf);
                 zst_element_pad_snapshot_free(src_pads, nb_src_pads);
             }
             
@@ -278,16 +272,10 @@ zst_scheduler_run(zst_scheduler_t* sched)
         pthread_rwlock_rdlock(&sched->pipeline->elements_lock);
         for (uint32_t i = 0; i < sched->pipeline->nb_elements; i++) {
             zst_element_t* el = sched->pipeline->elements[i];
-            bool is_src = true;
             zst_pad_t** sink_pads = NULL;
             uint32_t nb_sink_pads = 0;
             zst_element_snapshot_sink_pads(el, &sink_pads, &nb_sink_pads);
-            for (uint32_t p_idx = 0; p_idx < nb_sink_pads; p_idx++) {
-                if (sink_pads[p_idx] && zst_pad_is_linked(sink_pads[p_idx])) {
-                    is_src = false;
-                    break;
-                }
-            }
+            bool is_src = (nb_sink_pads == 0);
             zst_element_pad_snapshot_free(sink_pads, nb_sink_pads);
             if (is_src) {
                 zst_scheduler_queue_task(sched, el);

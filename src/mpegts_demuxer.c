@@ -672,6 +672,9 @@ tsdemux_try_init(zst_element_t* el)
         return ZST_OK; /* Will retry when more data arrives */
     }
 
+    temp_fc->probesize = 1000000;
+    temp_fc->max_analyze_duration = 1000000;
+
     if (avformat_find_stream_info(temp_fc, NULL) < 0) {
         avformat_close_input(&temp_fc);
         free(flat);
@@ -768,9 +771,11 @@ tsdemux_process(zst_element_t* el)
     while (1) {
         int ret = av_read_frame(s->fc, pkt);
         if (ret == AVERROR(EAGAIN)) {
+            ZST_LOG_DEBUG("tsdemux", "av_read_frame returned EAGAIN");
             break;
         }
         if (ret < 0) {
+            ZST_LOG_DEBUG("tsdemux", "av_read_frame returned error %d", ret);
             if (ret == AVERROR_EOF || s->eos_received) {
                 tsdemux_send_eos(el);
             } else {
@@ -782,6 +787,7 @@ tsdemux_process(zst_element_t* el)
             }
             break;
         }
+        ZST_LOG_DEBUG("tsdemux", "read packet stream_index=%d size=%d", pkt->stream_index, pkt->size);
 
         /* MPEG-TS PMT changes may cause FFmpeg to discover late streams. */
         tsdemux_sync_streams(el);
@@ -853,6 +859,11 @@ tsdemux_sink_push(zst_pad_t* pad, zst_buffer_t* buf)
         s->eos_received = 1;
     }
 
+    if (s->fc && s->fc->pb) {
+        s->fc->pb->error = 0;
+        s->fc->pb->eof_reached = 0;
+    }
+
     if (!s->fc) {
         zst_result_t res = tsdemux_try_init(el);
         if (res != ZST_OK) return res;
@@ -880,6 +891,9 @@ tsdemux_open_file(mpegts_demuxer_t* s, zst_element_t* el)
         ZST_LOG_ERROR("tsdemux", "Failed to open file '%s': %d (%s)", s->location, err, errbuf);
         return ZST_ERROR;
     }
+
+    fc->probesize = 1000000; // 1 MB
+    fc->max_analyze_duration = 1000000; // 1 second (1000000 microseconds)
 
     err = avformat_find_stream_info(fc, NULL);
     if (err < 0) {
