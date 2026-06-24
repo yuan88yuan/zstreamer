@@ -440,9 +440,9 @@ static const zst_property_spec_t g_textoverlay_properties[] = {
 };
 
 static const zst_pad_template_t g_textoverlay_pads[] = {
-    { "sink", ZST_PAD_SINK, "video/x-raw" },
-    { "text", ZST_PAD_SINK, "text/x-raw" },
-    { "src", ZST_PAD_SRC, "video/x-raw" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-raw" },
+    { "text", ZST_PAD_SINK, ZST_PAD_ALWAYS, "text/x-raw" },
+    { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "video/x-raw" }
 };
 
 static const zst_element_desc_t g_textoverlay_elements[] = {

@@ -662,9 +662,9 @@ static const zst_property_spec_t g_mp4mux_properties[] = {
 };
 
 static const zst_pad_template_t g_mp4mux_pads[] = {
-    { "video", ZST_PAD_SINK, "video/x-h264" },
-    { "audio", ZST_PAD_SINK, "audio/x-aac" },
-    { "src", ZST_PAD_SRC, "video/quicktime" }
+    { "video", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-h264" },
+    { "audio", ZST_PAD_SINK, ZST_PAD_ALWAYS, "audio/x-aac" },
+    { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "video/quicktime" }
 };
 
 static const zst_element_desc_t g_mp4mux_elements[] = {

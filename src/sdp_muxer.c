@@ -612,9 +612,9 @@ static zst_element_t* plugin_create_element(const char* name) {
 }
 
 static const zst_pad_template_t g_sdpmuxer_pads[] = {
-    { "video", ZST_PAD_SINK, "video/x-h264;video/x-h265" },
-    { "audio", ZST_PAD_SINK, "audio/aac" },
-    { "src",   ZST_PAD_SRC,  "application/sdp" }
+    { "video", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-h264;video/x-h265" },
+    { "audio", ZST_PAD_SINK, ZST_PAD_ALWAYS, "audio/aac" },
+    { "src",   ZST_PAD_SRC,  ZST_PAD_ALWAYS, "application/sdp" }
 };
 
 static const zst_property_spec_t g_sdpmuxer_properties[] = {

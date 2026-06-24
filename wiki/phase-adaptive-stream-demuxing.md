@@ -671,17 +671,22 @@ Follow-up targets:
 ```text
 src/mp4_demuxer.c
 src/sdp_demuxer.c
+```
+
+Pending follow-up (future work):
+
+```text
 src/rtmp_source.c
 src/rtsp_source.c
 ```
 
 Tasks:
 
-- [ ] Replace fixed `video` / `audio` pads with `video_%u`, `audio_%u`, `text_%u`, `data_%u` dynamic pads where appropriate.
-- [ ] Maintain stream tables keyed by stable stream IDs.
-- [ ] Emit bus and pad events on stream add/remove/change.
-- [ ] Handle signal loss/restoration and transient disappearance.
-- [ ] Support unlinked-pad policy.
+- [x] Replace fixed `video` / `audio` pads with `video_%u`, `audio_%u`, `text_%u`, `data_%u` dynamic pads where appropriate.
+- [x] Maintain stream tables keyed by stable stream IDs.
+- [x] Emit bus and pad events on stream add/remove/change.
+- [x] Handle signal loss/restoration and transient disappearance.
+- [x] Support unlinked-pad policy.
 
 ### Phase G — Tests
 

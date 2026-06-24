@@ -125,134 +125,140 @@ zst_element_t* zst_x11_sink_create(const char* display);
 /*──────────────────────────────────────────────────────────────────────────
   Pad template tables (used by descriptor tables below).
 ──────────────────────────────────────────────────────────────────────────*/
-static const zst_pad_template_t g_pad_src[]          = { { "src", ZST_PAD_SRC, "ANY" } };
-static const zst_pad_template_t g_pad_sink[]         = { { "sink", ZST_PAD_SINK, "ANY" } };
+static const zst_pad_template_t g_pad_src[]          = { { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "ANY" } };
+static const zst_pad_template_t g_pad_sink[]         = { { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "ANY" } };
 static const zst_pad_template_t g_pad_filter[]       = {
-    { "sink", ZST_PAD_SINK, "ANY" }, { "src", ZST_PAD_SRC, "ANY" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "ANY" }, { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "ANY" }
 };
-static const zst_pad_template_t g_pad_video_src[]    = { { "src", ZST_PAD_SRC, "video/x-raw" } };
-static const zst_pad_template_t g_pad_video_sink[]   = { { "sink_%u", ZST_PAD_SINK, "video/x-raw" } };
-static const zst_pad_template_t g_pad_audio_src[]    = { { "src", ZST_PAD_SRC, "audio/x-raw" } };
+static const zst_pad_template_t g_pad_video_src[]    = { { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "video/x-raw" } };
+static const zst_pad_template_t g_pad_video_sink[]   = { { "sink_%u", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-raw" } };
+static const zst_pad_template_t g_pad_audio_src[]    = { { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "audio/x-raw" } };
 static const zst_pad_template_t g_pad_audio_mixer[] = {
-    { "src", ZST_PAD_SRC, "audio/x-raw" },
-    { "sink_%u", ZST_PAD_SINK, "audio/x-raw" }
+    { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "audio/x-raw" },
+    { "sink_%u", ZST_PAD_SINK, ZST_PAD_ALWAYS, "audio/x-raw" }
 };
-static const zst_pad_template_t g_pad_srt_parser[]   = { { "src", ZST_PAD_SRC, "text/x-raw" } };
+static const zst_pad_template_t g_pad_srt_parser[]   = { { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "text/x-raw" } };
 
 #ifdef HAS_X264
 static const zst_pad_template_t g_pad_x264enc[] = {
-    { "sink", ZST_PAD_SINK, "video/x-raw" }, { "src", ZST_PAD_SRC, "video/x-h264" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-raw" }, { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "video/x-h264" }
 };
 #endif
 #ifdef HAS_X265
 static const zst_pad_template_t g_pad_x265enc[] = {
-    { "sink", ZST_PAD_SINK, "video/x-raw" }, { "src", ZST_PAD_SRC, "video/x-h265" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-raw" }, { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "video/x-h265" }
 };
 #endif
 #ifdef HAS_ONEAPI_ENCODER
 static const zst_pad_template_t g_pad_oneapienc[] = {
-    { "sink", ZST_PAD_SINK, "video/x-raw" },
-    { "src", ZST_PAD_SRC, "video/x-h264" },
-    { "src", ZST_PAD_SRC, "video/x-h265" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-raw" },
+    { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "video/x-h264" },
+    { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "video/x-h265" }
 };
 #endif
 #ifdef HAS_VAAPI_ENCODER
 static const zst_pad_template_t g_pad_vaapienc[] = {
-    { "sink", ZST_PAD_SINK, "video/x-raw" },
-    { "src", ZST_PAD_SRC, "video/x-h264" },
-    { "src", ZST_PAD_SRC, "video/x-h265" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-raw" },
+    { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "video/x-h264" },
+    { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "video/x-h265" }
 };
 #endif
 #ifdef HAS_VAAPI_DECODER
 static const zst_pad_template_t g_pad_vaapidec[] = {
-    { "sink", ZST_PAD_SINK, "video/x-h264" },
-    { "sink", ZST_PAD_SINK, "video/x-h265" },
-    { "src", ZST_PAD_SRC, "video/x-raw" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-h264" },
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-h265" },
+    { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "video/x-raw" }
 };
 #endif
 #ifdef HAS_FFMPEG
 static const zst_pad_template_t g_pad_h264dec[] = {
-    { "sink", ZST_PAD_SINK, "video/x-h264" }, { "src", ZST_PAD_SRC, "video/x-raw" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-h264" }, { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "video/x-raw" }
 };
 static const zst_pad_template_t g_pad_h265enc[] = {
-    { "sink", ZST_PAD_SINK, "video/x-raw" }, { "src", ZST_PAD_SRC, "video/x-h265" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-raw" }, { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "video/x-h265" }
 };
 static const zst_pad_template_t g_pad_h265dec[] = {
-    { "sink", ZST_PAD_SINK, "video/x-h265" }, { "src", ZST_PAD_SRC, "video/x-raw" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-h265" }, { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "video/x-raw" }
 };
 static const zst_pad_template_t g_pad_aacenc[] = {
-    { "sink", ZST_PAD_SINK, "audio/x-raw" }, { "src", ZST_PAD_SRC, "audio/x-aac" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "audio/x-raw" }, { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "audio/x-aac" }
 };
 static const zst_pad_template_t g_pad_aacdec[] = {
-    { "sink", ZST_PAD_SINK, "audio/x-aac" }, { "src", ZST_PAD_SRC, "audio/x-raw" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "audio/x-aac" }, { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "audio/x-raw" }
 };
 #endif
 
 static const zst_pad_template_t g_pad_video_filter[] = {
-    { "sink", ZST_PAD_SINK, "video/x-raw" }, { "src", ZST_PAD_SRC, "video/x-raw" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-raw" }, { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "video/x-raw" }
 };
 static const zst_pad_template_t g_pad_audio_filter[] = {
-    { "sink", ZST_PAD_SINK, "audio/x-raw" }, { "src", ZST_PAD_SRC, "audio/x-raw" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "audio/x-raw" }, { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "audio/x-raw" }
 };
 
 #ifdef HAS_FFMPEG
 static const zst_pad_template_t g_pad_mp4mux[]       = {
-    { "video", ZST_PAD_SINK, "video/x-h264" }, { "audio", ZST_PAD_SINK, "audio/x-aac" }, { "src", ZST_PAD_SRC, "video/quicktime" }
+    { "video", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-h264" }, { "audio", ZST_PAD_SINK, ZST_PAD_ALWAYS, "audio/x-aac" }, { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "video/quicktime" }
 };
 #endif
 static const zst_pad_template_t g_pad_net_src[] = {
-    { "src", ZST_PAD_SRC, "application/octet-stream" }
+    { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "application/octet-stream" }
 };
 static const zst_pad_template_t g_pad_net_sink[] = {
-    { "sink", ZST_PAD_SINK, "application/octet-stream" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "application/octet-stream" }
 };
 #ifdef HAS_FREETYPE
 static const zst_pad_template_t g_pad_textoverlay[]  = {
-    { "sink", ZST_PAD_SINK, "video/x-raw" }, { "text", ZST_PAD_SINK, "text/x-raw" }, { "src", ZST_PAD_SRC, "video/x-raw" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-raw" }, { "text", ZST_PAD_SINK, ZST_PAD_ALWAYS, "text/x-raw" }, { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "video/x-raw" }
 };
 #endif
 #ifdef HAS_FFMPEG
 static const zst_pad_template_t g_pad_rtsp_src[]     = {
-    { "video", ZST_PAD_SRC, "video/x-h264" }, { "audio", ZST_PAD_SRC, "audio/x-aac" }
+    { "video", ZST_PAD_SRC, ZST_PAD_ALWAYS, "video/x-h264" }, { "audio", ZST_PAD_SRC, ZST_PAD_ALWAYS, "audio/x-aac" }
 };
 static const zst_pad_template_t g_pad_rtsp_sink[]    = {
-    { "video", ZST_PAD_SINK, "video/x-h264" }, { "audio", ZST_PAD_SINK, "audio/x-aac" }
+    { "video", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-h264" }, { "audio", ZST_PAD_SINK, ZST_PAD_ALWAYS, "audio/x-aac" }
 };
 #endif
 static const zst_pad_template_t g_pad_rtsp_server[]  = {
-    { "video_%u", ZST_PAD_SINK, "video/x-h264" }, { "audio_%u", ZST_PAD_SINK, "audio/x-aac" }
+    { "video_%u", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-h264" }, { "audio_%u", ZST_PAD_SINK, ZST_PAD_ALWAYS, "audio/x-aac" }
 };
 static const zst_pad_template_t g_pad_sdpmuxer[] = {
-    { "video", ZST_PAD_SINK, "video/x-h264;video/x-h265" },
-    { "audio", ZST_PAD_SINK, "audio/aac" },
-    { "src",   ZST_PAD_SRC,  "application/sdp" }
+    { "video", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-h264;video/x-h265" },
+    { "audio", ZST_PAD_SINK, ZST_PAD_ALWAYS, "audio/aac" },
+    { "src",   ZST_PAD_SRC,  ZST_PAD_ALWAYS, "application/sdp" }
 };
 static const zst_pad_template_t g_pad_rtppay[] = {
-    { "sink", ZST_PAD_SINK, "video/x-h264;video/x-h265;audio/x-aac;audio/aac;audio/x-raw" },
-    { "src",  ZST_PAD_SRC,  "application/x-rtp" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-h264;video/x-h265;audio/x-aac;audio/aac;audio/x-raw" },
+    { "src",  ZST_PAD_SRC,  ZST_PAD_ALWAYS, "application/x-rtp" }
 };
 
 #ifdef HAS_FFMPEG
 static const zst_pad_template_t g_pad_rtmp_src[]     = {
-    { "video", ZST_PAD_SRC, "video/x-h264" },
-    { "audio", ZST_PAD_SRC, "audio/x-aac" }
+    { "video", ZST_PAD_SRC, ZST_PAD_ALWAYS, "video/x-h264" },
+    { "audio", ZST_PAD_SRC, ZST_PAD_ALWAYS, "audio/x-aac" }
 };
 
 static const zst_pad_template_t g_pad_rtmp_sink[]    = {
-    { "video", ZST_PAD_SINK, "video/x-h264" },
-    { "audio", ZST_PAD_SINK, "audio/x-aac" }
+    { "video", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-h264" },
+    { "audio", ZST_PAD_SINK, ZST_PAD_ALWAYS, "audio/x-aac" }
 };
 
 static const zst_pad_template_t g_pad_tsmux[]       = {
-    { "video", ZST_PAD_SINK, "video/x-h264" }, { "audio", ZST_PAD_SINK, "audio/x-aac" }, { "src", ZST_PAD_SRC, "video/mpegts" }
+    { "video", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-h264" }, { "audio", ZST_PAD_SINK, ZST_PAD_ALWAYS, "audio/x-aac" }, { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "video/mpegts" }
 };
 
 static const zst_pad_template_t g_pad_tsdemux[]     = {
-    { "sink", ZST_PAD_SINK, "video/mpegts" }, { "video", ZST_PAD_SRC, "video/x-h264" }, { "audio", ZST_PAD_SRC, "audio/x-aac" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/mpegts" },
+    { "video_%u", ZST_PAD_SRC, ZST_PAD_SOMETIMES, "video/x-h264;video/x-h265;video/mpeg2;ANY" },
+    { "audio_%u", ZST_PAD_SRC, ZST_PAD_SOMETIMES, "audio/aac;audio/mpeg;audio/ac3;ANY" },
+    { "data_%u", ZST_PAD_SRC, ZST_PAD_SOMETIMES, "ANY" }
 };
 
 static const zst_pad_template_t g_pad_mp4demux[]     = {
-    { "sink", ZST_PAD_SINK, "video/quicktime" }, { "video", ZST_PAD_SRC, "video/x-h264" }, { "audio", ZST_PAD_SRC, "audio/x-aac" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/quicktime;video/mp4;ANY" },
+    { "video_%u", ZST_PAD_SRC, ZST_PAD_SOMETIMES, "video/x-h264;video/x-h265;video/mpeg4;video/x-vp9;video/x-av1;ANY" },
+    { "audio_%u", ZST_PAD_SRC, ZST_PAD_SOMETIMES, "audio/aac;audio/mpeg;audio/opus;audio/vorbis;audio/flac;ANY" },
+    { "data_%u", ZST_PAD_SRC, ZST_PAD_SOMETIMES, "ANY" }
 };
 #endif
 
@@ -436,7 +442,8 @@ static const zst_property_spec_t g_builtin_tsdemux_props[] = {
 };
 
 static const zst_property_spec_t g_builtin_mp4demux_props[] = {
-    { "location", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Input MP4 file path (optional; enables direct-file mode)" }
+    { "location", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Input MP4 file path (optional; enables direct-file mode)" },
+    { "real-time-pacing", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Make stream output at pts timing" }
 };
 #endif
 

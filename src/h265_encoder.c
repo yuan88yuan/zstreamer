@@ -573,8 +573,8 @@ static const zst_property_spec_t g_h265enc_properties[] = {
 };
 
 static const zst_pad_template_t g_h265enc_pads[] = {
-    { "sink", ZST_PAD_SINK, "video/x-raw" },
-    { "src", ZST_PAD_SRC, "video/x-h265" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-raw" },
+    { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "video/x-h265" }
 };
 
 static const zst_element_desc_t g_h265enc_elements[] = {

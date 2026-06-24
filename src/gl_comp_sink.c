@@ -1464,7 +1464,7 @@ static const zst_property_spec_t g_glcompsink_properties[] = {
 };
 
 static const zst_pad_template_t g_glcompsink_pads[] = {
-    { "sink_%u", ZST_PAD_SINK, "video/x-raw" }
+    { "sink_%u", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-raw" }
 };
 
 static const zst_element_desc_t g_glcompsink_elements[] = {

@@ -131,16 +131,22 @@ static void test_real_time_pacing(void) {
         zst_pipeline_add(pipe, demux);
         zst_pipeline_add(pipe, sink);
 
-        assert_ok(zst_pad_link(zst_element_get_pad(demux, "video"), zst_element_get_pad(sink, "sink")), "demux->sink");
-
-        zst_pad_add_probe(zst_element_get_pad(demux, "video"), ZST_PAD_PROBE_PRE_BUFFER, probe_cb, NULL);
-
+        /* Set state to PLAYING first — this triggers file open and dynamic pad creation */
         zst_clock_t* clock = zst_clock_system_create();
         zst_pipeline_set_clock(pipe, clock);
         zst_clock_unref(clock);
 
         assert_ok(zst_scheduler_attach(sched, pipe), "attach");
         assert_ok(zst_pipeline_set_state(pipe, ZST_STATE_PLAYING), "set PLAYING");
+
+        /* Now the demux has opened the file and created dynamic video_0 pad */
+        zst_pad_t* demux_src = zst_element_get_pad(demux, "video_0");
+        zst_pad_t* sink_pad = zst_element_get_pad(sink, "sink");
+        assert(demux_src != NULL);
+        assert(sink_pad != NULL);
+        assert_ok(zst_pad_link(demux_src, sink_pad), "demux->sink");
+
+        zst_pad_add_probe(demux_src, ZST_PAD_PROBE_PRE_BUFFER, probe_cb, NULL);
         assert_ok(zst_scheduler_run(sched), "run");
 
         for (;;) {
@@ -185,14 +191,19 @@ static void test_real_time_pacing(void) {
         zst_pipeline_add(pipe, demux);
         zst_pipeline_add(pipe, sink);
 
-        assert_ok(zst_pad_link(zst_element_get_pad(demux, "video"), zst_element_get_pad(sink, "sink")), "demux->sink");
-
         zst_clock_t* clock = zst_clock_system_create();
         zst_pipeline_set_clock(pipe, clock);
         zst_clock_unref(clock);
 
         assert_ok(zst_scheduler_attach(sched, pipe), "attach");
         assert_ok(zst_pipeline_set_state(pipe, ZST_STATE_PLAYING), "set PLAYING");
+
+        /* Now the demux has opened the file and created dynamic video_0 pad */
+        zst_pad_t* demux_src = zst_element_get_pad(demux, "video_0");
+        zst_pad_t* sink_pad = zst_element_get_pad(sink, "sink");
+        assert(demux_src != NULL);
+        assert(sink_pad != NULL);
+        assert_ok(zst_pad_link(demux_src, sink_pad), "demux->sink");
         assert_ok(zst_scheduler_run(sched), "run");
 
         for (;;) {

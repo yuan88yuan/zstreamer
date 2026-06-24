@@ -308,7 +308,7 @@ ZST_STATE_NULL  ──open──→  ZST_STATE_READY  ──start──→  ZST_
 | Segment Seeking (8c)        | ✅ Done                          |
 | SRT Transport Protocols     | ✅ Done                          |
 | MPEG-TS mux/demux           | ✅ Done                          |
-| MP4 Demuxer                 | ✅ Done                        |
+| MP4 Demuxer                 | ✅ Done (Phase F: refactored to dynamic pads) |
 | Audio Mixer (4am)           | ✅ Done (synchronous mixer with dynamic request sink pads, per-pad volume/mute, S16LE+F32LE, worker thread) |
 | ASRC Drift Compensation     | ✅ Done (PTS-based drift detection + swr_set_compensation in audioresampler; passthrough bypass fix allows ASRC with equal nominal rates) |
 | Fractional Rate Override    | ✅ Done (rate-numer/rate-denom properties on audioresampler for explicit fractional target rates; uses swr_set_compensation for fine-grained ratio adjustment) |

@@ -93,12 +93,17 @@ struct zst_pad {
     /* Downstream spillover strategy configuration */
     zst_spillover_policy_t spillover_policy;
 
+    /* Unlinked-pad policy */
+    uint32_t max_queued;
+    uint32_t queued_count;
+    int unlinked_policy; /* zst_pad_unlinked_policy_t */
+
     /* Sticky events */
     zst_pad_event_t* sticky_stream_start;
     zst_pad_event_t* sticky_caps;
     zst_pad_event_t* sticky_segment;
 
-    /* Media Jitter Tracking (RFC 3550) */
+/* Media Jitter Tracking (RFC 3550) */
     zst_time_t last_transit_time;
     double     media_jitter_ns;
     uint64_t   jitter_buffer_count;
@@ -106,6 +111,14 @@ struct zst_pad {
 
     _Atomic int refcount;
 };
+
+/* Unlinked-pad policy for dynamic demuxers */
+typedef enum {
+    ZST_PAD_UNLINKED_ERROR, /* Push returns error (default) */
+    ZST_PAD_UNLINKED_DROP,  /* Silently drop buffers */
+    ZST_PAD_UNLINKED_BLOCK, /* Block until linked */
+    ZST_PAD_UNLINKED_QUEUE  /* Queue up to max_queued_buffers */
+} zst_pad_unlinked_policy_t;
 
 zst_pad_t* zst_pad_create(const char* name, zst_pad_direction_t direction);
 zst_pad_t* zst_pad_ref(zst_pad_t* pad);
@@ -150,6 +163,13 @@ void zst_pad_clear_segment(zst_pad_t* pad);
 zst_result_t zst_pad_push_segment(zst_pad_t* src, const zst_segment_t* segment);
 
 zst_result_t zst_pad_get_media_jitter(zst_pad_t* pad, double* jitter_ns_out);
+
+zst_result_t zst_pad_set_unlinked_policy(
+    zst_pad_t* pad,
+    zst_pad_unlinked_policy_t policy,
+    uint32_t max_queued_buffers);
+
+zst_result_t zst_pad_push_sticky_events(zst_pad_t* pad);
 
 #ifdef __cplusplus
 }

@@ -725,7 +725,7 @@ plugin_create_element(const char* name)
 }
 
 static const zst_pad_template_t g_v4l2src_pads[] = {
-    { "src", ZST_PAD_SRC, "video/x-raw" }
+    { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "video/x-raw" }
 };
 
 static const zst_property_spec_t g_v4l2src_props[] = {

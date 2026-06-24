@@ -935,8 +935,8 @@ plugin_create_element(const char* name)
 }
 
 static const zst_pad_template_t g_rtmpsink_pads[] = {
-    { "video", ZST_PAD_SINK, "video/x-h264" },
-    { "audio", ZST_PAD_SINK, "audio/x-aac" }
+    { "video", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-h264" },
+    { "audio", ZST_PAD_SINK, ZST_PAD_ALWAYS, "audio/x-aac" }
 };
 
 static const zst_property_spec_t g_rtmpsink_properties[] = {

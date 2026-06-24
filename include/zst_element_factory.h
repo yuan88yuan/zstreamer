@@ -34,9 +34,16 @@ typedef struct {
     const char* description;
 } zst_property_spec_t;
 
+typedef enum {
+    ZST_PAD_ALWAYS,     /* Pad exists for the lifetime of the element */
+    ZST_PAD_SOMETIMES,  /* Pad may appear/disappear during operation */
+    ZST_PAD_REQUEST     /* Pad created on demand via request_pad */
+} zst_pad_presence_t;
+
 typedef struct {
     const char* name;
     zst_pad_direction_t direction;
+    zst_pad_presence_t presence;
     const char* caps;
 } zst_pad_template_t;
 

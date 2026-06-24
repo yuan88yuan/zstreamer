@@ -677,7 +677,7 @@ static const zst_property_spec_t g_netsrc_properties[] = {
 };
 
 static const zst_pad_template_t g_netsrc_pads[] = {
-    { "src", ZST_PAD_SRC, "application/octet-stream" }
+    { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "application/octet-stream" }
 };
 
 static const zst_element_desc_t g_netsrc_elements[] = {

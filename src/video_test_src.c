@@ -568,7 +568,7 @@ static zst_element_t* plugin_create_element(const char* name)
 }
 
 static const zst_pad_template_t g_videotestsrc_pads[] = {
-    { "src", ZST_PAD_SRC, "ANY" }
+    { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "ANY" }
 };
 
 static const zst_element_desc_t g_videotestsrc_elements[] = {

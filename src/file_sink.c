@@ -165,7 +165,7 @@ static const zst_property_spec_t g_filesink_properties[] = {
 };
 
 static const zst_pad_template_t g_filesink_pads[] = {
-    { "sink", ZST_PAD_SINK, "ANY" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "ANY" }
 };
 
 static const zst_element_desc_t g_filesink_elements[] = {

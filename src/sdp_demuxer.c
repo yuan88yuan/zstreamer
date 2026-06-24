@@ -1706,7 +1706,7 @@ static zst_element_t* plugin_create_element(const char* name) {
 }
 
 static const zst_pad_template_t g_sdpdemux_pads[] = {
-    { "sink", ZST_PAD_SINK, "raw/rtp;application/x-rtp" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "raw/rtp;application/x-rtp" }
 };
 
 static const zst_property_spec_t g_sdpdemux_properties[] = {

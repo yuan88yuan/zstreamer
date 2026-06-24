@@ -932,8 +932,8 @@ plugin_create_element(const char* name)
 }
 
 static const zst_pad_template_t g_audioresampler_pads[] = {
-    { "sink", ZST_PAD_SINK, "audio/x-raw" },
-    { "src", ZST_PAD_SRC, "audio/x-raw" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "audio/x-raw" },
+    { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "audio/x-raw" }
 };
 
 static const zst_element_desc_t g_audioresampler_elements[] = {

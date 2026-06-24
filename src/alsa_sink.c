@@ -227,7 +227,7 @@ plugin_create_element(const char* name)
 }
 
 static const zst_pad_template_t g_alsasink_pads[] = {
-    { "sink", ZST_PAD_SINK, "audio/x-raw" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "audio/x-raw" }
 };
 
 static const zst_element_desc_t g_alsasink_elements[] = {

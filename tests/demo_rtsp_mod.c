@@ -52,8 +52,8 @@ static void cleanup_bunny_pipeline(zst_pipeline_t* pipe, zst_element_t* server) 
     zst_element_set_state(g_bunny.aenc, ZST_STATE_NULL);
     zst_element_set_state(g_bunny.aq, ZST_STATE_NULL);
 
-    // 2. Unlink all pads
-    zst_pad_unlink(zst_element_get_pad(g_bunny.demux, "video"));
+    // 2. Unlink all pads (demux pads are dynamic: video_0, audio_0)
+    zst_pad_unlink(zst_element_get_pad(g_bunny.demux, "video_0"));
     zst_pad_unlink(zst_element_get_pad(g_bunny.vdec, "sink"));
     zst_pad_unlink(zst_element_get_pad(g_bunny.vdec, "src"));
     zst_pad_unlink(zst_element_get_pad(g_bunny.venc, "sink"));
@@ -61,7 +61,7 @@ static void cleanup_bunny_pipeline(zst_pipeline_t* pipe, zst_element_t* server) 
     zst_pad_unlink(zst_element_get_pad(g_bunny.vq, "sink"));
     zst_pad_unlink(zst_element_get_pad(g_bunny.vq, "src"));
 
-    zst_pad_unlink(zst_element_get_pad(g_bunny.demux, "audio"));
+    zst_pad_unlink(zst_element_get_pad(g_bunny.demux, "audio_0"));
     zst_pad_unlink(zst_element_get_pad(g_bunny.adec, "sink"));
     zst_pad_unlink(zst_element_get_pad(g_bunny.adec, "src"));
     zst_pad_unlink(zst_element_get_pad(g_bunny.aenc, "sink"));
@@ -247,28 +247,7 @@ static zst_result_t on_demand_mount(zst_element_t* server, const char* name, voi
         zst_element_set_clock(vq, NULL);
         zst_element_set_clock(aq, NULL);
 
-        // 4. Link pads
-        // Video: demux(video) -> vdec -> venc -> vq -> server(bunny_video)
-        zst_pad_link(zst_element_get_pad(demux, "video"), zst_element_get_pad(vdec, "sink"));
-        zst_pad_link(zst_element_get_pad(vdec, "src"), zst_element_get_pad(venc, "sink"));
-        zst_pad_link(zst_element_get_pad(venc, "src"), zst_element_get_pad(vq, "sink"));
-        
-        char pad_name[128];
-        snprintf(pad_name, sizeof(pad_name), "%s_video", name);
-        zst_pad_link(zst_element_get_pad(vq, "src"), zst_element_get_pad(server, pad_name));
-
-        // Audio: demux(audio) -> adec -> aenc -> aq -> server(bunny_audio)
-        zst_pad_link(zst_element_get_pad(demux, "audio"), zst_element_get_pad(adec, "sink"));
-        zst_pad_link(zst_element_get_pad(adec, "src"), zst_element_get_pad(aenc, "sink"));
-        zst_pad_link(zst_element_get_pad(aenc, "src"), zst_element_get_pad(aq, "sink"));
-
-        snprintf(pad_name, sizeof(pad_name), "%s_audio", name);
-        zst_pad_link(zst_element_get_pad(aq, "src"), zst_element_get_pad(server, pad_name));
-
-        // 5. Update pipeline execution sorting
-        zst_pipeline_topological_sort(pipe);
-
-        // 6. Set states
+        // 4. Set states first so demux opens the file and creates dynamic pads
         zst_element_set_state(demux, ZST_STATE_READY);
         zst_element_set_state(vdec, ZST_STATE_READY);
         zst_element_set_state(venc, ZST_STATE_READY);
@@ -283,6 +262,28 @@ static zst_result_t on_demand_mount(zst_element_t* server, const char* name, voi
         zst_element_set_state(vq, ZST_STATE_PLAYING);
         zst_element_set_state(adec, ZST_STATE_PLAYING);
         zst_element_set_state(aenc, ZST_STATE_PLAYING);
+        zst_element_set_state(aq, ZST_STATE_PLAYING);
+
+        // 5. Link pads (demux pads are now dynamic: video_0, audio_0)
+        // Video: demux(video_0) -> vdec -> venc -> vq -> server(bunny_video)
+        zst_pad_link(zst_element_get_pad(demux, "video_0"), zst_element_get_pad(vdec, "sink"));
+        zst_pad_link(zst_element_get_pad(vdec, "src"), zst_element_get_pad(venc, "sink"));
+        zst_pad_link(zst_element_get_pad(venc, "src"), zst_element_get_pad(vq, "sink"));
+        
+        char pad_name[128];
+        snprintf(pad_name, sizeof(pad_name), "%s_video", name);
+        zst_pad_link(zst_element_get_pad(vq, "src"), zst_element_get_pad(server, pad_name));
+
+        // Audio: demux(audio_0) -> adec -> aenc -> aq -> server(bunny_audio)
+        zst_pad_link(zst_element_get_pad(demux, "audio_0"), zst_element_get_pad(adec, "sink"));
+        zst_pad_link(zst_element_get_pad(adec, "src"), zst_element_get_pad(aenc, "sink"));
+        zst_pad_link(zst_element_get_pad(aenc, "src"), zst_element_get_pad(aq, "sink"));
+
+        snprintf(pad_name, sizeof(pad_name), "%s_audio", name);
+        zst_pad_link(zst_element_get_pad(aq, "src"), zst_element_get_pad(server, pad_name));
+
+        // 6. Update pipeline execution sorting
+        zst_pipeline_topological_sort(pipe);
         zst_element_set_state(aq, ZST_STATE_PLAYING);
 
         printf("[Demo App] Successfully mounted /%s HTTP transcode pipeline\n", name);

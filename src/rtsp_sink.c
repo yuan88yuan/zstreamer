@@ -501,8 +501,8 @@ plugin_create_element(const char* name)
 }
 
 static const zst_pad_template_t g_rtspsink_pads[] = {
-    { "video", ZST_PAD_SINK, "ANY" },
-    { "audio", ZST_PAD_SINK, "ANY" }
+    { "video", ZST_PAD_SINK, ZST_PAD_ALWAYS, "ANY" },
+    { "audio", ZST_PAD_SINK, ZST_PAD_ALWAYS, "ANY" }
 };
 
 static const zst_property_spec_t g_rtspsink_properties[] = {

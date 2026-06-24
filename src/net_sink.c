@@ -702,7 +702,7 @@ static const zst_property_spec_t g_netsink_properties[] = {
 };
 
 static const zst_pad_template_t g_netsink_pads[] = {
-    { "sink", ZST_PAD_SINK, "application/octet-stream" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "application/octet-stream" }
 };
 
 static const zst_element_desc_t g_netsink_elements[] = {

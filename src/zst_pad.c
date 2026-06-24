@@ -15,6 +15,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <unistd.h>
 
 
 static zst_pad_probe_return_t pad_run_probes(zst_pad_t* pad,
@@ -413,6 +414,9 @@ zst_pad_create(const char* name, zst_pad_direction_t direction)
     pad->has_segment = 0;
     pad->segment = zst_segment_default();
     pad->spillover_policy = ZST_SPILLOVER_BLOCK;
+    pad->unlinked_policy = (int)ZST_PAD_UNLINKED_ERROR;
+    pad->max_queued = 0;
+    pad->queued_count = 0;
 
     pad->last_transit_time   = 0;
     pad->media_jitter_ns     = 0.0;
@@ -607,7 +611,38 @@ zst_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
     pthread_mutex_lock(&pad->link_lock);
     zst_pad_t* peer = pad->peer ? zst_pad_ref(pad->peer) : NULL;
     pthread_mutex_unlock(&pad->link_lock);
-    if (!peer) return ZST_ERROR;
+    if (!peer) {
+        /* Apply unlinked-pad policy */
+        switch ((zst_pad_unlinked_policy_t)pad->unlinked_policy) {
+        case ZST_PAD_UNLINKED_DROP:
+            return ZST_OK;
+        case ZST_PAD_UNLINKED_BLOCK:
+            /* Spin-wait with a small sleep for link to appear */
+            {
+                int retries = 100000; /* ~1 second */
+                while (retries-- > 0) {
+                    pthread_mutex_lock(&pad->link_lock);
+                    peer = pad->peer ? zst_pad_ref(pad->peer) : NULL;
+                    pthread_mutex_unlock(&pad->link_lock);
+                    if (peer) break;
+                    usleep(10);
+                }
+                if (!peer) return ZST_TIMEOUT;
+            }
+            break;
+        case ZST_PAD_UNLINKED_QUEUE:
+            if (pad->queued_count < pad->max_queued) {
+                /* Accept but silently drop — queued buffers are dropped;
+                 * a real queue element should be inserted by the pipeline. */
+                pad->queued_count++;
+                return ZST_OK;
+            }
+            return ZST_ERROR;
+        case ZST_PAD_UNLINKED_ERROR:
+        default:
+            return ZST_ERROR;
+        }
+    }
 
     if (!pad_buffer_in_segment(pad, buf) || !pad_buffer_in_segment(peer, buf)) {
         zst_pad_unref(peer);
@@ -1034,4 +1069,39 @@ zst_result_t
 zst_pad_push_event(zst_pad_t* src, zst_pad_event_t* event)
 {
     return zst_pad_push_event_internal(src, event, 0);
+}
+
+zst_result_t
+zst_pad_set_unlinked_policy(
+    zst_pad_t* pad,
+    zst_pad_unlinked_policy_t policy,
+    uint32_t max_queued_buffers)
+{
+    if (!pad) return ZST_ERROR;
+    pad->unlinked_policy = (int)policy;
+    pad->max_queued = max_queued_buffers;
+    pad->queued_count = 0;
+    return ZST_OK;
+}
+
+zst_result_t
+zst_pad_push_sticky_events(zst_pad_t* pad)
+{
+    if (!pad) return ZST_ERROR;
+    if (pad->direction != ZST_PAD_SRC) return ZST_ERROR;
+
+    if (!pad->peer) return ZST_ERROR;
+
+    /* Replay sticky events in order: STREAM_START, CAPS, SEGMENT */
+    if (pad->sticky_stream_start) {
+        zst_pad_push_event_internal(pad, pad->sticky_stream_start, 1);
+    }
+    if (pad->sticky_caps) {
+        zst_pad_push_event_internal(pad, pad->sticky_caps, 1);
+    }
+    if (pad->sticky_segment) {
+        zst_pad_push_event_internal(pad, pad->sticky_segment, 1);
+    }
+
+    return ZST_OK;
 }

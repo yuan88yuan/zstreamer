@@ -1968,8 +1968,8 @@ static zst_element_t* plugin_create(const char* name) {
 }
 
 static const zst_pad_template_t g_rtspsrc_pads[] = {
-    { "video", ZST_PAD_SRC, "ANY" },
-    { "audio", ZST_PAD_SRC, "ANY" }
+    { "video", ZST_PAD_SRC, ZST_PAD_ALWAYS, "ANY" },
+    { "audio", ZST_PAD_SRC, ZST_PAD_ALWAYS, "ANY" }
 };
 
 static const zst_property_spec_t g_rtspsrc_properties[] = {

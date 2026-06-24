@@ -612,7 +612,7 @@ static const zst_property_spec_t g_x11sink_properties[] = {
 };
 
 static const zst_pad_template_t g_x11sink_pads[] = {
-    { "sink", ZST_PAD_SINK, "video/x-raw" }
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-raw" }
 };
 
 static const zst_element_desc_t g_x11sink_elements[] = {
