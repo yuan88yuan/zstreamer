@@ -419,7 +419,11 @@ static const zst_property_spec_t g_builtin_rtspsink_props[] = {
     { "mount-point", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "live", "RTSP mount point" },
     { "transport", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "tcp", "Preferred RTSP transport" },
     { "max-clients", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1", "Maximum concurrent clients requested by the application" },
-    { "rtcp-interval-ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5000", "RTCP sender report interval in milliseconds" }
+    { "rtcp-interval-ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5000", "RTCP sender report interval in milliseconds" },
+    { "udp-timestamp-pacing", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "true", "Pace UDP RTSP output according to buffer timestamps" },
+    { "udp-pacing-tolerance-ms", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5", "UDP timestamp pacing tolerance in milliseconds" },
+    { "udp-pacing-reset-threshold-ms", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "2000", "UDP timestamp discontinuity threshold before resetting pacing" },
+    { "udp-max-lateness-ms", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "0", "Drop UDP RTSP buffers later than this many milliseconds; 0 disables dropping" }
 };
 
 static const zst_property_spec_t g_builtin_h265enc_props[] = {
@@ -524,11 +528,15 @@ static const zst_property_spec_t g_builtin_netsrc_props[] = {
 static const zst_property_spec_t g_builtin_netsink_props[] = {
     { "host", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "127.0.0.1", "Network host to connect to or listen on" },
     { "port", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5000", "Network port" },
-    { "protocol", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "tcp", "Network protocol (tcp, udp, udp-client, unix, tcp-server, unix-server)" },
+    { "protocol", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "tcp", "Network protocol (tcp, udp, udp-client, udp-server, unix, tcp-server, unix-server)" },
     { "path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Unix domain socket path" },
     { "write-timeout", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1000", "Write timeout in milliseconds" },
     { "ttl", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "16", "Multicast TTL for UDP" },
-    { "loop", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "true", "Enable UDP multicast loopback" }
+    { "loop", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "true", "Enable UDP multicast loopback" },
+    { "timestamp-pacing", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Pace UDP sends according to buffer timestamps" },
+    { "pacing-tolerance-ms", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5", "Timestamp pacing tolerance in milliseconds" },
+    { "pacing-reset-threshold-ms", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "2000", "Timestamp discontinuity threshold before resetting pacing" },
+    { "max-lateness-ms", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "0", "Drop UDP buffers later than this many milliseconds; 0 disables dropping" }
 };
 
 static const zst_property_spec_t g_builtin_rtppay_props[] = {

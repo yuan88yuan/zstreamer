@@ -18,6 +18,10 @@ extern "C" {
 #define ZST_NET_SINK_PROP_WRITE_TIMEOUT "write-timeout"
 #define ZST_NET_SINK_PROP_TTL "ttl"
 #define ZST_NET_SINK_PROP_LOOP "loop"
+#define ZST_NET_SINK_PROP_TIMESTAMP_PACING "timestamp-pacing"
+#define ZST_NET_SINK_PROP_PACING_TOLERANCE_MS "pacing-tolerance-ms"
+#define ZST_NET_SINK_PROP_PACING_RESET_THRESHOLD_MS "pacing-reset-threshold-ms"
+#define ZST_NET_SINK_PROP_MAX_LATENESS_MS "max-lateness-ms"
 
 #define ZST_NET_SINK_PROTOCOL_TCP_CLIENT "tcp-client"
 #define ZST_NET_SINK_PROTOCOL_TCP_SERVER "tcp-server"

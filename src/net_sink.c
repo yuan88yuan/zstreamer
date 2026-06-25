@@ -23,6 +23,7 @@
 #include "zst_element.h"
 #include "zst_buffer.h"
 #include "zst_log.h"
+#include "zst_timestamp_pacer.h"
 
 typedef enum {
     NET_SINK_PROTOCOL_TCP_CLIENT,
@@ -45,6 +46,12 @@ typedef struct {
     uint64_t write_timeout_ms;
     int multicast_ttl;
     int multicast_loop;
+    int timestamp_pacing;
+    uint64_t pacing_tolerance_ms;
+    uint64_t pacing_reset_threshold_ms;
+    uint64_t max_lateness_ms;
+    zst_timestamp_pacer_t pacer;
+    bool pacer_initialized;
     struct sockaddr_in client_addr;
     bool client_registered;
 } net_sink_t;
@@ -296,6 +303,79 @@ net_sink_string_to_protocol(const char* value, net_sink_protocol_t* out)
     return true;
 }
 
+static bool
+net_sink_parse_bool(const char* value)
+{
+    return value &&
+        (strcmp(value, "1") == 0 ||
+         strcmp(value, "true") == 0 ||
+         strcmp(value, "yes") == 0 ||
+         strcmp(value, "on") == 0);
+}
+
+static zst_time_t
+net_sink_ms_to_ns(uint64_t value_ms)
+{
+    if (value_ms > UINT64_MAX / 1000000ULL) {
+        return UINT64_MAX;
+    }
+    return (zst_time_t)(value_ms * 1000000ULL);
+}
+
+static void
+net_sink_apply_pacer_config(net_sink_t* s)
+{
+    if (!s || !s->pacer_initialized) return;
+
+    zst_timestamp_pacer_set_enabled(&s->pacer, s->timestamp_pacing);
+    zst_timestamp_pacer_configure(&s->pacer,
+                                  net_sink_ms_to_ns(s->pacing_tolerance_ms),
+                                  net_sink_ms_to_ns(s->pacing_reset_threshold_ms),
+                                  net_sink_ms_to_ns(s->max_lateness_ms));
+}
+
+static zst_result_t
+net_sink_init_pacer(net_sink_t* s)
+{
+    if (!s) return ZST_ERROR;
+    if (!s->pacer_initialized) {
+        zst_timestamp_pacer_init(&s->pacer);
+        s->pacer_initialized = true;
+    }
+    net_sink_apply_pacer_config(s);
+    zst_timestamp_pacer_reset(&s->pacer);
+    return ZST_OK;
+}
+
+static void
+net_sink_deinit_pacer(net_sink_t* s)
+{
+    if (!s || !s->pacer_initialized) return;
+    zst_timestamp_pacer_deinit(&s->pacer);
+    memset(&s->pacer, 0, sizeof(s->pacer));
+    s->pacer_initialized = false;
+}
+
+static zst_result_t
+net_sink_pace_udp_buffer(zst_element_t* el, net_sink_t* s, zst_buffer_t* in)
+{
+    if (!el || !s || !in || !s->timestamp_pacing) {
+        return ZST_OK;
+    }
+    if (!s->pacer_initialized) {
+        zst_result_t init_res = net_sink_init_pacer(s);
+        if (init_res != ZST_OK) return init_res;
+    }
+
+    zst_time_t timestamp = in->dts ? in->dts : in->pts;
+    int dropped = 0;
+    zst_result_t ret = zst_timestamp_pacer_wait(&s->pacer, el->clock, timestamp, &dropped);
+    if (ret == ZST_AGAIN && dropped) {
+        return ZST_AGAIN;
+    }
+    return ret;
+}
+
 static zst_result_t
 net_sink_open(zst_element_t* el)
 {
@@ -391,6 +471,7 @@ net_sink_close(zst_element_t* el)
     net_sink_t* s = el->priv;
     net_sink_close_connection(s);
     net_sink_close_listen(s);
+    net_sink_deinit_pacer(s);
     return ZST_OK;
 }
 
@@ -400,6 +481,10 @@ net_sink_start(zst_element_t* el)
     net_sink_t* s = el->priv;
     s->client_registered = false;
     memset(&s->client_addr, 0, sizeof(s->client_addr));
+    if (s->pacer_initialized) {
+        net_sink_apply_pacer_config(s);
+        zst_timestamp_pacer_reset(&s->pacer);
+    }
     if (s->protocol == NET_SINK_PROTOCOL_TCP_CLIENT || s->protocol == NET_SINK_PROTOCOL_UNIX_CLIENT) {
         s->next_reconnect_time_ms = 0;
     }
@@ -411,6 +496,9 @@ net_sink_stop(zst_element_t* el)
 {
     net_sink_t* s = el->priv;
     net_sink_close_connection(s);
+    if (s->pacer_initialized) {
+        zst_timestamp_pacer_reset(&s->pacer);
+    }
     return ZST_OK;
 }
 
@@ -455,6 +543,10 @@ net_sink_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
                          ip_str, ntohs(sender_addr.sin_port));
         }
 
+        zst_result_t pace_res = net_sink_pace_udp_buffer(el, s, in);
+        if (pace_res == ZST_AGAIN) return ZST_OK;
+        if (pace_res != ZST_OK) return pace_res;
+
         ssize_t n = sendto(s->conn_fd, in->memory.data, in->memory.size, 0,
                            (struct sockaddr*)&s->client_addr, sizeof(s->client_addr));
         if (n >= 0 && (size_t)n == in->memory.size) return ZST_OK;
@@ -478,6 +570,10 @@ net_sink_process(zst_element_t* el, zst_buffer_t* in, zst_buffer_t** out)
             ZST_LOG_WARN("netsink", "invalid UDP host '%s'", s->host);
             return ZST_ERROR;
         }
+        zst_result_t pace_res = net_sink_pace_udp_buffer(el, s, in);
+        if (pace_res == ZST_AGAIN) return ZST_OK;
+        if (pace_res != ZST_OK) return pace_res;
+
         ssize_t n = sendto(s->conn_fd, in->memory.data, in->memory.size, 0,
                            (struct sockaddr*)&addr, sizeof(addr));
         if (n >= 0 && (size_t)n == in->memory.size) return ZST_OK;
@@ -598,7 +694,33 @@ net_sink_set_property(zst_element_t* el, const char* name, const char* value)
         return ZST_OK;
     }
     if (strcmp(name, "loop") == 0 || strcmp(name, "multicast-loop") == 0) {
-        s->multicast_loop = (strcmp(value, "1") == 0 || strcmp(value, "true") == 0 || strcmp(value, "yes") == 0 || strcmp(value, "on") == 0);
+        s->multicast_loop = net_sink_parse_bool(value);
+        return ZST_OK;
+    }
+    if (strcmp(name, "timestamp-pacing") == 0) {
+        s->timestamp_pacing = net_sink_parse_bool(value);
+        net_sink_apply_pacer_config(s);
+        return ZST_OK;
+    }
+    if (strcmp(name, "pacing-tolerance-ms") == 0) {
+        long long v = atoll(value);
+        if (v < 0) return ZST_ERROR;
+        s->pacing_tolerance_ms = (uint64_t)v;
+        net_sink_apply_pacer_config(s);
+        return ZST_OK;
+    }
+    if (strcmp(name, "pacing-reset-threshold-ms") == 0) {
+        long long v = atoll(value);
+        if (v < 0) return ZST_ERROR;
+        s->pacing_reset_threshold_ms = (uint64_t)v;
+        net_sink_apply_pacer_config(s);
+        return ZST_OK;
+    }
+    if (strcmp(name, "max-lateness-ms") == 0) {
+        long long v = atoll(value);
+        if (v < 0) return ZST_ERROR;
+        s->max_lateness_ms = (uint64_t)v;
+        net_sink_apply_pacer_config(s);
         return ZST_OK;
     }
     return ZST_ERROR;
@@ -636,6 +758,22 @@ net_sink_get_property(zst_element_t* el, const char* name, char* value_out, size
         snprintf(value_out, max_len, "%s", s->multicast_loop ? "true" : "false");
         return ZST_OK;
     }
+    if (strcmp(name, "timestamp-pacing") == 0) {
+        snprintf(value_out, max_len, "%s", s->timestamp_pacing ? "true" : "false");
+        return ZST_OK;
+    }
+    if (strcmp(name, "pacing-tolerance-ms") == 0) {
+        snprintf(value_out, max_len, "%llu", (unsigned long long)s->pacing_tolerance_ms);
+        return ZST_OK;
+    }
+    if (strcmp(name, "pacing-reset-threshold-ms") == 0) {
+        snprintf(value_out, max_len, "%llu", (unsigned long long)s->pacing_reset_threshold_ms);
+        return ZST_OK;
+    }
+    if (strcmp(name, "max-lateness-ms") == 0) {
+        snprintf(value_out, max_len, "%llu", (unsigned long long)s->max_lateness_ms);
+        return ZST_OK;
+    }
     return ZST_ERROR;
 }
 
@@ -670,6 +808,11 @@ zst_net_sink_create(void)
     priv->write_timeout_ms = 100;
     priv->multicast_ttl = 16;
     priv->multicast_loop = 1;
+    priv->timestamp_pacing = 0;
+    priv->pacing_tolerance_ms = 5;
+    priv->pacing_reset_threshold_ms = 2000;
+    priv->max_lateness_ms = 0;
+    priv->pacer_initialized = false;
 
     el = zst_element_create(&g_ops, priv);
     sink = zst_pad_create("sink", ZST_PAD_SINK);
@@ -698,7 +841,11 @@ static const zst_property_spec_t g_netsink_properties[] = {
     { "path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Unix domain socket path" },
     { "write-timeout", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1000", "Write timeout in milliseconds" },
     { "ttl", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "16", "Multicast TTL for UDP" },
-    { "loop", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "true", "Enable UDP multicast loopback" }
+    { "loop", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "true", "Enable UDP multicast loopback" },
+    { "timestamp-pacing", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "false", "Pace UDP sends according to buffer timestamps" },
+    { "pacing-tolerance-ms", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5", "Timestamp pacing tolerance in milliseconds" },
+    { "pacing-reset-threshold-ms", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "2000", "Timestamp discontinuity threshold before resetting pacing" },
+    { "max-lateness-ms", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "0", "Drop UDP buffers later than this many milliseconds; 0 disables dropping" }
 };
 
 static const zst_pad_template_t g_netsink_pads[] = {

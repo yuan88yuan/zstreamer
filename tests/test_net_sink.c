@@ -163,6 +163,25 @@ test_net_sink_properties(void)
     assert(zst_element_set_property(sink, "write-timeout", "500") == ZST_OK);
     assert(zst_element_get_property(sink, "write-timeout", value, sizeof(value)) == ZST_OK);
     assert(strcmp(value, "500") == 0);
+
+    /* Test UDP timestamp pacing properties */
+    assert(zst_element_get_property(sink, "timestamp-pacing", value, sizeof(value)) == ZST_OK);
+    assert(strcmp(value, "false") == 0);
+    assert(zst_element_set_property(sink, "timestamp-pacing", "true") == ZST_OK);
+    assert(zst_element_get_property(sink, "timestamp-pacing", value, sizeof(value)) == ZST_OK);
+    assert(strcmp(value, "true") == 0);
+
+    assert(zst_element_set_property(sink, "pacing-tolerance-ms", "7") == ZST_OK);
+    assert(zst_element_get_property(sink, "pacing-tolerance-ms", value, sizeof(value)) == ZST_OK);
+    assert(strcmp(value, "7") == 0);
+
+    assert(zst_element_set_property(sink, "pacing-reset-threshold-ms", "3000") == ZST_OK);
+    assert(zst_element_get_property(sink, "pacing-reset-threshold-ms", value, sizeof(value)) == ZST_OK);
+    assert(strcmp(value, "3000") == 0);
+
+    assert(zst_element_set_property(sink, "max-lateness-ms", "25") == ZST_OK);
+    assert(zst_element_get_property(sink, "max-lateness-ms", value, sizeof(value)) == ZST_OK);
+    assert(strcmp(value, "25") == 0);
     
     zst_element_destroy(sink);
     printf("✓ Property test passed\n");

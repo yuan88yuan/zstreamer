@@ -197,19 +197,19 @@ Properties:
 
 ### Phase A — Internal helper
 
-- [ ] Add `src/zst_timestamp_pacer.{c,h}`.
-- [ ] Add helper source to `CMakeLists.txt` core/elements sources as needed.
-- [ ] Implement init/reset/deinit and delta-based wait.
-- [ ] Use safe unsigned `zst_time_t` comparisons; never subtract unless `a > b` is checked.
-- [ ] Add lightweight stats counters for paced, dropped, and total wait time.
+- [x] Add `src/zst_timestamp_pacer.{c,h}`.
+- [x] Add helper source to `CMakeLists.txt` core/elements sources as needed.
+- [x] Implement init/reset/deinit and delta-based wait.
+- [x] Use safe unsigned `zst_time_t` comparisons; never subtract unless `a > b` is checked.
+- [x] Add lightweight stats counters for paced, dropped, reset count, and total wait time.
 
 ### Phase B — `netsink` integration
 
-- [ ] Add pacer fields and properties.
-- [ ] Reset pacer in `open/start/stop` and deinit in destroy/close path as appropriate.
-- [ ] Call pacer only in UDP send paths before `sendto()`.
-- [ ] Update plugin property descriptors.
-- [ ] Update multicast demo to enable `timestamp-pacing=true` where RTP over UDP is expected to be real-time.
+- [x] Add pacer fields and properties.
+- [x] Reset pacer in `start/stop` and deinit in `close` path as appropriate.
+- [x] Call pacer only in UDP send paths before `sendto()`.
+- [x] Update plugin and built-in property descriptors.
+- [x] Update multicast demo to enable `timestamp-pacing=true` where RTP over UDP is expected to be real-time.
 
 ### Phase C — `rtsp_server` integration
 
@@ -221,9 +221,9 @@ Properties:
 
 ### Phase D — `rtspsink` integration
 
-- [ ] Add video/audio pacers and UDP pacing properties.
-- [ ] Pace before `av_interleaved_write_frame()` only when `transport=udp`.
-- [ ] Verify FFmpeg muxer options do not already introduce conflicting pacing.
+- [x] Add video/audio pacers and UDP pacing properties.
+- [x] Pace before `av_interleaved_write_frame()` only when `transport=udp` or UDP multicast.
+- [x] Verify FFmpeg muxer options do not already introduce conflicting pacing; existing RTSP options remain limited to transport/listen/RTCP interval.
 
 ### Phase E — Tests
 

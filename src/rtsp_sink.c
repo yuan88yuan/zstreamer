@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <strings.h>
 
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -17,6 +18,7 @@
 #include "zst_buffer.h"
 #include "zst_caps.h"
 #include "zst_log.h"
+#include "zst_timestamp_pacer.h"
 
 typedef struct {
     AVFormatContext* fc;
@@ -31,6 +33,14 @@ typedef struct {
     int              max_clients;
     int              rtcp_interval_ms;
     char             transport[32];
+    int              udp_timestamp_pacing;
+    uint64_t         udp_pacing_tolerance_ms;
+    uint64_t         udp_pacing_reset_threshold_ms;
+    uint64_t         udp_max_lateness_ms;
+    zst_timestamp_pacer_t video_pacer;
+    zst_timestamp_pacer_t audio_pacer;
+    int              video_pacer_initialized;
+    int              audio_pacer_initialized;
 } rtsp_sink_t;
 
 static void
@@ -42,6 +52,113 @@ rtsp_sink_update_url(rtsp_sink_t* s)
         s->mount_point[sizeof(s->mount_point) - 1] = '\0';
     }
     snprintf(s->url, sizeof(s->url), "rtsp://0.0.0.0:%d/%s", s->listen_port, s->mount_point);
+}
+
+static int
+rtsp_sink_parse_bool(const char* value)
+{
+    return value &&
+        (strcmp(value, "1") == 0 ||
+         strcasecmp(value, "true") == 0 ||
+         strcasecmp(value, "yes") == 0 ||
+         strcasecmp(value, "on") == 0);
+}
+
+static zst_time_t
+rtsp_sink_ms_to_ns(uint64_t value_ms)
+{
+    if (value_ms > UINT64_MAX / 1000000ULL) {
+        return UINT64_MAX;
+    }
+    return (zst_time_t)(value_ms * 1000000ULL);
+}
+
+static int
+rtsp_sink_transport_is_udp(const rtsp_sink_t* s)
+{
+    if (!s || !s->transport[0]) return 0;
+    return strcasecmp(s->transport, "udp") == 0 ||
+           strcasecmp(s->transport, "udp_multicast") == 0 ||
+           strcasecmp(s->transport, "multicast") == 0;
+}
+
+static void
+rtsp_sink_apply_pacer_config(rtsp_sink_t* s, zst_timestamp_pacer_t* pacer)
+{
+    if (!s || !pacer) return;
+    zst_timestamp_pacer_set_enabled(pacer,
+                                    s->udp_timestamp_pacing &&
+                                    rtsp_sink_transport_is_udp(s));
+    zst_timestamp_pacer_configure(pacer,
+                                  rtsp_sink_ms_to_ns(s->udp_pacing_tolerance_ms),
+                                  rtsp_sink_ms_to_ns(s->udp_pacing_reset_threshold_ms),
+                                  rtsp_sink_ms_to_ns(s->udp_max_lateness_ms));
+}
+
+static zst_result_t
+rtsp_sink_init_pacer(rtsp_sink_t* s, int is_video)
+{
+    if (!s) return ZST_ERROR;
+
+    zst_timestamp_pacer_t* pacer = is_video ? &s->video_pacer : &s->audio_pacer;
+    int* initialized = is_video ? &s->video_pacer_initialized : &s->audio_pacer_initialized;
+
+    if (!*initialized) {
+        zst_timestamp_pacer_init(pacer);
+        *initialized = 1;
+    }
+    rtsp_sink_apply_pacer_config(s, pacer);
+    return ZST_OK;
+}
+
+static void
+rtsp_sink_reset_pacers(rtsp_sink_t* s)
+{
+    if (!s) return;
+    if (s->video_pacer_initialized) {
+        rtsp_sink_apply_pacer_config(s, &s->video_pacer);
+        zst_timestamp_pacer_reset(&s->video_pacer);
+    }
+    if (s->audio_pacer_initialized) {
+        rtsp_sink_apply_pacer_config(s, &s->audio_pacer);
+        zst_timestamp_pacer_reset(&s->audio_pacer);
+    }
+}
+
+static void
+rtsp_sink_deinit_pacers(rtsp_sink_t* s)
+{
+    if (!s) return;
+    if (s->video_pacer_initialized) {
+        zst_timestamp_pacer_deinit(&s->video_pacer);
+        memset(&s->video_pacer, 0, sizeof(s->video_pacer));
+        s->video_pacer_initialized = 0;
+    }
+    if (s->audio_pacer_initialized) {
+        zst_timestamp_pacer_deinit(&s->audio_pacer);
+        memset(&s->audio_pacer, 0, sizeof(s->audio_pacer));
+        s->audio_pacer_initialized = 0;
+    }
+}
+
+static zst_result_t
+rtsp_sink_pace_packet(zst_element_t* el, rtsp_sink_t* s, zst_buffer_t* buf, int is_video)
+{
+    if (!el || !s || !buf || !s->udp_timestamp_pacing || !rtsp_sink_transport_is_udp(s)) {
+        return ZST_OK;
+    }
+
+    zst_result_t init_res = rtsp_sink_init_pacer(s, is_video);
+    if (init_res != ZST_OK) return init_res;
+
+    zst_timestamp_pacer_t* pacer = is_video ? &s->video_pacer : &s->audio_pacer;
+    zst_time_t timestamp = buf->dts ? buf->dts : buf->pts;
+    int dropped = 0;
+    zst_result_t ret = zst_timestamp_pacer_wait(pacer, el->clock, timestamp, &dropped);
+    if (ret == ZST_AGAIN && dropped) {
+        return ZST_AGAIN;
+    }
+    return ret;
 }
 
 static int
@@ -146,6 +263,7 @@ rtsp_sink_open(zst_element_t* el)
     s->video_eos = 0;
     s->audio_eos = 0;
     s->header_written = 0;
+    rtsp_sink_reset_pacers(s);
 
     if (s->url[0] == '\0') {
         rtsp_sink_update_url(s);
@@ -182,6 +300,7 @@ rtsp_sink_close(zst_element_t* el)
     s->header_written = 0;
     s->video_eos = 0;
     s->audio_eos = 0;
+    rtsp_sink_deinit_pacers(s);
     return ZST_OK;
 }
 
@@ -192,9 +311,9 @@ rtsp_sink_stop(zst_element_t* el)
 }
 
 static zst_result_t
-rtsp_sink_write_packet(rtsp_sink_t* s, zst_buffer_t* buf, int stream_idx)
+rtsp_sink_write_packet(zst_element_t* el, rtsp_sink_t* s, zst_buffer_t* buf, int stream_idx, int is_video)
 {
-    if (!s || !s->fc || stream_idx < 0) return ZST_ERROR;
+    if (!el || !s || !s->fc || stream_idx < 0) return ZST_ERROR;
     if (!buf) return ZST_ERROR;
 
     if (buf->flags & ZST_BUFFER_FLAG_EOS) {
@@ -204,6 +323,10 @@ rtsp_sink_write_packet(rtsp_sink_t* s, zst_buffer_t* buf, int stream_idx)
     if (!buf->memory.data || buf->memory.size == 0) {
         return ZST_OK;
     }
+
+    zst_result_t pace_res = rtsp_sink_pace_packet(el, s, buf, is_video);
+    if (pace_res == ZST_AGAIN) return ZST_OK;
+    if (pace_res != ZST_OK) return pace_res;
 
     AVPacket* pkt = av_packet_alloc();
     if (!pkt) return ZST_ERROR;
@@ -263,7 +386,7 @@ rtsp_sink_video_push(zst_pad_t* pad, zst_buffer_t* buf)
     }
 
     if (s->video_stream_idx < 0) return ZST_OK;
-    return rtsp_sink_write_packet(s, buf, s->video_stream_idx);
+    return rtsp_sink_write_packet(el, s, buf, s->video_stream_idx, 1);
 }
 
 static zst_result_t
@@ -280,7 +403,7 @@ rtsp_sink_audio_push(zst_pad_t* pad, zst_buffer_t* buf)
     }
 
     if (s->audio_stream_idx < 0) return ZST_OK;
-    return rtsp_sink_write_packet(s, buf, s->audio_stream_idx);
+    return rtsp_sink_write_packet(el, s, buf, s->audio_stream_idx, 0);
 }
 
 static zst_result_t
@@ -288,6 +411,7 @@ rtsp_sink_start(zst_element_t* el)
 {
     rtsp_sink_t* s = el->priv;
     if (!s) return ZST_ERROR;
+    rtsp_sink_reset_pacers(s);
 
     if (s->url[0] == '\0') {
         rtsp_sink_update_url(s);
@@ -382,6 +506,7 @@ rtsp_sink_set_property(zst_element_t* el, const char* name, const char* value)
     if (strcmp(name, "transport") == 0) {
         strncpy(s->transport, value, sizeof(s->transport) - 1);
         s->transport[sizeof(s->transport) - 1] = '\0';
+        rtsp_sink_reset_pacers(s);
         return ZST_OK;
     }
     if (strcmp(name, "max_clients") == 0 || strcmp(name, "max-clients") == 0) {
@@ -393,6 +518,32 @@ rtsp_sink_set_property(zst_element_t* el, const char* name, const char* value)
         strcmp(name, "rtcp-interval-ms") == 0) {
         s->rtcp_interval_ms = atoi(value);
         if (s->rtcp_interval_ms < 0) s->rtcp_interval_ms = 0;
+        return ZST_OK;
+    }
+    if (strcmp(name, "udp-timestamp-pacing") == 0) {
+        s->udp_timestamp_pacing = rtsp_sink_parse_bool(value);
+        rtsp_sink_reset_pacers(s);
+        return ZST_OK;
+    }
+    if (strcmp(name, "udp-pacing-tolerance-ms") == 0) {
+        long long v = atoll(value);
+        if (v < 0) return ZST_ERROR;
+        s->udp_pacing_tolerance_ms = (uint64_t)v;
+        rtsp_sink_reset_pacers(s);
+        return ZST_OK;
+    }
+    if (strcmp(name, "udp-pacing-reset-threshold-ms") == 0) {
+        long long v = atoll(value);
+        if (v < 0) return ZST_ERROR;
+        s->udp_pacing_reset_threshold_ms = (uint64_t)v;
+        rtsp_sink_reset_pacers(s);
+        return ZST_OK;
+    }
+    if (strcmp(name, "udp-max-lateness-ms") == 0) {
+        long long v = atoll(value);
+        if (v < 0) return ZST_ERROR;
+        s->udp_max_lateness_ms = (uint64_t)v;
+        rtsp_sink_reset_pacers(s);
         return ZST_OK;
     }
 
@@ -434,6 +585,22 @@ rtsp_sink_get_property(zst_element_t* el, const char* name, char* value_out, siz
         snprintf(value_out, max_len, "%d", s->rtcp_interval_ms);
         return ZST_OK;
     }
+    if (strcmp(name, "udp-timestamp-pacing") == 0) {
+        snprintf(value_out, max_len, "%s", s->udp_timestamp_pacing ? "true" : "false");
+        return ZST_OK;
+    }
+    if (strcmp(name, "udp-pacing-tolerance-ms") == 0) {
+        snprintf(value_out, max_len, "%llu", (unsigned long long)s->udp_pacing_tolerance_ms);
+        return ZST_OK;
+    }
+    if (strcmp(name, "udp-pacing-reset-threshold-ms") == 0) {
+        snprintf(value_out, max_len, "%llu", (unsigned long long)s->udp_pacing_reset_threshold_ms);
+        return ZST_OK;
+    }
+    if (strcmp(name, "udp-max-lateness-ms") == 0) {
+        snprintf(value_out, max_len, "%llu", (unsigned long long)s->udp_max_lateness_ms);
+        return ZST_OK;
+    }
 
     return ZST_ERROR;
 }
@@ -458,6 +625,10 @@ zst_rtsp_sink_create(void)
     priv->listen_port = 8554;
     priv->max_clients = 1;
     priv->rtcp_interval_ms = 5000;
+    priv->udp_timestamp_pacing = 1;
+    priv->udp_pacing_tolerance_ms = 5;
+    priv->udp_pacing_reset_threshold_ms = 2000;
+    priv->udp_max_lateness_ms = 0;
     strncpy(priv->mount_point, "live", sizeof(priv->mount_point) - 1);
     strncpy(priv->transport, "tcp", sizeof(priv->transport) - 1);
     rtsp_sink_update_url(priv);
@@ -511,7 +682,11 @@ static const zst_property_spec_t g_rtspsink_properties[] = {
     { "mount-point", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "live", "RTSP mount point" },
     { "transport", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "tcp", "Preferred RTSP transport" },
     { "max-clients", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "1", "Maximum concurrent clients requested by the application" },
-    { "rtcp-interval-ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5000", "RTCP sender report interval in milliseconds" }
+    { "rtcp-interval-ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5000", "RTCP sender report interval in milliseconds" },
+    { "udp-timestamp-pacing", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "true", "Pace UDP RTSP output according to buffer timestamps" },
+    { "udp-pacing-tolerance-ms", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5", "UDP timestamp pacing tolerance in milliseconds" },
+    { "udp-pacing-reset-threshold-ms", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "2000", "UDP timestamp discontinuity threshold before resetting pacing" },
+    { "udp-max-lateness-ms", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "0", "Drop UDP RTSP buffers later than this many milliseconds; 0 disables dropping" }
 };
 
 static const zst_element_desc_t g_rtspsink_elements[] = {

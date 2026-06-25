@@ -6786,6 +6786,23 @@ static void test_rtmp_elements(void)
     int64_t rtcp_interval = 0;
     assert(zst_element_get_property_int(rtspsink, "rtcp-interval-ms", &rtcp_interval) == ZST_OK);
     assert(rtcp_interval == 1000);
+    assert(zst_element_get_property(rtspsink, "udp-timestamp-pacing", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "true") == 0);
+    assert(zst_element_set_property(rtspsink, "udp-timestamp-pacing", "false") == ZST_OK);
+    assert(zst_element_get_property(rtspsink, "udp-timestamp-pacing", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "false") == 0);
+    assert(zst_element_set_property_int(rtspsink, "udp-pacing-tolerance-ms", 7) == ZST_OK);
+    int64_t udp_pacing_tolerance = 0;
+    assert(zst_element_get_property_int(rtspsink, "udp-pacing-tolerance-ms", &udp_pacing_tolerance) == ZST_OK);
+    assert(udp_pacing_tolerance == 7);
+    assert(zst_element_set_property_int(rtspsink, "udp-pacing-reset-threshold-ms", 3000) == ZST_OK);
+    int64_t udp_pacing_reset_threshold = 0;
+    assert(zst_element_get_property_int(rtspsink, "udp-pacing-reset-threshold-ms", &udp_pacing_reset_threshold) == ZST_OK);
+    assert(udp_pacing_reset_threshold == 3000);
+    assert(zst_element_set_property_int(rtspsink, "udp-max-lateness-ms", 25) == ZST_OK);
+    int64_t udp_max_lateness = 0;
+    assert(zst_element_get_property_int(rtspsink, "udp-max-lateness-ms", &udp_max_lateness) == ZST_OK);
+    assert(udp_max_lateness == 25);
     zst_element_destroy(rtspsink);
     PASS();
 }

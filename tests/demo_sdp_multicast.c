@@ -131,9 +131,11 @@ static int run_sender(const char* sdp_path, const char* group, int seconds) {
     zst_element_set_property(vudp, "protocol", "udp");
     zst_element_set_property(vudp, "host", group);
     zst_element_set_property(vudp, "port", "5004");
+    zst_element_set_property(vudp, "timestamp-pacing", "true");
     zst_element_set_property(audp, "protocol", "udp");
     zst_element_set_property(audp, "host", group);
     zst_element_set_property(audp, "port", "5006");
+    zst_element_set_property(audp, "timestamp-pacing", "true");
 
     zst_pad_link(zst_element_get_pad(vrtp, "src"), zst_element_get_pad(vudp, "sink"));
     zst_pad_link(zst_element_get_pad(artp, "src"), zst_element_get_pad(audp, "sink"));
