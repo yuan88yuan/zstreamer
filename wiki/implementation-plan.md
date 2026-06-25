@@ -40,7 +40,7 @@ All phases are now documented in separate files for easier maintenance.
 | Scheduler (2) | ✅ Done | Topological sort, push/pull, EOS |
 | Queue Element (3) | ✅ Done | First-class queue with worker thread |
 | Logging (3.5) | ✅ Done | Compile-time log levels, thread-safe |
-| Elements (4) | ✅ Done + ongoing | 40 elements implemented/started; sdpmuxer implementation completed with caps-derived defaults, SDP file output, additional payload descriptions, and tests; audiomixer implemented as synchronous mixer; ASRC drift compensation + passthrough bypass fix + fractional rate override added to audioresampler; glcompsink has initial implementation |
+| Elements (4) | ✅ Done + ongoing | 41 elements implemented/started; rtpdepay added as the receive-side counterpart to rtppay; sdpmuxer implementation completed with caps-derived defaults, SDP file output, additional payload descriptions, and tests; audiomixer implemented as synchronous mixer; ASRC drift compensation + passthrough bypass fix + fractional rate override added to audioresampler; glcompsink has initial implementation |
 | Caps Negotiation (5) | ✅ Done | Intersection, auto-negotiation |
 | Event Bus (6) | ✅ Done | Error/state/EOS notifications |
 | Dynamic Plugins (7) | ✅ Done | dlopen-based loading |

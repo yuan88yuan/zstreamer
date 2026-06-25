@@ -50,6 +50,7 @@
 #include "zstreamer/elements/zst_fake_sink.h"
 #include "zstreamer/elements/zst_sdp_muxer.h"
 #include "zstreamer/elements/zst_rtp_payloader.h"
+#include "zstreamer/elements/zst_rtp_depayloader.h"
 
 #include "zstreamer/elements/zst_srt_source.h"
 #include "zstreamer/elements/zst_srt_sink.h"
@@ -5183,6 +5184,150 @@ test_rtp_payloader(void)
     PASS();
 }
 
+typedef struct {
+    int buffers;
+    uint8_t* data;
+    size_t size;
+    uint64_t pts;
+    uint64_t duration;
+} rtp_depay_capture_state_t;
+
+static zst_pad_probe_return_t
+rtp_depay_capture_cb(zst_pad_t* pad, zst_buffer_t* buf,
+                     zst_pad_probe_type_t type, void* user_data)
+{
+    (void)pad;
+    (void)type;
+    rtp_depay_capture_state_t* st = user_data;
+    if (!st || !buf || !buf->memory.data || buf->memory.size == 0) return ZST_PAD_PROBE_OK;
+
+    free(st->data);
+    st->data = malloc(buf->memory.size);
+    assert(st->data != NULL);
+    memcpy(st->data, buf->memory.data, buf->memory.size);
+    st->size = buf->memory.size;
+    st->pts = buf->pts;
+    st->duration = buf->duration;
+    st->buffers++;
+    return ZST_PAD_PROBE_OK;
+}
+
+static void
+test_rtp_depayloader_h264_roundtrip(void)
+{
+    TEST("rtpdepay depayloads fragmented H.264 RTP back to Annex-B access units");
+
+    zst_element_t* pay = zst_rtp_payloader_create();
+    zst_element_t* depay = zst_rtp_depayloader_create();
+    zst_element_t* sink = zst_fake_sink_create();
+    assert(pay != NULL && depay != NULL && sink != NULL);
+    assert(strcmp(depay->ops->name, "rtpdepay") == 0);
+
+    assert(zst_element_set_property(pay, "codec", "h264") == ZST_OK);
+    assert(zst_element_set_property(pay, "payload-type", "96") == ZST_OK);
+    assert(zst_element_set_property(pay, "mtu", "8") == ZST_OK);
+    assert(zst_element_set_property(depay, "codec", "h264") == ZST_OK);
+    assert(zst_element_set_property(depay, "payload-type", "96") == ZST_OK);
+
+    zst_pad_t* pay_src = zst_element_get_pad(pay, "src");
+    zst_pad_t* pay_sink = zst_element_get_pad(pay, "sink");
+    zst_pad_t* depay_sink = zst_element_get_pad(depay, "sink");
+    zst_pad_t* depay_src = zst_element_get_pad(depay, "src");
+    zst_pad_t* fsink = zst_element_get_pad(sink, "sink");
+    assert(pay_src && pay_sink && depay_sink && depay_src && fsink);
+    assert(zst_pad_link(pay_src, depay_sink) == ZST_OK);
+    assert(zst_pad_link(depay_src, fsink) == ZST_OK);
+
+    rtp_depay_capture_state_t cap = {0};
+    assert(zst_pad_add_probe(fsink, ZST_PAD_PROBE_PRE_BUFFER,
+                             rtp_depay_capture_cb, &cap) != 0);
+
+    assert(zst_element_set_state(pay, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_element_set_state(depay, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_element_set_state(sink, ZST_STATE_PLAYING) == ZST_OK);
+
+    uint8_t au[] = {
+        0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1f,
+        0x00, 0x00, 0x00, 0x01, 0x65,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
+        0x16, 0x17, 0x18, 0x19, 0x1a
+    };
+    zst_buffer_t* b = zst_buffer_create(ZST_BUFFER_VIDEO_PACKET);
+    assert(b != NULL);
+    b->pts = 2000000000ULL;
+    b->memory.data = au;
+    b->memory.size = sizeof(au);
+    assert(pay_sink->push(pay_sink, b) == ZST_OK);
+    zst_buffer_unref(b);
+
+    assert(cap.buffers == 1);
+    assert(cap.size == sizeof(au));
+    assert(memcmp(cap.data, au, sizeof(au)) == 0);
+    assert(cap.pts == 2000000000ULL);
+
+    free(cap.data);
+    zst_element_destroy(pay);
+    zst_element_destroy(depay);
+    zst_element_destroy(sink);
+    PASS();
+}
+
+static void
+test_rtp_depayloader_aac_roundtrip(void)
+{
+    TEST("rtpdepay parses AAC AU headers and emits raw AAC access units");
+
+    zst_element_t* pay = zst_rtp_payloader_create();
+    zst_element_t* depay = zst_rtp_depayloader_create();
+    zst_element_t* sink = zst_fake_sink_create();
+    assert(pay != NULL && depay != NULL && sink != NULL);
+
+    assert(zst_element_set_property(pay, "codec", "aac") == ZST_OK);
+    assert(zst_element_set_property(pay, "payload-type", "97") == ZST_OK);
+    assert(zst_element_set_property(pay, "sample-rate", "48000") == ZST_OK);
+    assert(zst_element_set_property(depay, "codec", "aac") == ZST_OK);
+    assert(zst_element_set_property(depay, "payload-type", "97") == ZST_OK);
+    assert(zst_element_set_property(depay, "sample-rate", "48000") == ZST_OK);
+
+    zst_pad_t* pay_src = zst_element_get_pad(pay, "src");
+    zst_pad_t* pay_sink = zst_element_get_pad(pay, "sink");
+    zst_pad_t* depay_sink = zst_element_get_pad(depay, "sink");
+    zst_pad_t* depay_src = zst_element_get_pad(depay, "src");
+    zst_pad_t* fsink = zst_element_get_pad(sink, "sink");
+    assert(pay_src && pay_sink && depay_sink && depay_src && fsink);
+    assert(zst_pad_link(pay_src, depay_sink) == ZST_OK);
+    assert(zst_pad_link(depay_src, fsink) == ZST_OK);
+
+    rtp_depay_capture_state_t cap = {0};
+    assert(zst_pad_add_probe(fsink, ZST_PAD_PROBE_PRE_BUFFER,
+                             rtp_depay_capture_cb, &cap) != 0);
+
+    assert(zst_element_set_state(pay, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_element_set_state(depay, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_element_set_state(sink, ZST_STATE_PLAYING) == ZST_OK);
+
+    uint8_t au[] = { 0x21, 0x10, 0x56, 0xe5, 0x00, 0xaa, 0xbb };
+    zst_buffer_t* b = zst_buffer_create(ZST_BUFFER_AUDIO_PACKET);
+    assert(b != NULL);
+    b->pts = 1000000000ULL;
+    b->memory.data = au;
+    b->memory.size = sizeof(au);
+    assert(pay_sink->push(pay_sink, b) == ZST_OK);
+    zst_buffer_unref(b);
+
+    assert(cap.buffers == 1);
+    assert(cap.size == sizeof(au));
+    assert(memcmp(cap.data, au, sizeof(au)) == 0);
+    assert(cap.pts == 1000000000ULL);
+    assert(cap.duration == (1024ULL * 1000000000ULL) / 48000ULL);
+
+    free(cap.data);
+    zst_element_destroy(pay);
+    zst_element_destroy(depay);
+    zst_element_destroy(sink);
+    PASS();
+}
+
 static void
 test_sdp_muxer_properties(void)
 {
@@ -7690,6 +7835,8 @@ int main(void)
     test_sdp_muxer_caps_file_and_payloads();
     test_sdp_muxer_plugin_introspection();
     test_rtp_payloader();
+    test_rtp_depayloader_h264_roundtrip();
+    test_rtp_depayloader_aac_roundtrip();
 
     printf("[fakesink]\n");
     test_fakesink();

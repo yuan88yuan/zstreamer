@@ -706,3 +706,23 @@ Generates Session Description Protocol (SDP) text for RTP-oriented media session
 - [x] Add optional SDP file output property for offline publishing workflows
 - [x] Support additional RTP payload descriptions (Opus, PCMU/PCMA, VP8/VP9/AV1) when selected by properties/caps; matching RTP packetizer/depacketizer support remains the responsibility of the transport payload elements
 
+---
+
+### 4ao — RTP Depayloader (`rtpdepay`)  (✅ Done)
+
+Adds the receive-side counterpart to `rtppay`: accepts complete `application/x-rtp` packet buffers from UDP/RTSP/file transports and emits codec access-unit buffers suitable for decoders, muxers, or tests.
+
+**Implementation plan:**
+
+- [x] Public API: add `include/zstreamer/elements/zst_rtp_depayloader.h` with `zst_rtp_depayloader_create()`.
+- [x] Element shape: one `sink` pad accepting `application/x-rtp`, one `src` pad emitting `video/x-h264`, `video/x-h265`, `audio/x-aac`, `audio/aac`, or `audio/x-raw` based on the `codec` property.
+- [x] RTP parsing: validate RTP version/header length, payload type, sequence continuity, RTP timestamp, marker bit, SSRC, CSRC count, and optional extension header.
+- [x] Codec depayloading:
+  - H.264 RFC 3984 single NAL, STAP-A, and FU-A reassembly into Annex-B access units.
+  - H.265 RFC 7798 single NAL, aggregation packet, and FU reassembly into Annex-B access units.
+  - AAC RFC 3640 AU-header parsing, emitting raw AAC access units.
+  - PCM/raw audio payload concatenation for packets split by `rtppay` MTU, flushed on marker bit.
+- [x] Properties and stats: mirror `rtppay` where useful (`codec`, `payload-type`, `clock-rate`/`sample-rate`, `channels`, `sample-size`) plus read-only packet/output/drop counters.
+- [x] Integration: build into `zstreamer-elements`, expose as dynamic plugin `libzst_rtpdepay.so`, and register with the builtin factory under `"rtpdepay"` plus aliases.
+- [x] Tests: add `rtppay ! rtpdepay` roundtrip coverage for fragmented H.264 Annex-B access units and AAC AU-header extraction.
+

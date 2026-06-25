@@ -98,6 +98,7 @@ zst_element_t* zst_rtsp_sink_create(void);
 zst_element_t* zst_rtsp_server_create(void);
 zst_element_t* zst_sdp_muxer_create(void);
 zst_element_t* zst_rtp_payloader_create(void);
+zst_element_t* zst_rtp_depayloader_create(void);
 #ifdef HAS_FFMPEG
 zst_element_t* zst_rtmp_source_create(const char* url);
 zst_element_t* zst_rtmp_sink_create(void);
@@ -230,6 +231,10 @@ static const zst_pad_template_t g_pad_sdpmuxer[] = {
 static const zst_pad_template_t g_pad_rtppay[] = {
     { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-h264;video/x-h265;audio/x-aac;audio/aac;audio/x-raw" },
     { "src",  ZST_PAD_SRC,  ZST_PAD_ALWAYS, "application/x-rtp" }
+};
+static const zst_pad_template_t g_pad_rtpdepay[] = {
+    { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "application/x-rtp" },
+    { "src",  ZST_PAD_SRC,  ZST_PAD_ALWAYS, "video/x-h264;video/x-h265;audio/x-aac;audio/aac;audio/x-raw" }
 };
 
 #ifdef HAS_FFMPEG
@@ -540,6 +545,21 @@ static const zst_property_spec_t g_builtin_rtppay_props[] = {
     { "bytes", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE, "0", "RTP bytes produced" }
 };
 
+static const zst_property_spec_t g_builtin_rtpdepay_props[] = {
+    { "codec", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "h264", "RTP payload codec: h264, h265, aac, pcm" },
+    { "payload-type", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "96", "RTP payload type to accept" },
+    { "ssrc", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "0", "Expected RTP SSRC; 0 accepts any SSRC" },
+    { "clock-rate", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "90000", "RTP clock rate" },
+    { "sample-rate", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "90000", "Alias for clock-rate" },
+    { "channels", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "2", "PCM channel count" },
+    { "sample-size", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "2", "PCM bytes per sample" },
+    { "packets", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE, "0", "RTP packets consumed" },
+    { "bytes", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE, "0", "RTP bytes consumed" },
+    { "out-buffers", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE, "0", "Depayloaded buffers produced" },
+    { "out-bytes", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE, "0", "Depayloaded bytes produced" },
+    { "dropped-packets", ZST_PROPERTY_UINT, ZST_PROPERTY_READABLE, "0", "Malformed, mismatched, or discontinuous RTP packets" }
+};
+
 static const zst_property_spec_t g_builtin_sdpmuxer_props[] = {
     { "sdp", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE, "", "Generated SDP text" },
     { "address", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "127.0.0.1", "Connection address for c=/o= lines" },
@@ -683,6 +703,7 @@ create_builtin_element(const char* name)
     if (strcmp(name, "rtsp_server") == 0)  return zst_rtsp_server_create();
     if (strcmp(name, "sdpmuxer") == 0 || strcmp(name, "sdpmux") == 0) return zst_sdp_muxer_create();
     if (strcmp(name, "rtppay") == 0 || strcmp(name, "rtp_payloader") == 0) return zst_rtp_payloader_create();
+    if (strcmp(name, "rtpdepay") == 0 || strcmp(name, "rtp_depayloader") == 0 || strcmp(name, "rtpdepayload") == 0) return zst_rtp_depayloader_create();
 #ifdef HAS_FFMPEG
     if (strcmp(name, "rtmpsrc") == 0)      return zst_rtmp_source_create(NULL);
     if (strcmp(name, "rtmpsink") == 0)     return zst_rtmp_sink_create();
@@ -764,6 +785,7 @@ static const zst_element_desc_t g_builtin_descs[] = {
     DESC("rtsp_server", "RTSP Server",  "Sink/Network", "Serves RTP streams over RTSP",                                                                                         g_builtin_rtspserver_props,     sizeof(g_builtin_rtspserver_props) / sizeof(g_builtin_rtspserver_props[0]), g_pad_rtsp_server),
     DESC("sdpmuxer", "SDP Muxer",        "Muxer/RTP",    "Generates SDP descriptions for H.264/H.265/AAC RTP sessions",                                                          g_builtin_sdpmuxer_props,       sizeof(g_builtin_sdpmuxer_props) / sizeof(g_builtin_sdpmuxer_props[0]), g_pad_sdpmuxer),
     DESC("rtppay",   "RTP Payloader",    "RTP",          "Packetizes H.264/H.265/AAC/PCM buffers into RTP packet buffers",                                                        g_builtin_rtppay_props,         sizeof(g_builtin_rtppay_props) / sizeof(g_builtin_rtppay_props[0]), g_pad_rtppay),
+    DESC("rtpdepay", "RTP Depayloader",  "RTP",          "Depayloads RTP packet buffers into H.264/H.265/AAC/PCM access units",                                                    g_builtin_rtpdepay_props,       sizeof(g_builtin_rtpdepay_props) / sizeof(g_builtin_rtpdepay_props[0]), g_pad_rtpdepay),
 #ifdef HAS_FFMPEG
     DESC("rtmpsrc",  "RTMP Source",      "Source/Network","Receives audio/video from an RTMP endpoint",                                                                          g_builtin_rtmpsrc_props,        sizeof(g_builtin_rtmpsrc_props) / sizeof(g_builtin_rtmpsrc_props[0]), g_pad_rtmp_src),
     DESC("rtmpsink", "RTMP Sink",        "Sink/Network", "Publishes audio/video to an RTMP endpoint",                                                                             g_builtin_rtmpsink_props,       sizeof(g_builtin_rtmpsink_props) / sizeof(g_builtin_rtmpsink_props[0]), g_pad_rtmp_sink),
