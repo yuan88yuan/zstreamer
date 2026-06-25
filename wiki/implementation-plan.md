@@ -28,6 +28,7 @@ All phases are now documented in separate files for easier maintenance.
 | Post-P0 | VA-API Encoder DMABUF zero-copy import path | ~TBD | ✅ Done |
 | Cross-Compile | [ARM64 Cross-Compilation](cross-compilation.md) | ~50 | ✅ Done |
 | Bugfix  | [Clock Sync Debug](clock-sync-debug.md) | ~200 | ✅ Fixed — scheduler clock sync comparison was broken |
+| Post-P0 | [UDP Outbound Timestamp Pacing](phase-udp-timestamp-pacing.md) | ~200 | ⬜ Planned |
 
 ---
 
@@ -76,3 +77,9 @@ Detailed API and implementation plan for demuxers whose stream count, media type
 
 Detailed tasks and checklist for V4L2 source element DMA-BUF exporter support:
 - [V4L2 DMA-BUF Exporter Plan](phase-v4l2-expbuf.md)
+
+
+## UDP Outbound Timestamp Pacing (Post-P0)
+
+Detailed plan for pacing outbound UDP sends from `netsink`, `rtsp_server`, and UDP-mode `rtspsink` according to media timestamps:
+- [UDP Outbound Timestamp Pacing Plan](phase-udp-timestamp-pacing.md)
