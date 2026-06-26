@@ -368,6 +368,159 @@ test_net_udp_pull(void)
     printf("✓ UDP pull test passed\n");
 }
 
+static uint64_t
+get_time_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
+}
+
+static void
+test_net_udp_pacing(void)
+{
+    printf("\n=== Test: net_sink/net_source UDP pacing ===\n");
+
+    zst_element_t* src = zst_net_source_create();
+    zst_element_t* sink = zst_net_sink_create();
+    assert(src != NULL && sink != NULL);
+
+    assert(zst_element_set_property(src, "protocol", "udp") == ZST_OK);
+    assert(zst_element_set_property(src, "port", "16005") == ZST_OK);
+    assert(zst_element_set_property(src, "read-timeout", "500") == ZST_OK);
+
+    assert(zst_element_set_property(sink, "protocol", "udp-client") == ZST_OK);
+    assert(zst_element_set_property(sink, "host", "127.0.0.1") == ZST_OK);
+    assert(zst_element_set_property(sink, "port", "16005") == ZST_OK);
+    assert(zst_element_set_property(sink, "timestamp-pacing", "true") == ZST_OK);
+    assert(zst_element_set_property(sink, "pacing-tolerance-ms", "2") == ZST_OK);
+
+    assert(zst_element_set_state(src, ZST_STATE_READY) == ZST_OK);
+    assert(zst_element_set_state(sink, ZST_STATE_READY) == ZST_OK);
+
+    assert(zst_element_set_state(src, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_element_set_state(sink, ZST_STATE_PLAYING) == ZST_OK);
+
+    uint64_t recv_times[4];
+
+    for (int i = 0; i < 4; i++) {
+        zst_buffer_t* in_buf = zst_buffer_create(ZST_BUFFER_USER);
+        assert(in_buf != NULL);
+        char payload[32];
+        snprintf(payload, sizeof(payload), "pacing_data_%d", i);
+        in_buf->memory.data = (void*)payload;
+        in_buf->memory.size = strlen(payload);
+        in_buf->pts = i * 20ULL * 1000000ULL; // 0, 20ms, 40ms, 60ms
+
+        zst_buffer_t* temp = NULL;
+        assert(sink->ops->process(sink, in_buf, &temp) == ZST_OK);
+
+        /* Receive buffer from src */
+        zst_buffer_t* out_buf = NULL;
+        zst_result_t res = ZST_TIMEOUT;
+        for (int k = 0; k < 10 && res == ZST_TIMEOUT; k++) {
+            res = src->ops->process(src, NULL, &out_buf);
+            if (res == ZST_TIMEOUT) {
+                sleep_ms(5);
+            }
+        }
+        recv_times[i] = get_time_ms();
+        assert(res == ZST_OK);
+        assert(out_buf != NULL);
+
+        zst_buffer_unref(in_buf);
+        zst_buffer_unref(out_buf);
+    }
+
+    assert(zst_element_set_state(sink, ZST_STATE_NULL) == ZST_OK);
+    assert(zst_element_set_state(src, ZST_STATE_NULL) == ZST_OK);
+
+    zst_element_destroy(sink);
+    zst_element_destroy(src);
+
+    uint64_t diff1 = recv_times[1] - recv_times[0];
+    uint64_t diff2 = recv_times[2] - recv_times[1];
+    uint64_t diff3 = recv_times[3] - recv_times[2];
+
+    printf("  UDP pacing recv times diff: %d ms, %d ms, %d ms\n", (int)diff1, (int)diff2, (int)diff3);
+    // Since pacing interval is 20ms, each diff should be >= 12 ms.
+    assert(diff1 >= 12);
+    assert(diff2 >= 12);
+    assert(diff3 >= 12);
+
+    printf("✓ UDP pacing test passed\n");
+}
+
+static void
+test_net_udp_no_pacing(void)
+{
+    printf("\n=== Test: net_sink/net_source UDP no pacing ===\n");
+
+    zst_element_t* src = zst_net_source_create();
+    zst_element_t* sink = zst_net_sink_create();
+    assert(src != NULL && sink != NULL);
+
+    assert(zst_element_set_property(src, "protocol", "udp") == ZST_OK);
+    assert(zst_element_set_property(src, "port", "16006") == ZST_OK);
+    assert(zst_element_set_property(src, "read-timeout", "500") == ZST_OK);
+
+    assert(zst_element_set_property(sink, "protocol", "udp-client") == ZST_OK);
+    assert(zst_element_set_property(sink, "host", "127.0.0.1") == ZST_OK);
+    assert(zst_element_set_property(sink, "port", "16006") == ZST_OK);
+    assert(zst_element_set_property(sink, "timestamp-pacing", "false") == ZST_OK);
+
+    assert(zst_element_set_state(src, ZST_STATE_READY) == ZST_OK);
+    assert(zst_element_set_state(sink, ZST_STATE_READY) == ZST_OK);
+
+    assert(zst_element_set_state(src, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_element_set_state(sink, ZST_STATE_PLAYING) == ZST_OK);
+
+    uint64_t recv_times[4];
+
+    for (int i = 0; i < 4; i++) {
+        zst_buffer_t* in_buf = zst_buffer_create(ZST_BUFFER_USER);
+        assert(in_buf != NULL);
+        char payload[32];
+        snprintf(payload, sizeof(payload), "pacing_data_%d", i);
+        in_buf->memory.data = (void*)payload;
+        in_buf->memory.size = strlen(payload);
+        in_buf->pts = i * 20ULL * 1000000ULL; // 0, 20ms, 40ms, 60ms
+
+        zst_buffer_t* temp = NULL;
+        assert(sink->ops->process(sink, in_buf, &temp) == ZST_OK);
+
+        /* Receive buffer from src */
+        zst_buffer_t* out_buf = NULL;
+        zst_result_t res = ZST_TIMEOUT;
+        for (int k = 0; k < 10 && res == ZST_TIMEOUT; k++) {
+            res = src->ops->process(src, NULL, &out_buf);
+            if (res == ZST_TIMEOUT) {
+                sleep_ms(5);
+            }
+        }
+        recv_times[i] = get_time_ms();
+        assert(res == ZST_OK);
+        assert(out_buf != NULL);
+
+        zst_buffer_unref(in_buf);
+        zst_buffer_unref(out_buf);
+    }
+
+    assert(zst_element_set_state(sink, ZST_STATE_NULL) == ZST_OK);
+    assert(zst_element_set_state(src, ZST_STATE_NULL) == ZST_OK);
+
+    zst_element_destroy(sink);
+    zst_element_destroy(src);
+
+    uint64_t total_duration = recv_times[3] - recv_times[0];
+
+    printf("  UDP no pacing total duration for 4 buffers: %d ms\n", (int)total_duration);
+    // Without pacing, they should arrive in a burst, total duration should be very small (typically < 15 ms).
+    assert(total_duration < 15);
+
+    printf("✓ UDP no pacing test passed\n");
+}
+
 int main(void)
 {
     printf("=== net_sink comprehensive test suite ===\n");
@@ -378,6 +531,8 @@ int main(void)
     test_net_sink_tcp_client();
     test_net_udp_push();
     test_net_udp_pull();
+    test_net_udp_pacing();
+    test_net_udp_no_pacing();
 
     printf("\n✓✓✓ All net_sink tests passed ✓✓✓\n");
     return 0;

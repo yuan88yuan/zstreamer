@@ -227,17 +227,17 @@ Properties:
 
 ### Phase E — Tests
 
-- [ ] Unit-test the pacer with a fake/manual `zst_clock_t` so tests do not rely on wall-clock sleeps.
-- [ ] Add `netsink` UDP loopback timing test with 3–5 buffers spaced 10–20 ms apart; verify receive deltas are not burst when pacing is enabled.
-- [ ] Add a disabled-pacing regression test verifying old burst behavior remains available for raw UDP.
-- [ ] Add RTSP UDP smoke timing coverage by recording RTP packet arrival deltas from `rtsp_server` UDP transport.
-- [ ] Confirm existing UDP tests still pass: `test_net_sink`, `test_rtsp_source_bunny_udp_verification`, multicast SDP demo if covered.
+- [x] Unit-test the pacer with a fake/manual `zst_clock_t` so tests do not rely on wall-clock sleeps.
+- [x] Add `netsink` UDP loopback timing test with 3–5 buffers spaced 10–20 ms apart; verify receive deltas are not burst when pacing is enabled.
+- [x] Add a disabled-pacing regression test verifying old burst behavior remains available for raw UDP.
+- [x] Add RTSP UDP smoke timing coverage by recording RTP packet arrival deltas from `rtsp_server` UDP transport.
+- [x] Confirm existing UDP tests still pass: `test_net_sink`, `test_rtsp_source_bunny_udp_verification`, multicast SDP demo if covered.
 
 ### Phase F — Documentation
 
-- [ ] Update `wiki/clock-sync-debug.md` to cross-reference UDP sender pacing.
-- [ ] Update element docs/property descriptors for `netsink`, `rtsp_server`, and `rtspsink`.
-- [ ] Document recommended pipelines: `rtppay ! netsink protocol=udp timestamp-pacing=true`.
+- [x] Update `wiki/clock-sync-debug.md` to cross-reference UDP sender pacing.
+- [x] Update element docs/property descriptors for `netsink`, `rtsp_server`, and `rtspsink`.
+- [x] Document recommended pipelines: `rtppay ! netsink protocol=udp timestamp-pacing=true`.
 
 ---
 
