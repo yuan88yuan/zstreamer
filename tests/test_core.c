@@ -25,6 +25,7 @@
 #include "zst_plugin.h"
 #include "zst_element_factory.h"
 #include "zst_log.h"
+#include "../src/zst_timestamp_pacer.h"
 #include "zstreamer/elements/zst_file_source.h"
 #include "zstreamer/elements/zst_file_sink.h"
 #include "zstreamer/elements/zst_fake_sink.h"
@@ -7042,6 +7043,102 @@ static void test_rtsp_server_media_on_demand(void) {
     PASS();
 }
 
+typedef struct {
+    zst_clock_t base;
+    zst_time_t current_time;
+    zst_time_t wait_accumulated;
+} test_clock_t;
+
+static zst_time_t test_clock_get_time(zst_clock_t* c) {
+    return ((test_clock_t*)c)->current_time;
+}
+
+static void test_clock_wait(zst_clock_t* c, zst_time_t t) {
+    ((test_clock_t*)c)->current_time += t;
+    ((test_clock_t*)c)->wait_accumulated += t;
+}
+
+static void test_clock_destroy(zst_clock_t* c) {
+    (void)c;
+}
+
+static void test_pacer_unit_with_manual_clock(void) {
+    TEST("Pacer unit test with manual clock");
+
+    test_clock_t tc;
+    tc.base.refcount = 1;
+    tc.base.get_time = test_clock_get_time;
+    tc.base.wait = test_clock_wait;
+    tc.base.destroy = test_clock_destroy;
+    tc.base.priv = NULL;
+    tc.current_time = 1000000000ULL; // 1.0s
+    tc.wait_accumulated = 0;
+
+    zst_clock_t* clock = &tc.base;
+
+    zst_timestamp_pacer_t p;
+    zst_timestamp_pacer_init(&p);
+    zst_timestamp_pacer_set_enabled(&p, 1);
+    zst_timestamp_pacer_configure(&p, 2 * 1000000ULL, 2000 * 1000000ULL, 0); // 2ms tolerance, 2s reset
+
+    int dropped = 0;
+    zst_result_t res;
+
+    // First buffer at pts=0. Establish baseline, should return ZST_OK immediately.
+    res = zst_timestamp_pacer_wait(&p, clock, 0, &dropped);
+    assert(res == ZST_OK);
+    assert(dropped == 0);
+    assert(tc.wait_accumulated == 0);
+
+    // Second buffer at pts=20ms. Target is 1.0s + 20ms = 1.02s.
+    // Since current_time is 1.0s, delta target-now is 20ms, which is > tolerance (2ms).
+    res = zst_timestamp_pacer_wait(&p, clock, 20 * 1000000ULL, &dropped);
+    assert(res == ZST_OK);
+    assert(dropped == 0);
+    assert(tc.wait_accumulated == 20 * 1000000ULL);
+    assert(tc.current_time == 1000000000ULL + 20 * 1000000ULL);
+
+    // Third buffer at pts=40ms. Current time is 1.02s. Target is 1.04s.
+    // Let's manually advance the clock to 1.039s (so only 1ms remains to target).
+    // Target (1.04s) - current_time (1.039s) = 1ms, which is <= tolerance (2ms).
+    // So it should return immediately without waiting.
+    tc.current_time = 1000000000ULL + 39 * 1000000ULL;
+    zst_time_t wait_before = tc.wait_accumulated;
+    res = zst_timestamp_pacer_wait(&p, clock, 40 * 1000000ULL, &dropped);
+    assert(res == ZST_OK);
+    assert(dropped == 0);
+    assert(tc.wait_accumulated == wait_before); // no wait occurred
+
+    // Test discontinuity reset: jump forward by 3s (pts=3040ms)
+    // Gap 3000ms > reset_threshold (2000ms). Pacer should reset and not wait.
+    wait_before = tc.wait_accumulated;
+    res = zst_timestamp_pacer_wait(&p, clock, 3040 * 1000000ULL, &dropped);
+    assert(res == ZST_OK);
+    assert(dropped == 0);
+    assert(tc.wait_accumulated == wait_before); // reset -> no wait
+    // New baseline: base_ts = 3040ms, base_clock = 1.039s.
+
+    // Test backward timestamp reset: pts=2000ms
+    // Backward ts should reset and not wait.
+    res = zst_timestamp_pacer_wait(&p, clock, 2000 * 1000000ULL, &dropped);
+    assert(res == ZST_OK);
+    assert(dropped == 0);
+    // New baseline: base_ts = 2000ms, base_clock = 1.039s.
+
+    // Test max lateness dropping: configure max_lateness to 10ms.
+    zst_timestamp_pacer_configure(&p, 2 * 1000000ULL, 2000 * 1000000ULL, 10 * 1000000ULL);
+    // Next buffer is at pts=2020ms. Target is 1.039s + 20ms = 1.059s.
+    // Let's manually advance the clock to 1.070s (so it is 11ms late).
+    // Since lateness (11ms) > max_lateness (10ms), it should be dropped (ZST_AGAIN, dropped=1).
+    tc.current_time = 1000000000ULL + 70 * 1000000ULL;
+    res = zst_timestamp_pacer_wait(&p, clock, 2020 * 1000000ULL, &dropped);
+    assert(res == ZST_AGAIN);
+    assert(dropped == 1);
+
+    zst_timestamp_pacer_deinit(&p);
+    PASS();
+}
+
 static void test_rtsp_server_pacing_properties(void) {
     TEST("RTSP Server UDP pacing properties");
 
@@ -7128,6 +7225,112 @@ static zst_result_t bunny_mount_cb(zst_element_t* server, const char* session_na
     zst_pipeline_topological_sort(pipe);
     
     return ZST_OK;
+}
+
+typedef struct {
+    int count;
+    uint64_t times[60];
+    int max_times;
+} rtsp_timing_probe_data_t;
+
+static zst_pad_probe_return_t rtsp_timing_probe(zst_pad_t* pad, zst_buffer_t* buf, zst_pad_probe_type_t type, void* user_data) {
+    (void)pad;
+    (void)buf;
+    (void)type;
+    rtsp_timing_probe_data_t* td = (rtsp_timing_probe_data_t*)user_data;
+    if (td->count < td->max_times) {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        td->times[td->count] = (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
+        td->count++;
+    }
+    return ZST_PAD_PROBE_OK;
+}
+
+static void test_rtsp_server_udp_timing_pacing(void) {
+    TEST("RTSP Server UDP Timing Pacing smoke test");
+
+    assert(zst_register_builtin_elements() == ZST_OK);
+
+    // 1. Create pipeline & scheduler
+    zst_pipeline_t* pipe = zst_pipeline_create();
+    assert(pipe != NULL);
+    // Explicitly disable pipeline clock sync, so that demuxer pushes frames as fast as possible.
+    zst_pipeline_set_clock_sync(pipe, 0);
+
+    zst_scheduler_config_t cfg = {
+        .mode = ZST_SCHEDULER_MULTI_THREAD,
+        .worker_threads = 4
+    };
+    zst_scheduler_t* sched = zst_scheduler_create(&cfg);
+    assert(sched != NULL);
+
+    // 2. Create RTSP Server on port 8559
+    zst_element_t* server = zst_rtsp_server_create();
+    assert(server != NULL);
+    assert(zst_element_set_property_int(server, "listen-port", 8559) == ZST_OK);
+    // Enable UDP pacing explicitly
+    assert(zst_element_set_property(server, "udp-timestamp-pacing", "true") == ZST_OK);
+    assert(zst_element_set_property_int(server, "udp-pacing-tolerance-ms", 2) == ZST_OK);
+
+    assert(zst_rtsp_server_set_mount_callback(server, bunny_mount_cb, pipe) == ZST_OK);
+    assert(zst_pipeline_add(pipe, server) == ZST_OK);
+
+    // 3. Start Server Pipeline
+    assert(zst_scheduler_attach(sched, pipe) == ZST_OK);
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_READY) == ZST_OK);
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_scheduler_run(sched) == ZST_OK);
+
+    usleep(100000); // Wait for server to bind
+
+    // 4. Create RTSP Client Source with UDP transport
+    zst_element_t* client_src = zst_rtsp_source_create("rtsp://127.0.0.1:8559/bunny");
+    assert(client_src != NULL);
+    assert(zst_element_set_property(client_src, "transport", "udp") == ZST_OK);
+
+    zst_element_t* fakesink = zst_fake_sink_create();
+    assert(fakesink != NULL);
+
+    assert(zst_pipeline_add(pipe, client_src) == ZST_OK);
+    assert(zst_pipeline_add(pipe, fakesink) == ZST_OK);
+
+    zst_pad_t* src_vpad = zst_element_get_pad(client_src, "video");
+    zst_pad_t* sink_pad = zst_element_get_pad(fakesink, "sink");
+    assert(src_vpad != NULL && sink_pad != NULL);
+    assert(zst_pad_link(src_vpad, sink_pad) == ZST_OK);
+
+    rtsp_timing_probe_data_t td = { .count = 0, .max_times = 15 };
+    zst_pad_add_probe(src_vpad, ZST_PAD_PROBE_PRE_BUFFER, rtsp_timing_probe, &td);
+
+    zst_pipeline_topological_sort(pipe);
+
+    assert(zst_element_set_state(client_src, ZST_STATE_READY) == ZST_OK);
+    assert(zst_element_set_state(fakesink, ZST_STATE_READY) == ZST_OK);
+    assert(zst_element_set_state(client_src, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_element_set_state(fakesink, ZST_STATE_PLAYING) == ZST_OK);
+
+    // Let it stream to receive at least 15 buffers
+    for (int i = 0; i < 30 && td.count < 15; i++) {
+        usleep(100000);
+    }
+
+    printf("  [Verification] Paced UDP stream received %d buffers.\n", td.count);
+    assert(td.count >= 10); // Ensure we received enough buffers
+
+    // Verify pacing: the time diff between first and last recorded buffers should reflect paced playback.
+    // At 25-30 fps, 10 buffers should span at least 250 ms.
+    uint64_t total_duration = td.times[td.count - 1] - td.times[0];
+    printf("  [Verification] Total duration for %d buffers: %llu ms\n", td.count, (unsigned long long)total_duration);
+    assert(total_duration >= 200); // Paced stream must take at least 200ms
+
+    // 5. Clean up
+    zst_scheduler_stop(sched);
+    zst_pipeline_set_state(pipe, ZST_STATE_NULL);
+    zst_scheduler_destroy(sched);
+    zst_pipeline_destroy(pipe);
+
+    PASS();
 }
 
 static void test_rtsp_source_bunny_verification(void) {
@@ -8061,7 +8264,11 @@ int main(void)
     printf("  [SKIP] FFmpeg disabled\n");
 #endif
 
+    test_pacer_unit_with_manual_clock();
     test_rtsp_server_pacing_properties();
+#ifdef HAS_FFMPEG
+    test_rtsp_server_udp_timing_pacing();
+#endif
 
     printf("[rtsp server media-on-demand]\n");
 #ifdef HAS_FFMPEG
