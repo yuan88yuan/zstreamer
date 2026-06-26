@@ -90,6 +90,7 @@ zst_element_t* zst_text_source_create(void);
 zst_element_t* zst_srt_parser_create(const char* path);
 zst_element_t* zst_net_source_create(void);
 zst_element_t* zst_net_sink_create(void);
+zst_element_t* zst_sc6f0_source_create(void);
 zst_element_t* zst_audio_mixer_create(void);
 #ifdef HAS_FFMPEG
 zst_element_t* zst_rtsp_source_create(const char* url);
@@ -207,6 +208,10 @@ static const zst_pad_template_t g_pad_net_src[] = {
 static const zst_pad_template_t g_pad_net_sink[] = {
     { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "application/octet-stream" }
 };
+static const zst_pad_template_t g_pad_sc6f0src[] = {
+    { "video_%u", ZST_PAD_SRC, ZST_PAD_SOMETIMES, "video/x-raw;ANY" },
+    { "audio_%u", ZST_PAD_SRC, ZST_PAD_SOMETIMES, "audio/x-raw;ANY" }
+};
 #ifdef HAS_FREETYPE
 static const zst_pad_template_t g_pad_textoverlay[]  = {
     { "sink", ZST_PAD_SINK, ZST_PAD_ALWAYS, "video/x-raw" }, { "text", ZST_PAD_SINK, ZST_PAD_ALWAYS, "text/x-raw" }, { "src", ZST_PAD_SRC, ZST_PAD_ALWAYS, "video/x-raw" }
@@ -307,6 +312,13 @@ static const zst_property_spec_t g_builtin_fakesink_props[] = {
 };
 
 
+
+static const zst_property_spec_t g_builtin_sc6f0src_props[] = {
+    { "media-device", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Media device node path" },
+    { "platform-id", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "DNTX", "SC6F0 platform identifier (DNTX or SDI1)" },
+    { "mock-mode", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "true", "Operate in mock mode with synthetic signal emulation" },
+    { "trigger-signal", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE | ZST_PROPERTY_RUNTIME, "1080p", "Trigger a mock signal state change: 1080p, 720p, or none" }
+};
 
 #ifdef HAS_V4L2
 static const zst_property_spec_t g_builtin_v4l2src_props[] = {
@@ -734,6 +746,7 @@ create_builtin_element(const char* name)
     if (strcmp(name, "mp4demux") == 0)     return zst_mp4_demuxer_create();
 #endif
     if (strcmp(name, "nvvideoscaler") == 0) return zst_nv_video_scaler_create();
+    if (strcmp(name, "sc6f0src") == 0)      return zst_sc6f0_source_create();
 #ifdef HAS_GLSINK
     if (strcmp(name, "glsink") == 0)       return zst_gl_sink_create();
 #endif
@@ -832,6 +845,7 @@ static const zst_element_desc_t g_builtin_descs[] = {
     DESC("vaapi_video_decoder", "VA-API Video Decoder", "Codec/Decoder", "Alias for vaapidec", g_builtin_vaapidec_props, sizeof(g_builtin_vaapidec_props) / sizeof(g_builtin_vaapidec_props[0]), g_pad_vaapidec),
 #endif
     DESC("nvvideoscaler", "NVIDIA V4L2 Video Scaler", "Filter/Video", "Hardware video scaler and format converter using NV V4L2 extensions",                                    NULL,                           0, g_pad_video_filter),
+    DESC("sc6f0src", "SC6F0 Source", "Source/Video", "Captures video/audio from SC6F0 platforms with dynamic signal detection", g_builtin_sc6f0src_props, sizeof(g_builtin_sc6f0src_props) / sizeof(g_builtin_sc6f0src_props[0]), g_pad_sc6f0src),
 #ifdef HAS_X11SINK
     DESC("x11sink", "X11 Video Sink", "Sink/Video", "Displays raw video frames in an X11 window", g_builtin_x11sink_props, sizeof(g_builtin_x11sink_props) / sizeof(g_builtin_x11sink_props[0]), g_pad_sink),
 #endif

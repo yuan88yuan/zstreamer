@@ -706,6 +706,115 @@ static void test_multithread_dynamic_pad_removal(void)
     printf("test_multithread_dynamic_pad_removal passed!\n");
 }
 
+static void test_sc6f0_source_dynamic(void)
+{
+    printf("Starting test_sc6f0_source_dynamic...\n");
+
+    zst_plugin_registry_init();
+    assert(zst_register_builtin_elements() == ZST_OK);
+
+    zst_pipeline_t* pipe = zst_pipeline_create();
+    zst_bus_t* bus = zst_pipeline_get_bus(pipe);
+    zst_scheduler_config_t cfg = { .mode = ZST_SCHEDULER_SINGLE_THREAD, .worker_threads = 1 };
+    zst_scheduler_t* sched = zst_scheduler_create(&cfg);
+    zst_scheduler_attach(sched, pipe);
+
+    zst_element_t* src = zst_element_factory_make("sc6f0src");
+    assert(src != NULL);
+    assert(zst_element_set_property_bool(src, "mock-mode", true) == ZST_OK);
+    assert(zst_element_set_property_string(src, "trigger-signal", "none") == ZST_OK);
+
+    zst_pipeline_add(pipe, src);
+
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_PLAYING) == ZST_OK);
+    assert(zst_scheduler_run(sched) == ZST_OK);
+
+    usleep(50000);
+
+    assert(zst_element_get_stream_count(src) == 0);
+
+    assert(zst_element_set_property_string(src, "trigger-signal", "1080p") == ZST_OK);
+    usleep(250000); 
+
+    int signal_present_seen = 0;
+    int pad_added_seen = 0;
+    int stream_added_seen = 0;
+
+    zst_event_t* ev = NULL;
+    while (zst_bus_pop(bus, &ev, 1) == ZST_OK) {
+        if (ev->type == ZST_EVENT_SIGNAL_PRESENT) {
+            signal_present_seen++;
+        } else if (ev->type == ZST_EVENT_PAD_ADDED) {
+            pad_added_seen++;
+            printf("Mock test: Pad added: %s\n", ev->as.pad_added.pad->name);
+        } else if (ev->type == ZST_EVENT_STREAM_ADDED) {
+            stream_added_seen++;
+        }
+        zst_event_destroy(ev);
+    }
+
+    assert(signal_present_seen == 1);
+    assert(pad_added_seen == 2); 
+    assert(stream_added_seen == 2);
+
+    uint32_t count = zst_element_get_stream_count(src);
+    assert(count == 2); 
+
+    zst_stream_info_t info;
+    assert(zst_element_get_stream_info(src, 0, &info) == ZST_OK);
+    assert(info.kind == ZST_MEDIA_VIDEO);
+    assert(strcmp(info.name, "video_0") == 0);
+    zst_stream_info_clear(&info);
+
+    assert(zst_element_get_stream_info(src, 1, &info) == ZST_OK);
+    assert(info.kind == ZST_MEDIA_AUDIO);
+    assert(strcmp(info.name, "audio_0") == 0);
+    zst_stream_info_clear(&info);
+
+    zst_pad_t* vpad = zst_element_get_stream_pad(src, 1);
+    assert(vpad != NULL);
+    assert(strcmp(vpad->name, "video_0") == 0);
+
+    assert(zst_element_set_property_string(src, "trigger-signal", "720p") == ZST_OK);
+    usleep(250000);
+
+    int caps_changed_seen = 0;
+    while (zst_bus_pop(bus, &ev, 1) == ZST_OK) {
+        if (ev->type == ZST_EVENT_CAPS_CHANGED) {
+            caps_changed_seen++;
+            printf("Mock test: Caps changed on pad %s\n", ev->as.caps_changed.pad->name);
+        }
+        zst_event_destroy(ev);
+    }
+    assert(caps_changed_seen >= 1);
+
+    assert(zst_element_set_property_string(src, "trigger-signal", "none") == ZST_OK);
+    usleep(250000);
+
+    int signal_lost_seen = 0;
+    int pad_removed_seen = 0;
+    while (zst_bus_pop(bus, &ev, 1) == ZST_OK) {
+        if (ev->type == ZST_EVENT_SIGNAL_LOST) {
+            signal_lost_seen++;
+        } else if (ev->type == ZST_EVENT_PAD_REMOVED) {
+            pad_removed_seen++;
+        }
+        zst_event_destroy(ev);
+    }
+    assert(signal_lost_seen == 1);
+    assert(pad_removed_seen == 2);
+
+    assert(zst_element_get_stream_count(src) == 0);
+
+    zst_scheduler_stop(sched);
+    zst_pipeline_set_state(pipe, ZST_STATE_NULL);
+    zst_scheduler_destroy(sched);
+    zst_pipeline_destroy(pipe);
+    zst_plugin_registry_deinit();
+
+    printf("test_sc6f0_source_dynamic passed!\n");
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -720,6 +829,7 @@ int main(void)
     test_mpegts_pmt_changes();
     test_mp4_dynamic_tracks();
     test_multithread_dynamic_pad_removal();
+    test_sc6f0_source_dynamic();
     printf("ALL Phase G dynamic tests passed!\n\n");
     return 0;
 }

@@ -519,6 +519,7 @@ set(ELEMENT_LIBRARY_SOURCES
     src/net_sink.c
     src/rtsp_server.c
     src/nv_video_scaler.c
+    src/sc6f0_source.c
 )
 
 if(HAS_V4L2)
