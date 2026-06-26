@@ -7042,6 +7042,49 @@ static void test_rtsp_server_media_on_demand(void) {
     PASS();
 }
 
+static void test_rtsp_server_pacing_properties(void) {
+    TEST("RTSP Server UDP pacing properties");
+
+    zst_element_t* server = zst_rtsp_server_create();
+    assert(server != NULL);
+
+    char val[64];
+    assert(zst_element_get_property(server, "udp-timestamp-pacing", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "true") == 0);
+
+    assert(zst_element_set_property(server, "udp-timestamp-pacing", "false") == ZST_OK);
+    assert(zst_element_get_property(server, "udp-timestamp-pacing", val, sizeof(val)) == ZST_OK);
+    assert(strcmp(val, "false") == 0);
+
+    assert(zst_element_set_property_int(server, "udp-pacing-tolerance-ms", 7) == ZST_OK);
+    int64_t udp_pacing_tolerance = 0;
+    assert(zst_element_get_property_int(server, "udp-pacing-tolerance-ms", &udp_pacing_tolerance) == ZST_OK);
+    assert(udp_pacing_tolerance == 7);
+
+    assert(zst_element_set_property_int(server, "udp-pacing-reset-threshold-ms", 3000) == ZST_OK);
+    int64_t udp_pacing_reset_threshold = 0;
+    assert(zst_element_get_property_int(server, "udp-pacing-reset-threshold-ms", &udp_pacing_reset_threshold) == ZST_OK);
+    assert(udp_pacing_reset_threshold == 3000);
+
+    assert(zst_element_set_property_int(server, "udp-max-lateness-ms", 25) == ZST_OK);
+    int64_t udp_max_lateness = 0;
+    assert(zst_element_get_property_int(server, "udp-max-lateness-ms", &udp_max_lateness) == ZST_OK);
+    assert(udp_max_lateness == 25);
+
+    // Verify session-level pacer updates
+    assert(zst_rtsp_server_add_session(server, "test_session") == ZST_OK);
+
+    // Changing properties should apply to dynamic session pacers
+    assert(zst_element_set_property_int(server, "udp-pacing-tolerance-ms", 12) == ZST_OK);
+    assert(zst_element_get_property_int(server, "udp-pacing-tolerance-ms", &udp_pacing_tolerance) == ZST_OK);
+    assert(udp_pacing_tolerance == 12);
+
+    assert(zst_rtsp_server_remove_session(server, "test_session") == ZST_OK);
+
+    zst_element_destroy(server);
+    PASS();
+}
+
 #ifdef HAS_FFMPEG
 static zst_pad_probe_return_t bunny_probe(zst_pad_t* pad, zst_buffer_t* buf, zst_pad_probe_type_t type, void* user_data) {
     (void)pad;
@@ -8017,6 +8060,8 @@ int main(void)
 #else
     printf("  [SKIP] FFmpeg disabled\n");
 #endif
+
+    test_rtsp_server_pacing_properties();
 
     printf("[rtsp server media-on-demand]\n");
 #ifdef HAS_FFMPEG

@@ -201,3 +201,7 @@ M src/zst_element.c         — Reset clock sync state on PLAYING transition
 M src/zst_scheduler.c       — Delta-based clock sync comparison
 M tests/demo_rtsp_mod.c     — Remove use-clock=true from sources
 ```
+
+## Outbound UDP Pacing
+
+In addition to scheduler-level clock sync pacing, live UDP-outbound elements (`net_sink` with `protocol=udp`, `rtsp_server` UDP/multicast sessions, and `rtspsink` UDP transport) utilize a dedicated pacing helper `zst_timestamp_pacer_t` to pace packets at the network transport layer. This ensures live RTP/UDP streams are transmitted according to media timestamps instead of bursting as fast as upstream pushes, preventing downstream client buffer issues. For more details, see [UDP Outbound Timestamp Pacing Plan](phase-udp-timestamp-pacing.md).
