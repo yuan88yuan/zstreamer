@@ -881,6 +881,131 @@ test_bin_state_propagation(void)
     PASS();
 }
 
+typedef struct {
+    int opened;
+    int closed;
+    int prerolled;
+    int unprerolled;
+    int started;
+    int stopped;
+    int fail_preroll;
+    char seq[128];
+} lifecycle_test_ctx_t;
+
+static void log_call(lifecycle_test_ctx_t* ctx, const char* name)
+{
+    if (ctx->seq[0] != '\0') {
+        strcat(ctx->seq, "->");
+    }
+    strcat(ctx->seq, name);
+}
+
+static zst_result_t lc_open(zst_element_t* el) {
+    lifecycle_test_ctx_t* ctx = el->priv;
+    ctx->opened++;
+    log_call(ctx, "open");
+    return ZST_OK;
+}
+
+static zst_result_t lc_close(zst_element_t* el) {
+    lifecycle_test_ctx_t* ctx = el->priv;
+    ctx->closed++;
+    log_call(ctx, "close");
+    return ZST_OK;
+}
+
+static zst_result_t lc_preroll(zst_element_t* el) {
+    lifecycle_test_ctx_t* ctx = el->priv;
+    if (ctx->fail_preroll) {
+        log_call(ctx, "preroll_fail");
+        return ZST_ERROR;
+    }
+    ctx->prerolled++;
+    log_call(ctx, "preroll");
+    return ZST_OK;
+}
+
+static zst_result_t lc_unpreroll(zst_element_t* el) {
+    lifecycle_test_ctx_t* ctx = el->priv;
+    ctx->unprerolled++;
+    log_call(ctx, "unpreroll");
+    return ZST_OK;
+}
+
+static zst_result_t lc_start(zst_element_t* el) {
+    lifecycle_test_ctx_t* ctx = el->priv;
+    ctx->started++;
+    log_call(ctx, "start");
+    return ZST_OK;
+}
+
+static zst_result_t lc_stop(zst_element_t* el) {
+    lifecycle_test_ctx_t* ctx = el->priv;
+    ctx->stopped++;
+    log_call(ctx, "stop");
+    return ZST_OK;
+}
+
+static zst_element_ops_t g_lc_test_ops = {
+    .name = "lc_test",
+    .open = lc_open,
+    .close = lc_close,
+    .preroll = lc_preroll,
+    .unpreroll = lc_unpreroll,
+    .start = lc_start,
+    .stop = lc_stop,
+};
+
+static void test_preroll_lifecycle(void)
+{
+    TEST("preroll lifecycle hooks and state rollback on failure");
+
+    zst_pipeline_t* pipe = zst_pipeline_create();
+    assert(pipe != NULL);
+
+    lifecycle_test_ctx_t* ctx = calloc(1, sizeof(lifecycle_test_ctx_t));
+    assert(ctx != NULL);
+    zst_element_t* el = zst_element_create(&g_lc_test_ops, ctx);
+    assert(el != NULL);
+
+    assert(zst_pipeline_add(pipe, el) == ZST_OK);
+
+    /* 1. Test normal transition from NULL to PLAYING (should pass through READY and PAUSED) */
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_PLAYING) == ZST_OK);
+    assert(pipe->state == ZST_STATE_PLAYING);
+    assert(el->state == ZST_STATE_PLAYING);
+    assert(ctx->opened == 1);
+    assert(ctx->prerolled == 1);
+    assert(ctx->started == 1);
+    assert(strcmp(ctx->seq, "open->preroll->start") == 0);
+
+    /* 2. Test transition from PLAYING to NULL (should pass through PAUSED and READY) */
+    ctx->seq[0] = '\0';
+    assert(zst_pipeline_set_state(pipe, ZST_STATE_NULL) == ZST_OK);
+    assert(pipe->state == ZST_STATE_NULL);
+    assert(el->state == ZST_STATE_NULL);
+    assert(ctx->stopped == 1);
+    assert(ctx->unprerolled == 1);
+    assert(ctx->closed == 1);
+    assert(strcmp(ctx->seq, "stop->unpreroll->close") == 0);
+
+    /* 3. Test failure and rollback */
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->fail_preroll = 1;
+
+    zst_result_t res = zst_pipeline_set_state(pipe, ZST_STATE_PLAYING);
+    assert(res == ZST_ERROR);
+    assert(pipe->state == ZST_STATE_NULL);
+    assert(el->state == ZST_STATE_NULL);
+    assert(ctx->opened == 1);
+    assert(ctx->prerolled == 0);
+    assert(ctx->closed == 1);
+    assert(strcmp(ctx->seq, "open->preroll_fail->close") == 0);
+
+    zst_pipeline_destroy(pipe);
+    PASS();
+}
+
 static void
 test_bin_eos_passthrough(void)
 {
@@ -7727,6 +7852,7 @@ int main(void)
     /* ── Advanced Features (Phase 8c) ── */
     printf("[element bin]\n");
     test_bin_state_propagation();
+    test_preroll_lifecycle();
     test_bin_eos_passthrough();
     test_bin_eos_convergence();
     test_bin_ghost_pad_push();

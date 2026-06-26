@@ -368,13 +368,20 @@ zst_pipeline_set_state(zst_pipeline_t* pipe, zst_state_t state)
     zst_state_t old_state = pipe->state;
     if (old_state == state) return ZST_OK;
 
-    /* A direct NULL -> PLAYING request needs an intermediate READY pass so
-     * elements that create pools in open() expose them before topology sizing
-     * and before start() begins worker threads. */
-    if (old_state < ZST_STATE_READY && state == ZST_STATE_PLAYING) {
-        zst_result_t r = zst_pipeline_set_state(pipe, ZST_STATE_READY);
+    /* Decompose multi-step transitions so they pass through all intermediate states */
+    if (state > old_state && (state - old_state) > 1) {
+        zst_result_t r = zst_pipeline_set_state(pipe, old_state + 1);
         if (r != ZST_OK) return r;
-        r = zst_pipeline_set_state(pipe, ZST_STATE_PLAYING);
+        r = zst_pipeline_set_state(pipe, state);
+        if (r != ZST_OK) {
+            zst_pipeline_set_state(pipe, old_state);
+        }
+        return r;
+    }
+    if (state < old_state && (old_state - state) > 1) {
+        zst_result_t r = zst_pipeline_set_state(pipe, old_state - 1);
+        if (r != ZST_OK) return r;
+        r = zst_pipeline_set_state(pipe, state);
         if (r != ZST_OK) {
             zst_pipeline_set_state(pipe, old_state);
         }
