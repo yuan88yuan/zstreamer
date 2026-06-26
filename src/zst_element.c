@@ -142,49 +142,86 @@ zst_element_set_state(zst_element_t* el, zst_state_t state)
     zst_state_t current_state = __atomic_load_n(&el->state, __ATOMIC_ACQUIRE);
     if (current_state == state) return ZST_OK;
 
-    /* Call the appropriate lifecycle hook */
+    /* Decompose multi-step upward transitions */
+    if (current_state < ZST_STATE_READY && state > ZST_STATE_READY) {
+        zst_result_t r = zst_element_set_state(el, ZST_STATE_READY);
+        if (r != ZST_OK) return r;
+        r = zst_element_set_state(el, state);
+        if (r != ZST_OK) {
+            zst_element_set_state(el, current_state);
+        }
+        return r;
+    }
+    if (current_state == ZST_STATE_READY && state == ZST_STATE_PLAYING) {
+        zst_result_t r = zst_element_set_state(el, ZST_STATE_PAUSED);
+        if (r != ZST_OK) return r;
+        r = zst_element_set_state(el, state);
+        if (r != ZST_OK) {
+            zst_element_set_state(el, current_state);
+        }
+        return r;
+    }
+
+    /* Decompose multi-step downward transitions */
+    if (current_state == ZST_STATE_PLAYING && state < ZST_STATE_PAUSED) {
+        zst_result_t r = zst_element_set_state(el, ZST_STATE_PAUSED);
+        if (r != ZST_OK) return r;
+        return zst_element_set_state(el, state);
+    }
+    if (current_state == ZST_STATE_PAUSED && state < ZST_STATE_READY) {
+        zst_result_t r = zst_element_set_state(el, ZST_STATE_READY);
+        if (r != ZST_OK) return r;
+        return zst_element_set_state(el, state);
+    }
+
+    /* Single-step transitions */
     zst_result_t ret = ZST_OK;
 
-    /* Transition NULL -> READY */
-    if (current_state < ZST_STATE_READY && state >= ZST_STATE_READY) {
+    if (current_state == ZST_STATE_NULL && state == ZST_STATE_READY) {
         if (el->ops->open)
             ret = el->ops->open(el);
-        if (ret != ZST_OK) return ret;
-    }
-
-    /* Transition READY -> PAUSED */
-    if (current_state < ZST_STATE_PAUSED && state >= ZST_STATE_PAUSED) {
-        /* no default action */
-    }
-
-    /* Transition PAUSED -> PLAYING */
-    if (current_state < ZST_STATE_PLAYING && state >= ZST_STATE_PLAYING) {
+    } else if (current_state == ZST_STATE_READY && state == ZST_STATE_PAUSED) {
+        if (el->ops->preroll)
+            ret = el->ops->preroll(el);
+    } else if (current_state == ZST_STATE_PAUSED && state == ZST_STATE_PLAYING) {
         if (el->ops->start)
             ret = el->ops->start(el);
-        if (ret != ZST_OK) return ret;
-    }
-
-    /* Transition PLAYING -> PAUSED */
-    if (current_state >= ZST_STATE_PLAYING && state < ZST_STATE_PLAYING) {
+    } else if (current_state == ZST_STATE_PLAYING && state == ZST_STATE_PAUSED) {
         if (el->ops->stop)
             ret = el->ops->stop(el);
-        if (ret != ZST_OK) return ret;
-    }
-
-    /* Transition PAUSED / READY -> NULL */
-    if (current_state >= ZST_STATE_READY && state < ZST_STATE_READY) {
+    } else if (current_state == ZST_STATE_PAUSED && state == ZST_STATE_READY) {
+        if (el->ops->unpreroll)
+            ret = el->ops->unpreroll(el);
+    } else if (current_state == ZST_STATE_READY && state == ZST_STATE_NULL) {
         if (el->ops->close)
             ret = el->ops->close(el);
-        if (ret != ZST_OK) return ret;
     }
+
+    if (ret != ZST_OK) return ret;
 
     if (zst_bin_element_is_bin(el)) {
         ret = zst_bin_element_change_state(el, current_state, state);
-        if (ret != ZST_OK) return ret;
+        if (ret != ZST_OK) {
+            /* Rollback the single-step hook */
+            if (current_state == ZST_STATE_NULL && state == ZST_STATE_READY) {
+                if (el->ops->close) el->ops->close(el);
+            } else if (current_state == ZST_STATE_READY && state == ZST_STATE_PAUSED) {
+                if (el->ops->unpreroll) el->ops->unpreroll(el);
+            } else if (current_state == ZST_STATE_PAUSED && state == ZST_STATE_PLAYING) {
+                if (el->ops->stop) el->ops->stop(el);
+            } else if (current_state == ZST_STATE_PLAYING && state == ZST_STATE_PAUSED) {
+                if (el->ops->start) el->ops->start(el);
+            } else if (current_state == ZST_STATE_PAUSED && state == ZST_STATE_READY) {
+                if (el->ops->preroll) el->ops->preroll(el);
+            } else if (current_state == ZST_STATE_READY && state == ZST_STATE_NULL) {
+                if (el->ops->open) el->ops->open(el);
+            }
+            return ret;
+        }
     }
 
     __atomic_store_n(&el->state, state, __ATOMIC_RELEASE);
-    if (state != current_state && el->bus) {
+    if (el->bus) {
         zst_event_t* ev = zst_event_new_state_changed(el, current_state, state);
         zst_bus_post(el->bus, ev);
     }

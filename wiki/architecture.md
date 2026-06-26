@@ -74,25 +74,27 @@ Each pad carries optional **caps** (media type negotiation) and **push/pull** fu
 ### Element (zst_element)
 A processing node in the pipeline. Elements implement the **ops** vtable:
 
-| Op       | Called during state transition |
-|----------|--------------------------------|
-| `open`   | NULL → READY (allocate resources) |
-| `close`  | READY → NULL (release resources) |
-| `start`  | PAUSED → PLAYING (start streaming) |
-| `stop`   | PLAYING → PAUSED (stop streaming) |
-| `process`| Active streaming: transform `in` → `out` |
+| Op          | Called during state transition |
+|-------------|--------------------------------|
+| `open`      | NULL → READY (allocate resources) |
+| `close`     | READY → NULL (release resources) |
+| `preroll`   | READY → PAUSED (preroll preparation) |
+| `unpreroll` | PAUSED → READY (teardown/reset) |
+| `start`     | PAUSED → PLAYING (start streaming) |
+| `stop`      | PLAYING → PAUSED (stop streaming) |
+| `process`   | Active streaming: transform `in` → `out` |
 
 Elements own an array of source pads and sink pads. Multi-pad elements (e.g. a muxer with separate video/audio inputs) add multiple pads.
 
 ### State Machine
 
 ```
-NULL  ──open──→  READY  ──start──→  PLAYING
-  ↑                │                    │
-  └──close──┘      └──────stop─────────┘
+NULL  ──open──→  READY  ──preroll──→  PAUSED  ──start──→  PLAYING
+  ↑                │                     │                    │
+  └───close────────┴────unpreroll────────┴──────stop──────────┘
 ```
 
-`PAUSED` is reserved but not yet wired — elements can optionally implement it for preroll.
+`PAUSED` is the preroll state. Elements can optionally implement `preroll` and `unpreroll` hooks. Direct pipeline transitions to `PLAYING` automatically step through the `PAUSED` state.
 
 ### Pipeline (zst_pipeline)
 An ordered container of elements. Its primary job is **state propagation** — calling `zst_element_set_state()` on every element in sequence.
