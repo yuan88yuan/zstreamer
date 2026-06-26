@@ -213,11 +213,11 @@ Properties:
 
 ### Phase C — `rtsp_server` integration
 
-- [ ] Add per-session video/audio UDP pacers.
-- [ ] Initialize/reset pacers when sessions are created, PLAY starts, PAUSE/TEARDOWN occurs, or session state is reset.
-- [ ] Add server-level UDP pacing properties and apply them to all session pacers.
-- [ ] Pace once per incoming video/audio buffer before taking `srv->lock`.
-- [ ] Preserve RTP timestamp calculation and packetization behavior.
+- [x] Add per-session video/audio UDP pacers.
+- [x] Initialize/reset pacers when sessions are created, PLAY starts, PAUSE/TEARDOWN occurs, or session state is reset.
+- [x] Add server-level UDP pacing properties and apply them to all session pacers.
+- [x] Pace once per incoming video/audio buffer before taking `srv->lock`.
+- [x] Preserve RTP timestamp calculation and packetization behavior.
 
 ### Phase D — `rtspsink` integration
 

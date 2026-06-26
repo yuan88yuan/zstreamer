@@ -595,7 +595,15 @@ static const zst_property_spec_t g_builtin_rtspserver_props[] = {
     { "multicast-port-base", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "56000", "Default multicast RTP port for video; audio uses +2" },
     { "multicast-ttl", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "16", "Default multicast IP TTL" },
     { "session_count", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE, "0", "Number of active RTSP streaming sessions" },
-    { "client_count", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE, "0", "Number of connected RTSP clients" }
+    { "client_count", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE, "0", "Number of connected RTSP clients" },
+    { "udp-timestamp-pacing", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "true", "Pace UDP RTSP output according to buffer timestamps" },
+    { "udp_timestamp_pacing", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "true", "Alias for udp-timestamp-pacing" },
+    { "udp-pacing-tolerance-ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5", "Pacing tolerance in milliseconds" },
+    { "udp_pacing_tolerance_ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5", "Alias for udp-pacing-tolerance-ms" },
+    { "udp-pacing-reset-threshold-ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "2000", "Discontinuity reset threshold in milliseconds" },
+    { "udp_pacing_reset_threshold_ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "2000", "Alias for udp-pacing-reset-threshold-ms" },
+    { "udp-max-lateness-ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "0", "Max lateness in milliseconds before packet drop (0=disabled)" },
+    { "udp_max_lateness_ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "0", "Alias for udp-max-lateness-ms" }
 };
 
 #ifdef HAS_FREETYPE

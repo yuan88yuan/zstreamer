@@ -55,6 +55,7 @@
 #include "zst_caps.h"
 #include "zst_log.h"
 #include "zst_rtsp_server.h"
+#include "zst_timestamp_pacer.h"
 
 /*===========================================================================
     Constants
@@ -126,6 +127,8 @@ typedef struct {
 ===========================================================================*/
 struct rtsp_server_session_s;
 struct rtsp_server_priv_s;
+
+static void apply_pacing_properties(struct rtsp_server_priv_s* srv, struct rtsp_server_session_s* sess);
 
 /*===========================================================================
     Per-stream RTP state (one per client per media type)
@@ -227,6 +230,8 @@ typedef struct rtsp_server_session_s {
     /* Cached H.264 SPS/PPS NAL units in Annex-B format (with 0x00000001 start codes) */
     uint8_t*    sps_pps_cache;
     int         sps_pps_cache_size;
+    zst_timestamp_pacer_t* video_udp_pacer;
+    zst_timestamp_pacer_t* audio_udp_pacer;
 } rtsp_server_session_t;
 
 /*===========================================================================
@@ -254,6 +259,11 @@ typedef struct rtsp_server_priv_s {
     char                       multicast_address[64];
     uint16_t                   multicast_port_base;
     int                        multicast_ttl;
+
+    int                        udp_timestamp_pacing;
+    uint64_t                   udp_pacing_tolerance_ms;
+    uint64_t                   udp_pacing_reset_threshold_ms;
+    uint64_t                   udp_max_lateness_ms;
 } rtsp_server_priv_t;
 
 
@@ -1277,6 +1287,10 @@ static int on_play(rtsp_client_t* cl) {
     int ret = send_reply(cl, 200, extra, NULL, 0);
 
     /* Now safe to allow pipeline threads to deliver RTP data */
+    if (cl->session) {
+        if (cl->session->video_udp_pacer) zst_timestamp_pacer_reset(cl->session->video_udp_pacer);
+        if (cl->session->audio_udp_pacer) zst_timestamp_pacer_reset(cl->session->audio_udp_pacer);
+    }
     cl->play_state = 1;
 
     return ret;
@@ -1284,11 +1298,19 @@ static int on_play(rtsp_client_t* cl) {
 
 static int on_pause(rtsp_client_t* cl) {
     if (!cl->session_id[0]) return reply_simple(cl, 454);
+    if (cl->session) {
+        if (cl->session->video_udp_pacer) zst_timestamp_pacer_reset(cl->session->video_udp_pacer);
+        if (cl->session->audio_udp_pacer) zst_timestamp_pacer_reset(cl->session->audio_udp_pacer);
+    }
     cl->play_state = 2;
     return reply_simple(cl, 200);
 }
 
 static int on_teardown(rtsp_client_t* cl) {
+    if (cl->session) {
+        if (cl->session->video_udp_pacer) zst_timestamp_pacer_reset(cl->session->video_udp_pacer);
+        if (cl->session->audio_udp_pacer) zst_timestamp_pacer_reset(cl->session->audio_udp_pacer);
+    }
     cl->play_state = 0;
     return reply_simple(cl, 200);
 }
@@ -1370,6 +1392,30 @@ static void session_deliver(rtsp_server_priv_t* srv,
     }
 
     if (buf->flags & ZST_BUFFER_FLAG_EOS) return;
+
+    int need_pacing = 0;
+    pthread_mutex_lock(&srv->lock);
+    for (rtsp_client_t* cl = srv->clients; cl; cl = cl->next) {
+        if (cl->session == sess && cl->play_state == 1) {
+            if (cl->transport_type == RTSP_TRANSPORT_UDP ||
+                cl->transport_type == RTSP_TRANSPORT_MULTICAST) {
+                need_pacing = 1;
+                break;
+            }
+        }
+    }
+    pthread_mutex_unlock(&srv->lock);
+
+    if (need_pacing) {
+        zst_timestamp_pacer_t* pacer = is_video ? sess->video_udp_pacer : sess->audio_udp_pacer;
+        if (pacer) {
+            int dropped = 0;
+            zst_result_t pacing_res = zst_timestamp_pacer_wait(pacer, srv->self ? srv->self->clock : NULL, buf->pts, &dropped);
+            if (pacing_res != ZST_OK && dropped) {
+                return;
+            }
+        }
+    }
 
     pthread_mutex_lock(&srv->lock);
 
@@ -1856,6 +1902,16 @@ static zst_result_t el_close(zst_element_t* el) {
         free(srv->sessions[i].sps_pps_cache);
         srv->sessions[i].sps_pps_cache = NULL;
         srv->sessions[i].sps_pps_cache_size = 0;
+        if (srv->sessions[i].video_udp_pacer) {
+            zst_timestamp_pacer_deinit(srv->sessions[i].video_udp_pacer);
+            free(srv->sessions[i].video_udp_pacer);
+            srv->sessions[i].video_udp_pacer = NULL;
+        }
+        if (srv->sessions[i].audio_udp_pacer) {
+            zst_timestamp_pacer_deinit(srv->sessions[i].audio_udp_pacer);
+            free(srv->sessions[i].audio_udp_pacer);
+            srv->sessions[i].audio_udp_pacer = NULL;
+        }
     }
 
     return ZST_OK;
@@ -1882,6 +1938,11 @@ static zst_result_t el_stop(zst_element_t* el) {
 
     if (srv->listen_fd >= 0) { close(srv->listen_fd); srv->listen_fd = -1; }
 
+    for (int i = 0; i < srv->session_count; i++) {
+        if (srv->sessions[i].video_udp_pacer) zst_timestamp_pacer_reset(srv->sessions[i].video_udp_pacer);
+        if (srv->sessions[i].audio_udp_pacer) zst_timestamp_pacer_reset(srv->sessions[i].audio_udp_pacer);
+    }
+
     return ZST_OK;
 }
 
@@ -1893,6 +1954,11 @@ static zst_result_t el_start(zst_element_t* el) {
     if (srv->listen_fd < 0) {
         ZST_LOG_ERROR("rtsp_server", "cannot listen on port %d", srv->listen_port);
         return ZST_ERROR;
+    }
+
+    for (int i = 0; i < srv->session_count; i++) {
+        if (srv->sessions[i].video_udp_pacer) zst_timestamp_pacer_reset(srv->sessions[i].video_udp_pacer);
+        if (srv->sessions[i].audio_udp_pacer) zst_timestamp_pacer_reset(srv->sessions[i].audio_udp_pacer);
     }
 
     srv->running = 1;
@@ -1940,6 +2006,37 @@ static zst_result_t el_set_prop(zst_element_t* el, const char* name,
         if (srv->multicast_ttl > 255) srv->multicast_ttl = 255;
         return ZST_OK;
     }
+    if (strcmp(name, "udp-timestamp-pacing") == 0 || strcmp(name, "udp_timestamp_pacing") == 0) {
+        srv->udp_timestamp_pacing = (strcmp(value, "1") == 0 ||
+                                     strcasecmp(value, "true") == 0 ||
+                                     strcasecmp(value, "yes") == 0 ||
+                                     strcasecmp(value, "on") == 0);
+        for (int i = 0; i < srv->session_count; i++) {
+            apply_pacing_properties(srv, &srv->sessions[i]);
+        }
+        return ZST_OK;
+    }
+    if (strcmp(name, "udp-pacing-tolerance-ms") == 0 || strcmp(name, "udp_pacing_tolerance_ms") == 0) {
+        srv->udp_pacing_tolerance_ms = strtoull(value, NULL, 10);
+        for (int i = 0; i < srv->session_count; i++) {
+            apply_pacing_properties(srv, &srv->sessions[i]);
+        }
+        return ZST_OK;
+    }
+    if (strcmp(name, "udp-pacing-reset-threshold-ms") == 0 || strcmp(name, "udp_pacing_reset_threshold_ms") == 0) {
+        srv->udp_pacing_reset_threshold_ms = strtoull(value, NULL, 10);
+        for (int i = 0; i < srv->session_count; i++) {
+            apply_pacing_properties(srv, &srv->sessions[i]);
+        }
+        return ZST_OK;
+    }
+    if (strcmp(name, "udp-max-lateness-ms") == 0 || strcmp(name, "udp_max_lateness_ms") == 0) {
+        srv->udp_max_lateness_ms = strtoull(value, NULL, 10);
+        for (int i = 0; i < srv->session_count; i++) {
+            apply_pacing_properties(srv, &srv->sessions[i]);
+        }
+        return ZST_OK;
+    }
     return ZST_ERROR;
 }
 
@@ -1977,6 +2074,22 @@ static zst_result_t el_get_prop(zst_element_t* el, const char* name,
         snprintf(out, max, "%d", srv->multicast_ttl);
         return ZST_OK;
     }
+    if (strcmp(name, "udp-timestamp-pacing") == 0 || strcmp(name, "udp_timestamp_pacing") == 0) {
+        snprintf(out, max, "%s", srv->udp_timestamp_pacing ? "true" : "false");
+        return ZST_OK;
+    }
+    if (strcmp(name, "udp-pacing-tolerance-ms") == 0 || strcmp(name, "udp_pacing_tolerance_ms") == 0) {
+        snprintf(out, max, "%llu", (unsigned long long)srv->udp_pacing_tolerance_ms);
+        return ZST_OK;
+    }
+    if (strcmp(name, "udp-pacing-reset-threshold-ms") == 0 || strcmp(name, "udp_pacing_reset_threshold_ms") == 0) {
+        snprintf(out, max, "%llu", (unsigned long long)srv->udp_pacing_reset_threshold_ms);
+        return ZST_OK;
+    }
+    if (strcmp(name, "udp-max-lateness-ms") == 0 || strcmp(name, "udp_max_lateness_ms") == 0) {
+        snprintf(out, max, "%llu", (unsigned long long)srv->udp_max_lateness_ms);
+        return ZST_OK;
+    }
     return ZST_ERROR;
 }
 
@@ -1991,6 +2104,27 @@ static const zst_element_ops_t g_ops = {
     .get_property  = el_get_prop,
 };
 
+static void apply_pacing_properties(rtsp_server_priv_t* srv, rtsp_server_session_t* sess) {
+    if (sess->video_udp_pacer) {
+        zst_timestamp_pacer_set_enabled(sess->video_udp_pacer, srv->udp_timestamp_pacing);
+        zst_timestamp_pacer_configure(
+            sess->video_udp_pacer,
+            srv->udp_pacing_tolerance_ms * 1000000ULL,
+            srv->udp_pacing_reset_threshold_ms * 1000000ULL,
+            srv->udp_max_lateness_ms * 1000000ULL
+        );
+    }
+    if (sess->audio_udp_pacer) {
+        zst_timestamp_pacer_set_enabled(sess->audio_udp_pacer, srv->udp_timestamp_pacing);
+        zst_timestamp_pacer_configure(
+            sess->audio_udp_pacer,
+            srv->udp_pacing_tolerance_ms * 1000000ULL,
+            srv->udp_pacing_reset_threshold_ms * 1000000ULL,
+            srv->udp_max_lateness_ms * 1000000ULL
+        );
+    }
+}
+
 /*===========================================================================
     Public API
 ===========================================================================*/
@@ -2003,6 +2137,10 @@ zst_element_t* zst_rtsp_server_create(void) {
     strncpy(priv->multicast_address, "239.255.42.42", sizeof(priv->multicast_address) - 1);
     priv->multicast_port_base = 56000;
     priv->multicast_ttl = 16;
+    priv->udp_timestamp_pacing = 1;
+    priv->udp_pacing_tolerance_ms = 5;
+    priv->udp_pacing_reset_threshold_ms = 2000;
+    priv->udp_max_lateness_ms = 0;
     pthread_mutex_init(&priv->lock, NULL);
 
     zst_element_t* el = zst_element_create(&g_ops, priv);
@@ -2043,11 +2181,25 @@ zst_result_t zst_rtsp_server_add_session(zst_element_t* el, const char* name) {
     sess->audio_pad = zst_pad_create(pn, ZST_PAD_SINK);
     sess->audio_pad->push = audio_push_cb;
 
+    sess->video_udp_pacer = calloc(1, sizeof(zst_timestamp_pacer_t));
+    sess->audio_udp_pacer = calloc(1, sizeof(zst_timestamp_pacer_t));
+    if (sess->video_udp_pacer) zst_timestamp_pacer_init(sess->video_udp_pacer);
+    if (sess->audio_udp_pacer) zst_timestamp_pacer_init(sess->audio_udp_pacer);
+    apply_pacing_properties(srv, sess);
+
     if (zst_element_add_pad(el, sess->video_pad) != ZST_OK ||
         zst_element_add_pad(el, sess->audio_pad) != ZST_OK)
     {
         zst_pad_destroy(sess->video_pad);
         zst_pad_destroy(sess->audio_pad);
+        if (sess->video_udp_pacer) {
+            zst_timestamp_pacer_deinit(sess->video_udp_pacer);
+            free(sess->video_udp_pacer);
+        }
+        if (sess->audio_udp_pacer) {
+            zst_timestamp_pacer_deinit(sess->audio_udp_pacer);
+            free(sess->audio_udp_pacer);
+        }
         pthread_mutex_unlock(&srv->lock);
         return ZST_ERROR;
     }
@@ -2102,6 +2254,16 @@ zst_result_t zst_rtsp_server_remove_session(zst_element_t* el, const char* name)
         free(srv->sessions[i].sps_pps_cache);
         srv->sessions[i].sps_pps_cache = NULL;
         srv->sessions[i].sps_pps_cache_size = 0;
+        if (srv->sessions[i].video_udp_pacer) {
+            zst_timestamp_pacer_deinit(srv->sessions[i].video_udp_pacer);
+            free(srv->sessions[i].video_udp_pacer);
+            srv->sessions[i].video_udp_pacer = NULL;
+        }
+        if (srv->sessions[i].audio_udp_pacer) {
+            zst_timestamp_pacer_deinit(srv->sessions[i].audio_udp_pacer);
+            free(srv->sessions[i].audio_udp_pacer);
+            srv->sessions[i].audio_udp_pacer = NULL;
+        }
         for (int j = i; j < srv->session_count - 1; j++)
             srv->sessions[j] = srv->sessions[j + 1];
         srv->session_count--;
@@ -2202,7 +2364,15 @@ static const zst_property_spec_t g_rtspserver_properties[] = {
     { "multicast-port-base", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "56000", "Default multicast RTP port for video; audio uses +2" },
     { "multicast-ttl", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "16", "Default multicast IP TTL" },
     { "session_count", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE, "0", "Number of active RTSP streaming sessions" },
-    { "client_count", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE, "0", "Number of connected RTSP clients" }
+    { "client_count", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE, "0", "Number of connected RTSP clients" },
+    { "udp-timestamp-pacing", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "true", "Pace UDP RTSP output according to buffer timestamps" },
+    { "udp_timestamp_pacing", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "true", "Alias for udp-timestamp-pacing" },
+    { "udp-pacing-tolerance-ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5", "Pacing tolerance in milliseconds" },
+    { "udp_pacing_tolerance_ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "5", "Alias for udp-pacing-tolerance-ms" },
+    { "udp-pacing-reset-threshold-ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "2000", "Discontinuity reset threshold in milliseconds" },
+    { "udp_pacing_reset_threshold_ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "2000", "Alias for udp-pacing-reset-threshold-ms" },
+    { "udp-max-lateness-ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "0", "Max lateness in milliseconds before packet drop (0=disabled)" },
+    { "udp_max_lateness_ms", ZST_PROPERTY_INT, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "0", "Alias for udp-max-lateness-ms" }
 };
 
 static const zst_pad_template_t g_rtspserver_pads[] = {
