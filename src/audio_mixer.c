@@ -67,6 +67,9 @@ typedef struct {
     bool                have_next_pts;
 
     bool                eos_sent;
+
+    double*             fmix;
+    size_t              fmix_capacity;
 } audio_mixer_t;
 
 /* ── Forward declarations ────────────────────────────────────────────── */
@@ -185,6 +188,12 @@ audio_mixer_close(zst_element_t* el)
         zst_buffer_pool_destroy(s->pool);
         s->pool = NULL;
     }
+
+    if (s->fmix) {
+        free(s->fmix);
+        s->fmix = NULL;
+    }
+    s->fmix_capacity = 0;
 
     s->eos_sent = false;
     s->have_next_pts = false;
@@ -737,11 +746,19 @@ audio_mixer_worker(void* arg)
             }
         }
 
-        double* fmix = calloc((size_t)samples_to_mix * s->channels, sizeof(double));
-        if (!fmix) {
-            pthread_mutex_unlock(&s->mutex);
-            continue;
+        /* ⚡ Bolt Optimization: Reuse fmix buffer to avoid calloc/free per block */
+        size_t required_capacity = (size_t)samples_to_mix * s->channels;
+        if (s->fmix_capacity < required_capacity) {
+            double* new_fmix = realloc(s->fmix, required_capacity * sizeof(double));
+            if (!new_fmix) {
+                pthread_mutex_unlock(&s->mutex);
+                continue;
+            }
+            s->fmix = new_fmix;
+            s->fmix_capacity = required_capacity;
         }
+        memset(s->fmix, 0, required_capacity * sizeof(double));
+        double* fmix = s->fmix;
 
         zst_buffer_t* consumed[MAX_INPUTS];
         memset(consumed, 0, sizeof(consumed));
@@ -893,7 +910,6 @@ audio_mixer_worker(void* arg)
         for (uint32_t i = 0; i < MAX_INPUTS; i++) {
             if (consumed[i]) zst_buffer_unref(consumed[i]);
         }
-        free(fmix);
         continue;
 
     worker_done:
