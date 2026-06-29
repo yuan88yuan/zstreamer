@@ -1,5 +1,17 @@
 /*=============================================================================
-    zst_types.h
+    zst_types.h — Base types, result codes, struct forward decls
+
+    @brief  Fundamental types and error codes for the zstreamer framework.
+    @details
+    This header defines:
+    - zst_result_t — error/status codes for all framework functions
+    - zst_state_t — element state machine enum (NULL→READY→PLAYING)
+    - zst_time_t — nanosecond timestamp type used for PTS/DTS/clock
+    - zst_media_kind_t — stream classification (video/audio/text/unknown)
+    - Forward declarations for all major framework types (buffers, pads,
+      elements, pipelines, queues, schedulers, buses, clocks, etc.)
+    - Pad direction and presence template types
+    - Buffer pool sizing configuration
 =============================================================================*/
 #pragma once
 

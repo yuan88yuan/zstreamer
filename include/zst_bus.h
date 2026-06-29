@@ -1,5 +1,17 @@
 /*=============================================================================
-    zst_bus.h
+    @file zst_bus.h
+    @brief Async event bus for out-of-band notifications
+
+    zst_bus_t provides an asynchronous notification channel decoupled from
+    the data path.  Elements and the pipeline post events; applications
+    consume them via polling (zst_bus_pop) or a registered callback.
+
+    Supported event types:
+    - EOS, ERROR, STATE_CHANGED, WARNING, SEGMENT
+    - PAD_ADDED / PAD_REMOVED — dynamic pad lifecycle
+    - STREAM_ADDED / STREAM_REMOVED / STREAM_CHANGED — stream tracking
+    - CAPS_CHANGED — negotiated caps update
+    - SIGNAL_PRESENT / SIGNAL_LOST — signal detection events
 =============================================================================*/
 #pragma once
 

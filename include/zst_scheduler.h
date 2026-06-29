@@ -1,5 +1,16 @@
 /*=============================================================================
-    zst_scheduler.h
+    @file zst_scheduler.h
+    @brief Single / multi-thread pipeline driver
+
+    The scheduler drives a pipeline's execution model:
+    - ZST_SCHEDULER_SINGLE_THREAD — sequential in the calling thread
+    - ZST_SCHEDULER_MULTI_THREAD — worker thread pool with pipeline
+      parallelism
+
+    In multi-thread mode each worker pops from its input queue, invokes
+    the element's process callback, and pushes results downstream.  The
+    scheduler also handles clock slaving, QoS frame dropping, and EOS
+    propagation.
 =============================================================================*/
 #pragma once
 

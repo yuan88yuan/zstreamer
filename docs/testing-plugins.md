@@ -1,3 +1,5 @@
+@page testing_plugins Testing Plugins Guide
+
 # Testing Plugins Guide
 
 This guide explains how to properly write tests for your custom plugins in `zstreamer`.

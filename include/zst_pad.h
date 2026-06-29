@@ -1,5 +1,18 @@
 /*=============================================================================
-    zst_pad.h - High-performance peer pads with lock-free probe fast-path
+    @file zst_pad.h
+    @brief Connection points for linking elements
+
+    Pads are the connection points on elements.  Two directions exist:
+    - ZST_PAD_SRC — emits data (source/output)
+    - ZST_PAD_SINK — receives data (sink/input)
+
+    Pads support:
+    - Peer-to-peer linking for data flow
+    - Caps negotiation (media type, resolution, format intersection)
+    - Probes for inspecting/modifying buffers in-flight
+    - Blocking for pipeline reconfiguration
+    - Segment clipping for seeking
+    - Unlinked-pad policies (drop, emit events, etc.)
 =============================================================================*/
 #pragma once
 

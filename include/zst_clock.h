@@ -1,5 +1,13 @@
 /*=============================================================================
-    zst_clock.h
+    @file zst_clock.h
+    @brief Clock for A/V synchronisation
+
+    zst_clock_t wraps CLOCK_MONOTONIC and provides:
+    - zst_clock_get_time — current clock time in nanoseconds
+    - zst_clock_wait — block until a target time is reached
+    - Clock slaving — one clock can slave to another for A/V sync
+    - Pipeline-level clock selection via zst_pipeline_set_clock
+    - Jitter measurement for QoS decisions
 =============================================================================*/
 #pragma once
 

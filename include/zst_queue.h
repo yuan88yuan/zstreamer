@@ -1,5 +1,14 @@
 /*=============================================================================
-    zst_queue.h
+    @file zst_queue.h
+    @brief Thread-safe bounded buffer queue for pipeline staging
+
+    zst_queue_t provides a thread-safe, bounded FIFO between processing
+    stages.  It supports:
+    - Fixed-capacity with back-pressure (SYNC) or drop-on-full (ASYNC)
+    - Timeout-aware push/pop (try-lock with zero timeout)
+    - Configurable limits by buffer count, byte count, or duration
+    - Flush for cleanup on state transitions
+    - Multi-producer/multi-consumer safety via mutex + condvar
 =============================================================================*/
 #pragma once
 

@@ -1,3 +1,5 @@
+@page architecture_event_bus Event Bus Patterns
+
 # Event Bus Patterns
 
 The Event Bus (`zst_bus_t`) in zstreamer is a central communication mechanism for asynchronous notifications. It decouples the core pipeline execution threads from the application thread that manages the pipeline, allowing elements to report status, errors, and metadata without blocking data flow.

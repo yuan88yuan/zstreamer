@@ -1,5 +1,18 @@
 /*=============================================================================
-    zst_element.h - Cache-aligned structure-splitting & isolated state lock
+    @file zst_element.h
+    @brief Pipeline processing node with ops vtable and state machine
+
+    zst_element_t is the core processing unit.  Each element implements a
+    set of operations (zst_element_ops_t) that define its behaviour:
+    - Resource lifecycle: open / close / start / stop
+    - Data processing: process (transform in → out buffers)
+    - Caps negotiation: get_caps
+    - Property introspection: set_property / get_property
+    - Clock provision: provide_clock
+    - Stream query: get_stream_count / get_stream_info / get_stream_pad
+
+    Elements transition through a four-state machine:
+    NULL → READY → PAUSED → PLAYING
 =============================================================================*/
 #pragma once
 

@@ -1,3 +1,5 @@
+@page architecture_queue_threading Queue Threading Model Explainer
+
 # Queue Threading Model Explainer
 
 In zstreamer, pipeline execution is primarily driven by the `zst_scheduler_t`. By default, simple pipelines may run entirely inline within a single thread. However, complex pipelines, especially those with multiple branches (e.g., separating audio and video processing), require concurrent execution to utilize multi-core processors efficiently and prevent slow branches from blocking fast ones.

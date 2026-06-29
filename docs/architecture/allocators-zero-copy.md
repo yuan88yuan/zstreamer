@@ -1,3 +1,5 @@
+@page architecture_allocators_zero_copy Allocator + Zero-Copy Guide
+
 # Allocator + Zero-Copy Guide
 
 zstreamer is designed for high-performance multimedia processing, which requires minimizing memory copying and allocation overhead during the active `PLAYING` state. This is achieved through a robust allocator interface (`zst_allocator_t`) and buffer pools (`zst_buffer_pool_t`).

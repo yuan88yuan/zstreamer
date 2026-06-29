@@ -1,5 +1,10 @@
 /*=============================================================================
-    zst_bin.h — Composite element bins and ghost pads
+    @file zst_bin.h
+    @brief Composite element containers and ghost pads
+
+    zst_bin_t provides a container element that manages child elements.
+    Ghost pads expose internal child pads on the bin boundary, allowing
+    the bin to be treated as a single element in the pipeline graph.
 =============================================================================*/
 #pragma once
 

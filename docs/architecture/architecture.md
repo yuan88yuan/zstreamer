@@ -142,23 +142,93 @@ In multi-thread mode each worker pops from its input queue, calls `process()`, a
 
 ### Element Implementations
 
-The framework includes a wide variety of element implementations (37+ built-in and plugin elements) with real hardware/codec integration:
+The framework includes **50+ built-in and plugin element types** across nine categories. All registerable by factory name via `zst_element_factory_make()`:
 
-| Element         | Library            | Status |
-|-----------------|--------------------|--------|
-| V4L2 Source     | `libv4l2`          | ✅ Real device + synthetic mock fallback |
-| ALSA Source     | `libasound`        | ✅ Real device + synthetic mock fallback |
-| H.264 Encoder (x264enc)   | `libx264`          | ✅ ultrafast preset, CRF rate control |
-| AAC Encoder     | `libavcodec`       | ✅ FFmpeg AAC, S16→FLTP conversion |
-| MP4 Muxer       | `libavformat`      | ✅ Fragmented MP4, custom AVIO, EOS tracking |
-| File Sink       | stdio `FILE*`      | ✅ fwrite of buffer data |
-| Video Scaler    | `libswscale`       | ✅ Video format/resolution conversion |
-| Audio Resampler | `libswresample`    | ✅ Sample rate/format conversion + ASRC drift compensation |
-| MPEG-TS Demuxer (tsdemux) | `libavformat` | ✅ Stream-table-backed dynamic output pads (`video_%u`, `audio_%u`, etc.) |
-| MP4 Demuxer (mp4demux) | `libavformat` | ✅ Direct-file & push-mode with dynamic output pads |
-| OpenGL Sink (glsink) | OpenGL/X11 | ✅ Hardware-accelerated display rendering |
-| OpenGL Compositor | OpenGL/X11 | ✅ Multi-pad video composition |
-| Audio Mixer (audiomixer) | Core | ✅ Multi-channel synchronous mixing |
+**Source elements** — produce data into the pipeline:
+
+| Factory Name | Description | Library |
+|-------------|-------------|---------|
+| `videotestsrc` | Synthetic video test patterns | Core |
+| `audiotestsrc` | Synthetic audio test tones | Core |
+| `textsource` | Video frames containing timed text | Core |
+| `filesrc` | Reads buffers from a local file | stdio |
+| `httpsrc` | Reads buffers from HTTP/HTTPS servers | `libcurl` |
+| `v4l2src` | Captures video from a V4L2 device (real + mock) | `libv4l2` |
+| `alsasrc` | Captures audio from ALSA (real + mock) | `libasound` |
+| `sc6f0src` | SC6F0 platform video/audio capture with dynamic signal detection | `libv4l2` + `libasound` |
+| `netsrc` | Receives raw data from TCP/UDP/Unix sockets | Core |
+| `rtspsrc` | Receives A/V from an RTSP endpoint (TCP interleaved + UDP) | `libavformat` |
+| `rtmpsrc` | Receives A/V from an RTMP endpoint | `libavformat` |
+| `srtsrc` | Receives data over Secure Reliable Transport (SRT) | `libsrt` |
+
+**Sink elements** — consume data from the pipeline:
+
+| Factory Name | Description | Library |
+|-------------|-------------|---------|
+| `filesink` | Writes incoming buffers to a local file | stdio |
+| `fakesink` | Consumes buffers and records statistics (testing) | Core |
+| `v4l2sink` | Outputs video to a V4L2 loopback device (real + mock) | `libv4l2` |
+| `alsasink` | Outputs audio to ALSA playback (real + mock) | `libasound` |
+| `netsink` | Sends raw data over TCP/UDP/Unix sockets | Core |
+| `rtspsink` | Publishes A/V to an RTSP endpoint | `libavformat` |
+| `rtmpsink` | Publishes A/V to an RTMP endpoint | `libavformat` |
+| `srtsink` | Sends data over Secure Reliable Transport (SRT) | `libsrt` |
+| `x11sink` | Displays raw video in an X11 window | Xlib |
+| `glsink` | Displays video with GPU YUV→RGB conversion | OpenGL/X11 |
+| `glcompsink` | Composites multiple raw video streams into one OpenGL window | OpenGL/X11 |
+
+**Codec / Encoder elements:**
+
+| Factory Name | Description | Library |
+|-------------|-------------|---------|
+| `x264enc` | Encodes raw video to H.264 (ultrafast, CRF) | `libx264` |
+| `x265enc` | Encodes raw video to H.265 | `libx265` |
+| `aacenc` | Encodes raw audio to AAC (S16→FLTP) | `libavcodec` |
+| `nvenc` | Encodes raw video to H.264/H.265 via V4L2 | NVIDIA V4L2 |
+| `oneapienc` | Encodes raw video via Intel oneVPL | oneAPI/SYCL |
+| `vaapienc` | Encodes raw video via Linux VA-API | VA-API |
+
+**Codec / Decoder elements:**
+
+| Factory Name | Description | Library |
+|-------------|-------------|---------|
+| `h264dec` | Decodes H.264 video to raw frames | `libavcodec` |
+| `h265dec` | Decodes H.265 video to raw frames | `libavcodec` |
+| `aacdec` | Decodes AAC audio to raw PCM | `libavcodec` |
+| `nvdec` | Decodes H.264/H.265 via V4L2 | NVIDIA V4L2 |
+| `vaapidec` | Decodes H.264/H.265 via Linux VA-API | VA-API |
+
+**Muxer / Demuxer elements:**
+
+| Factory Name | Description | Library |
+|-------------|-------------|---------|
+| `mp4mux` | Muxes encoded A/V into fragmented MP4 | `libavformat` |
+| `mp4demux` | Demuxes MP4/MOV/M4A into encoded A/V (dynamic pads) | `libavformat` |
+| `tsmux` | Muxes encoded A/V into MPEG-TS (.ts) | `libavformat` |
+| `tsdemux` | Demuxes MPEG-TS into encoded A/V (dynamic pads) | `libavformat` |
+| `sdpmuxer` | Generates SDP descriptions for RTP sessions | Core |
+
+**Filter / Processing elements:**
+
+| Factory Name | Description | Library |
+|-------------|-------------|---------|
+| `queue` | Thread-safe bounded buffer queue element | Core |
+| `videoscaler` | Video resolution/format conversion | `libswscale` |
+| `audioresampler` | Sample rate / channel / format conversion + ASRC drift | `libswresample` |
+| `textoverlay` | Overlays timed text on video frames | `libfreetype` |
+| `audiomixer` | Synchronous multi-input audio mixing with per-pad pan/volume | Core |
+| `nvvideoscaler` | Hardware video scaling via V4L2 | NVIDIA V4L2 |
+
+**RTP / Streaming elements:**
+
+| Factory Name | Description | Library |
+|-------------|-------------|---------|
+| `rtppay` | Packetizes H.264/H.265/AAC/PCM into RTP buffers | Core |
+| `rtpdepay` | Depayloads RTP packets back to access units | Core |
+| `srt_parser` | Parses SubRip (SRT) subtitle data | Core |
+| `rtsp_server` | Multi-session RTSP server with dynamic mount callbacks | `libavformat` |
+
+All elements implement the standard `zst_element_ops_t` vtable, register via the builtin factory or as dlopen plugins, and participate in pipeline state machines, caps negotiation, and buffer pooling.
 
 ### Plugin (zst_plugin)
 Dynamic element loading via `dlopen()`:

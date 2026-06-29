@@ -1,3 +1,5 @@
+@page tutorials_network_streaming Network Streaming Tutorial
+
 # Network Streaming Tutorial: Live Video over RTSP
 
 In this tutorial, we will learn how to use zstreamer to stream a live video source over the network using the RTSP (Real Time Streaming Protocol). We will create a pipeline that generates a test video pattern, encodes it to H.264, and serves it over RTSP.

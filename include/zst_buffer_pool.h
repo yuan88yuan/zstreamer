@@ -1,5 +1,15 @@
 /*=============================================================================
-    zst_buffer_pool.h
+    @file zst_buffer_pool.h
+    @brief Pre-allocated buffer pool for allocation-free streaming
+
+    zst_buffer_pool_t maintains a pool of pre-allocated zst_buffer_t
+    instances to eliminate per-frame heap allocation during PLAYING state.
+    Features:
+    - Configurable min/max buffer count and per-buffer size
+    - Blocking and non-blocking acquire
+    - Automatic buffer recycling on unref
+    - Capacity watermarks for dynamic sizing
+    - Integration with allocator backends (CPU, DMABUF, etc.)
 =============================================================================*/
 #pragma once
 

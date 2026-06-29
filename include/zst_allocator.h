@@ -1,5 +1,18 @@
 /*=============================================================================
-    zst_allocator.h
+    @file zst_allocator.h
+    @brief Memory allocator interface for typed memory backends
+
+    zst_allocator_t abstracts memory allocation across different hardware
+    domains:
+    - CPU host memory (malloc/free)
+    - DMABUF (Linux dma-buf for zero-copy HW sharing)
+    - CUDA (NVIDIA GPU device memory)
+    - Vulkan (Vulkan device memory)
+    - oneAPI (Intel SYCL shared memory)
+
+    Allocators integrate with zst_buffer_create_with_allocator() and
+    provide lifecycle hooks for allocation, release, and import/export
+    of device memory handles.
 =============================================================================*/
 #pragma once
 

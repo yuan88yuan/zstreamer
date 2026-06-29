@@ -1,3 +1,5 @@
+@page plugin_authoring Plugin Authoring Guide
+
 # Plugin Authoring Guide
 
 This guide explains how to author custom plugins in `zstreamer`, focusing on defining element operations (`zst_element_ops_t`), registering properties, setting up capabilities (caps), and dynamic plugin loading via `zst_plugin_registry_t`.

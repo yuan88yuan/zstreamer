@@ -1,3 +1,5 @@
+@page architecture_clock_sync Clock and A/V Sync Guide
+
 # Clock and A/V Sync Guide
 
 Accurate timing and synchronization are fundamental to multimedia pipelines. zstreamer uses a unified clock system (`zst_clock_t`) to ensure audio and video streams stay aligned and play back at the correct speed.

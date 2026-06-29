@@ -1,3 +1,5 @@
+@page architecture_caps_negotiation Caps Negotiation
+
 # Caps Negotiation
 
 Caps (Capabilities) negotiation in zstreamer is the process by which two linked pads agree on the format of the data that will flow between them. This process ensures that the source pad produces data that the sink pad can consume, and vice versa.

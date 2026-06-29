@@ -1,5 +1,13 @@
 /*=============================================================================
-    zst_segment.h — Timestamp segment clipping and seeking
+    @file zst_segment.h
+    @brief Timestamp segment clipping and seeking
+
+    zst_segment_t defines a playback region (start/stop time) for
+    seeking and clipping operations.  Segments are used to constrain
+    which portion of a stream is processed, enabling:
+    - Seek to a specific position
+    - Playback of a sub-range (in/out points)
+    - Segment events propagated in-band through pad events
 =============================================================================*/
 #pragma once
 

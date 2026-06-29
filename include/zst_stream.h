@@ -1,5 +1,15 @@
 /*=============================================================================
-    zst_stream.h - Stream metadata and query API
+    @file zst_stream.h
+    @brief Stream metadata and query API
+
+    zst_stream_info_t provides descriptive metadata for media streams
+    within a demuxer or multi-stream element.  It supports:
+    - Stream identification (id, kind: video/audio/text)
+    - Stream status tracking (present, changed, removed)
+    - Caps association for format negotiation
+    - Language and codec metadata
+
+    Used by adaptive demuxers and elements with dynamic pads.
 =============================================================================*/
 #pragma once
 
