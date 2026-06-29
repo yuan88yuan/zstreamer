@@ -746,7 +746,9 @@ audio_mixer_worker(void* arg)
             }
         }
 
-        /* ⚡ Bolt Optimization: Reuse fmix buffer to avoid calloc/free per block */
+        /* ⚡ Optimization: reuse fmix buffer to avoid heap alloc/free per block.
+         * calloc → realloc+memset has the same zeroing cost per iteration, but
+         * eliminates the malloc/free syscall pair and reduces heap fragmentation. */
         size_t required_capacity = (size_t)samples_to_mix * s->channels;
         if (s->fmix_capacity < required_capacity) {
             double* new_fmix = realloc(s->fmix, required_capacity * sizeof(double));

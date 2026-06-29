@@ -32,27 +32,42 @@
 #include "zstreamer/elements/zst_v4l2_source.h"
 #include "zstreamer/elements/zst_alsa_source.h"
 
-#define ZST_BIN_MAGIC 0x5A42494Eu /* "ZBIN" */
-
 /* ── Custom Private Structure ────────────────────────────────────────── */
 
-typedef struct {
-    /* must match zst_bin_priv_t's layout so zst_bin functions work on it */
-    uint32_t magic;
-    char* name;
-    zst_element_t** children;
-    uint32_t nb_children;
-    uint32_t cap_children;
-    int eos_posted;
-    int eos_forwarded;
+/* Thread safety:
+ *
+ * The SC6F0 source uses a monitor thread (started in sc6f0_start / joined in
+ * sc6f0_stop) that polls for signal presence changes — either from mock-mode
+ * triggers or from real hardware (V4L2 subdev + HDMI sysfs).
+ *
+ * Lock hierarchy:
+ *   s->lock  →  (no sub-locks, never re-entered)
+ *
+ * - The monitor thread holds s->lock only while reading/writing signal state
+ *   fields (signal_locked, width, height, fps, audio_*).  It releases the lock
+ *   before calling sc6f0_reconfigure_capture_branch() / sc6f0_teardown_capture_branch().
+ * - sc6f0_reconfigure_capture_branch() acquires s->lock to read signal state
+ *   and manipulate ghost pads / child elements.  It does NOT call back into
+ *   any function that re-acquires s->lock.
+ * - Property setters/getters (sc6f0_set_property / sc6f0_get_property) hold
+ *   s->lock for the duration.
+ * - The volatile "running" flag is used as a single-writer/many-reader stop
+ *   signal; it is set before the thread starts and cleared before join().
+ */
 
-    /* custom SC6F0 fields */
+typedef struct {
+    /* --- SC6F0 configuration (set via properties, protected by s->lock) --- */
     char media_device[128];
     char platform_id[16];
     bool mock_mode;
     char mock_trigger[32]; // "1080p", "720p", "none"
 
-    /* V4L2 monitor variables */
+    /* Configurable device paths */
+    char subdev_path[128];
+    char vpss_csc_path[128];
+    char audio_sysfs_path[256];
+
+    /* --- V4L2 monitor variables --- */
     int media_fd;
     int subdev_fd;
     int vpss_csc_fd;
@@ -60,7 +75,7 @@ typedef struct {
     volatile bool running;
     pthread_mutex_t lock;
 
-    /* Current simulated/real signal state */
+    /* --- Current simulated/real signal state (protected by s->lock) --- */
     bool signal_locked;
     uint32_t width;
     uint32_t height;
@@ -69,16 +84,13 @@ typedef struct {
     int audio_channels;
     int audio_rate;
 
-    /* Child capture elements */
+    /* --- Child capture elements --- */
     zst_element_t* v4l2_src;
     zst_element_t* alsa_src;
 
-    /* Exposed dynamic source ghost pads */
+    /* --- Exposed dynamic source ghost pads --- */
     zst_pad_t* video_pad;
     zst_pad_t* audio_pad;
-
-    /* Monotonically increasing stream IDs */
-    zst_stream_id_t next_stream_id;
 } sc6f0_source_priv_t;
 
 /* ── Forward Declarations ──────────────────────────────────────────── */
@@ -178,18 +190,18 @@ sc6f0_open(zst_element_t* el)
     }
 
     // For portability, if topology elements are missing, fall back to mock mode.
-    s->subdev_fd = open("/dev/v4l-subdev0", O_RDWR | O_NONBLOCK);
+    s->subdev_fd = open(s->subdev_path, O_RDWR | O_NONBLOCK);
     if (s->subdev_fd < 0) {
-        ZST_LOG_WARN("sc6f0src", "Failed to open subdevice /dev/v4l-subdev0. Falling back to MOCK mode.");
+        ZST_LOG_WARN("sc6f0src", "Failed to open subdevice %s. Falling back to MOCK mode.", s->subdev_path);
         close(s->media_fd);
         s->media_fd = -1;
         s->mock_mode = true;
         return ZST_OK;
     }
 
-    s->vpss_csc_fd = open("/dev/v4l-subdev1", O_RDWR | O_NONBLOCK);
+    s->vpss_csc_fd = open(s->vpss_csc_path, O_RDWR | O_NONBLOCK);
     if (s->vpss_csc_fd < 0) {
-        ZST_LOG_WARN("sc6f0src", "Failed to open CSC VPSS subdevice /dev/v4l-subdev1. Fall back to MOCK mode.");
+        ZST_LOG_WARN("sc6f0src", "Failed to open CSC VPSS subdevice %s. Fall back to MOCK mode.", s->vpss_csc_path);
         close(s->subdev_fd);
         s->subdev_fd = -1;
         close(s->media_fd);
@@ -218,6 +230,7 @@ sc6f0_close(zst_element_t* el)
         close(s->media_fd);
         s->media_fd = -1;
     }
+    pthread_mutex_destroy(&s->lock);
     return ZST_OK;
 }
 
@@ -260,8 +273,14 @@ sc6f0_set_property(zst_element_t* el, const char* name, const char* value)
         snprintf(s->platform_id, sizeof(s->platform_id), "%s", value);
     } else if (strcmp(name, ZST_SC6F0_SOURCE_PROP_MOCK_MODE) == 0) {
         s->mock_mode = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0);
-    } else if (strcmp(name, "trigger-signal") == 0) {
+    } else if (strcmp(name, ZST_SC6F0_SOURCE_PROP_TRIGGER_SIGNAL) == 0) {
         snprintf(s->mock_trigger, sizeof(s->mock_trigger), "%s", value);
+    } else if (strcmp(name, ZST_SC6F0_SOURCE_PROP_SUBDEV_PATH) == 0) {
+        snprintf(s->subdev_path, sizeof(s->subdev_path), "%s", value);
+    } else if (strcmp(name, ZST_SC6F0_SOURCE_PROP_VPSS_CSC_PATH) == 0) {
+        snprintf(s->vpss_csc_path, sizeof(s->vpss_csc_path), "%s", value);
+    } else if (strcmp(name, ZST_SC6F0_SOURCE_PROP_AUDIO_SYSFS_PATH) == 0) {
+        snprintf(s->audio_sysfs_path, sizeof(s->audio_sysfs_path), "%s", value);
     } else {
         pthread_mutex_unlock(&s->lock);
         return ZST_ERROR;
@@ -283,8 +302,14 @@ sc6f0_get_property(zst_element_t* el, const char* name, char* value_out, size_t 
         snprintf(value_out, max_len, "%s", s->platform_id);
     } else if (strcmp(name, ZST_SC6F0_SOURCE_PROP_MOCK_MODE) == 0) {
         snprintf(value_out, max_len, "%s", s->mock_mode ? "true" : "false");
-    } else if (strcmp(name, "trigger-signal") == 0) {
+    } else if (strcmp(name, ZST_SC6F0_SOURCE_PROP_TRIGGER_SIGNAL) == 0) {
         snprintf(value_out, max_len, "%s", s->mock_trigger);
+    } else if (strcmp(name, ZST_SC6F0_SOURCE_PROP_SUBDEV_PATH) == 0) {
+        snprintf(value_out, max_len, "%s", s->subdev_path);
+    } else if (strcmp(name, ZST_SC6F0_SOURCE_PROP_VPSS_CSC_PATH) == 0) {
+        snprintf(value_out, max_len, "%s", s->vpss_csc_path);
+    } else if (strcmp(name, ZST_SC6F0_SOURCE_PROP_AUDIO_SYSFS_PATH) == 0) {
+        snprintf(value_out, max_len, "%s", s->audio_sysfs_path);
     } else {
         pthread_mutex_unlock(&s->lock);
         return ZST_ERROR;
@@ -455,8 +480,7 @@ sc6f0_check_audio_sysfs(zst_element_t* el)
     if (s->mock_mode) return;
 
     // HDMI sysfs parsing
-    const char* path = "/sys/devices/platform/amba_pl@0/b0070000.v_hdmi_rx_ss/audio_format";
-    FILE* fp = fopen(path, "r");
+    FILE* fp = fopen(s->audio_sysfs_path, "r");
     if (!fp) return;
 
     char line[128];
@@ -620,7 +644,9 @@ sc6f0_reconfigure_capture_branch(zst_element_t* el)
     // 1. Create or verify children
     if (!s->v4l2_src) {
         s->v4l2_src = zst_v4l2_source_create();
-        zst_bin_add(el, s->v4l2_src);
+        s->v4l2_src->bus = el->bus;
+        s->v4l2_src->pipeline = el->pipeline;
+        zst_element_set_clock(s->v4l2_src, el->clock);
     }
 
     zst_element_set_property_uint(s->v4l2_src, "width", s->width);
@@ -630,13 +656,18 @@ sc6f0_reconfigure_capture_branch(zst_element_t* el)
     if (s->audio_detected) {
         if (!s->alsa_src) {
             s->alsa_src = zst_alsa_source_create();
-            zst_bin_add(el, s->alsa_src);
+            s->alsa_src->bus = el->bus;
+            s->alsa_src->pipeline = el->pipeline;
+            zst_element_set_clock(s->alsa_src, el->clock);
         }
         zst_element_set_property_uint(s->alsa_src, "channels", s->audio_channels);
         zst_element_set_property_uint(s->alsa_src, "sample-rate", s->audio_rate);
     } else {
         if (s->alsa_src) {
-            zst_bin_remove(el, s->alsa_src);
+            zst_element_set_state(s->alsa_src, ZST_STATE_NULL);
+            s->alsa_src->bus = NULL;
+            s->alsa_src->pipeline = NULL;
+            zst_element_set_clock(s->alsa_src, NULL);
             zst_element_destroy(s->alsa_src);
             s->alsa_src = NULL;
         }
@@ -810,13 +841,19 @@ sc6f0_teardown_capture_branch_internal(zst_element_t* el, bool dynamic_reconfig)
     }
 
     if (s->v4l2_src) {
-        zst_bin_remove(el, s->v4l2_src);
+        zst_element_set_state(s->v4l2_src, ZST_STATE_NULL);
+        s->v4l2_src->bus = NULL;
+        s->v4l2_src->pipeline = NULL;
+        zst_element_set_clock(s->v4l2_src, NULL);
         zst_element_destroy(s->v4l2_src);
         s->v4l2_src = NULL;
     }
 
     if (s->alsa_src) {
-        zst_bin_remove(el, s->alsa_src);
+        zst_element_set_state(s->alsa_src, ZST_STATE_NULL);
+        s->alsa_src->bus = NULL;
+        s->alsa_src->pipeline = NULL;
+        zst_element_set_clock(s->alsa_src, NULL);
         zst_element_destroy(s->alsa_src);
         s->alsa_src = NULL;
     }
@@ -903,15 +940,18 @@ zst_sc6f0_source_create(void)
     sc6f0_source_priv_t* s = calloc(1, sizeof(*s));
     if (!s) return NULL;
 
-    s->magic = ZST_BIN_MAGIC;
-    s->name = strdup("sc6f0src-bin");
-    s->mock_mode = true; 
+    /* Default configurable paths */
+    strncpy(s->subdev_path, "/dev/v4l-subdev0", sizeof(s->subdev_path) - 1);
+    strncpy(s->vpss_csc_path, "/dev/v4l-subdev1", sizeof(s->vpss_csc_path) - 1);
+    strncpy(s->audio_sysfs_path,
+            "/sys/devices/platform/amba_pl@0/b0070000.v_hdmi_rx_ss/audio_format",
+            sizeof(s->audio_sysfs_path) - 1);
+    s->mock_mode = true;
     pthread_mutex_init(&s->lock, NULL);
 
     zst_element_t* el = zst_element_create(&g_sc6f0_ops, s);
     if (!el) {
         pthread_mutex_destroy(&s->lock);
-        free(s->name);
         free(s);
         return NULL;
     }

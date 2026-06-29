@@ -317,7 +317,10 @@ static const zst_property_spec_t g_builtin_sc6f0src_props[] = {
     { "media-device", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "", "Media device node path" },
     { "platform-id", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "DNTX", "SC6F0 platform identifier (DNTX or SDI1)" },
     { "mock-mode", ZST_PROPERTY_BOOL, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "true", "Operate in mock mode with synthetic signal emulation" },
-    { "trigger-signal", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE | ZST_PROPERTY_RUNTIME, "1080p", "Trigger a mock signal state change: 1080p, 720p, or none" }
+    { "trigger-signal", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE | ZST_PROPERTY_RUNTIME, "1080p", "Trigger a mock signal state change: 1080p, 720p, or none" },
+    { "subdev-path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "/dev/v4l-subdev0", "V4L2 sub-device path for HDMI/DVI Rx" },
+    { "vpss-csc-path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "/dev/v4l-subdev1", "VPSS CSC sub-device path" },
+    { "audio-sysfs-path", ZST_PROPERTY_STRING, ZST_PROPERTY_READABLE | ZST_PROPERTY_WRITABLE, "/sys/devices/platform/amba_pl@0/b0070000.v_hdmi_rx_ss/audio_format", "HDMI audio sysfs status path" }
 };
 
 #ifdef HAS_V4L2
