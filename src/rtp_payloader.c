@@ -92,15 +92,16 @@ rtp_payloader_pts_to_rtp_ts(uint64_t pts_ns, uint32_t clock_rate)
 }
 
 static zst_buffer_t*
-rtp_payloader_make_packet(rtp_payloader_t* s, const uint8_t* payload, int payload_len,
+rtp_payloader_make_packet(rtp_payloader_t* s, const uint8_t* header, int header_len,
+                          const uint8_t* payload, int payload_len,
                           uint32_t rtp_ts, int marker, uint64_t pts_ns)
 {
-    if (!s || !payload || payload_len < 0 || payload_len > RTP_PAYLOADER_MAX_PAYLOAD) return NULL;
+    if (!s || payload_len < 0 || header_len < 0 || (payload_len + header_len) > RTP_PAYLOADER_MAX_PAYLOAD) return NULL;
 
     zst_buffer_t* out = zst_buffer_create(ZST_BUFFER_USER);
     if (!out) return NULL;
 
-    size_t packet_len = (size_t)payload_len + 12u;
+    size_t packet_len = (size_t)payload_len + (size_t)header_len + 12u;
     uint8_t* pkt = malloc(packet_len);
     if (!pkt) {
         zst_buffer_unref(out);
@@ -119,7 +120,12 @@ rtp_payloader_make_packet(rtp_payloader_t* s, const uint8_t* payload, int payloa
     pkt[9] = (uint8_t)(s->ssrc >> 16);
     pkt[10] = (uint8_t)(s->ssrc >> 8);
     pkt[11] = (uint8_t)(s->ssrc);
-    memcpy(pkt + 12, payload, (size_t)payload_len);
+    if (header && header_len > 0) {
+        memcpy(pkt + 12, header, (size_t)header_len);
+    }
+    if (payload && payload_len > 0) {
+        memcpy(pkt + 12 + header_len, payload, (size_t)payload_len);
+    }
 
     out->pts = pts_ns;
     out->dts = pts_ns;
@@ -136,10 +142,11 @@ rtp_payloader_make_packet(rtp_payloader_t* s, const uint8_t* payload, int payloa
 }
 
 static zst_result_t
-rtp_payloader_push_packet(rtp_payloader_t* s, const uint8_t* payload, int payload_len,
+rtp_payloader_push_packet(rtp_payloader_t* s, const uint8_t* header, int header_len,
+                          const uint8_t* payload, int payload_len,
                           uint32_t rtp_ts, int marker, uint64_t pts_ns)
 {
-    zst_buffer_t* out = rtp_payloader_make_packet(s, payload, payload_len, rtp_ts, marker, pts_ns);
+    zst_buffer_t* out = rtp_payloader_make_packet(s, header, header_len, payload, payload_len, rtp_ts, marker, pts_ns);
     if (!out) return ZST_ERROR;
 
     zst_result_t ret = ZST_OK;
@@ -180,7 +187,7 @@ rtp_payloader_send_h264_nal(rtp_payloader_t* s, const uint8_t* nal, int nal_len,
     if (mtu < 3 || mtu > RTP_PAYLOADER_MAX_PAYLOAD) return ZST_ERROR;
 
     if (nal_len <= mtu) {
-        return rtp_payloader_push_packet(s, nal, nal_len, ts, marker, pts_ns);
+        return rtp_payloader_push_packet(s, NULL, 0, nal, nal_len, ts, marker, pts_ns);
     }
 
     uint8_t fu_ind = (uint8_t)((nal[0] & 0xe0) | 28);
@@ -193,17 +200,14 @@ rtp_payloader_send_h264_nal(rtp_payloader_t* s, const uint8_t* nal, int nal_len,
         int chunk = nal_len - off;
         if (chunk > mtu - 2) chunk = mtu - 2;
 
-        uint8_t* fu = malloc((size_t)chunk + 2u);
-        if (!fu) return ZST_ERROR;
+        uint8_t fu[2];
         fu[0] = fu_ind;
         fu[1] = nal_type;
         if (first) fu[1] |= 0x80;
         if (off + chunk >= nal_len) fu[1] |= 0x40;
-        memcpy(fu + 2, nal + off, (size_t)chunk);
 
-        zst_result_t one = rtp_payloader_push_packet(s, fu, chunk + 2, ts,
+        zst_result_t one = rtp_payloader_push_packet(s, fu, 2, nal + off, chunk, ts,
                                                      marker && (off + chunk >= nal_len), pts_ns);
-        free(fu);
         if (one != ZST_OK) ret = one;
 
         off += chunk;
@@ -258,7 +262,7 @@ rtp_payloader_send_h265_nal(rtp_payloader_t* s, const uint8_t* nal, int nal_len,
     if (mtu < 4 || mtu > RTP_PAYLOADER_MAX_PAYLOAD) return ZST_ERROR;
 
     if (nal_len <= mtu) {
-        return rtp_payloader_push_packet(s, nal, nal_len, ts, marker, pts_ns);
+        return rtp_payloader_push_packet(s, NULL, 0, nal, nal_len, ts, marker, pts_ns);
     }
 
     uint8_t nal_type = (uint8_t)((nal[0] >> 1) & 0x3f);
@@ -272,18 +276,15 @@ rtp_payloader_send_h265_nal(rtp_payloader_t* s, const uint8_t* nal, int nal_len,
         int chunk = nal_len - off;
         if (chunk > mtu - 3) chunk = mtu - 3;
 
-        uint8_t* fu = malloc((size_t)chunk + 3u);
-        if (!fu) return ZST_ERROR;
+        uint8_t fu[3];
         fu[0] = fu_hdr0;
         fu[1] = fu_hdr1;
         fu[2] = nal_type;
         if (first) fu[2] |= 0x80;
         if (off + chunk >= nal_len) fu[2] |= 0x40;
-        memcpy(fu + 3, nal + off, (size_t)chunk);
 
-        zst_result_t one = rtp_payloader_push_packet(s, fu, chunk + 3, ts,
+        zst_result_t one = rtp_payloader_push_packet(s, fu, 3, nal + off, chunk, ts,
                                                      marker && (off + chunk >= nal_len), pts_ns);
-        free(fu);
         if (one != ZST_OK) ret = one;
 
         off += chunk;
@@ -334,19 +335,15 @@ rtp_payloader_packetize_aac(rtp_payloader_t* s, const uint8_t* data, int size, u
     if (!s || !data || size <= 0 || size > 0x1fff) return ZST_ERROR;
     if (size + 4 > s->mtu) return ZST_ERROR;
 
-    uint8_t* payload = malloc((size_t)size + 4u);
-    if (!payload) return ZST_ERROR;
-
+    uint8_t au[4];
     uint16_t au_header = (uint16_t)(size << 3);
-    payload[0] = 0;
-    payload[1] = 16; /* one 16-bit AU-header */
-    payload[2] = (uint8_t)(au_header >> 8);
-    payload[3] = (uint8_t)(au_header & 0xff);
-    memcpy(payload + 4, data, (size_t)size);
+    au[0] = 0;
+    au[1] = 16; /* one 16-bit AU-header */
+    au[2] = (uint8_t)(au_header >> 8);
+    au[3] = (uint8_t)(au_header & 0xff);
 
     uint32_t ts = rtp_payloader_pts_to_rtp_ts(pts_ns, s->clock_rate);
-    zst_result_t ret = rtp_payloader_push_packet(s, payload, size + 4, ts, 1, pts_ns);
-    free(payload);
+    zst_result_t ret = rtp_payloader_push_packet(s, au, 4, data, size, ts, 1, pts_ns);
     return ret;
 }
 
@@ -365,7 +362,7 @@ rtp_payloader_packetize_pcm(rtp_payloader_t* s, const uint8_t* data, int size, u
         int chunk = size - off;
         if (chunk > s->mtu) chunk = s->mtu;
         uint32_t sample_offset = (uint32_t)(off / bytes_per_sample_frame);
-        zst_result_t one = rtp_payloader_push_packet(s, data + off, chunk,
+        zst_result_t one = rtp_payloader_push_packet(s, NULL, 0, data + off, chunk,
                                                      base_ts + sample_offset,
                                                      off + chunk >= size, pts_ns);
         if (one != ZST_OK) ret = one;
