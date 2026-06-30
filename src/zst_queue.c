@@ -27,6 +27,9 @@ typedef struct {
 struct zst_queue {
     zst_queue_config_t cfg;
     uint32_t           capacity;
+    bool               has_extra_limits; /* When false, skip zst_queue_is_full() — sequence array
+                                            backpressure alone provides the capacity limit, avoiding
+                                            a cross-thread read of q->head on every push. */
     zst_queue_slot_t* ring;
 
     /* Align head and tail indexes to separate cache lines to prevent false sharing */
@@ -64,6 +67,7 @@ zst_queue_create(const zst_queue_config_t* cfg)
 
     /* Enforce a power-of-two capacity to utilize bitwise masking over modulo arithmetic */
     q->capacity = next_power_of_two(q->cfg.max_buffers > 0 ? q->cfg.max_buffers : 16);
+    q->has_extra_limits = (q->cfg.max_bytes > 0 || q->cfg.max_duration > 0 || (q->cfg.max_buffers > 0 && q->cfg.max_buffers < q->capacity));
     q->ring = malloc(q->capacity * sizeof(zst_queue_slot_t));
     if (!q->ring) {
         free(q);
@@ -191,7 +195,7 @@ zst_queue_push(zst_queue_t* q, zst_buffer_t* buf, uint32_t timeout_ms)
 
         if (diff == 0) {
             /* Slot is free; check other capacity limits if configured */
-            if (zst_queue_is_full(q)) {
+            if (q->has_extra_limits && zst_queue_is_full(q)) {
                 if (q->cfg.mode == ZST_QUEUE_ASYNC) {
                     return ZST_ERROR;
                 }

@@ -2285,6 +2285,47 @@ test_queue_config_limits(void)
 }
 
 static void
+test_queue_fast_path(void)
+{
+    TEST("queue fast path — has_extra_limits false");
+
+    /* power-of-2 max_buffers == capacity, no byte/duration limits */
+    zst_queue_config_t cfg = {
+        .mode        = ZST_QUEUE_SYNC,
+        .max_buffers = 8,
+        .max_bytes   = 0,
+        .max_duration= 0,
+    };
+    zst_queue_t* q = zst_queue_create(&cfg);
+    assert(q != NULL);
+
+    zst_buffer_t* bufs[10];
+    for (int i = 0; i < 8; i++) {
+        bufs[i] = zst_buffer_create(ZST_BUFFER_USER);
+        assert(zst_queue_push(q, bufs[i], 100) == ZST_OK);
+    }
+
+    /* 9th push should time out via sequence array backpressure */
+    zst_buffer_t* overflow = zst_buffer_create(ZST_BUFFER_USER);
+    assert(zst_queue_push(q, overflow, 10) == ZST_TIMEOUT);
+    zst_buffer_unref(overflow);
+
+    /* Pop back and verify all 8 */
+    for (int i = 0; i < 8; i++) {
+        zst_buffer_t* out;
+        assert(zst_queue_pop(q, &out, 100) == ZST_OK);
+        zst_buffer_unref(out);
+        zst_buffer_unref(bufs[i]);
+    }
+
+    /* Verify queue is now empty */
+    assert(zst_queue_size(q) == 0);
+
+    zst_queue_destroy(q);
+    PASS();
+}
+
+static void
 mock_buf_memory_destroy(zst_buffer_t* b)
 {
     free(b->memory.data);
@@ -8095,6 +8136,7 @@ int main(void)
     test_queue_timeout();
     test_queue_flush();
     test_queue_config_limits();
+    test_queue_fast_path();
     test_queue_element_stress();
 
     /* ── Scheduler (Phase 2) ── */
