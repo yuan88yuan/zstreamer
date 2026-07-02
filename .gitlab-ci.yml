@@ -3,33 +3,6 @@ stages:
   - deploy
   - release
 
-# Cache build artifacts across jobs when appropriate
-cache:
-  key: "$CI_COMMIT_REF_SLUG"
-  paths:
-    - build/
-    - build-static/
-    - build-shared/
-
-# ── Job: Native Ubuntu Build and Test ──────────────────────────────────────────
-# Compiles the workspace natively on Ubuntu 24.04 and runs unit + install tests.
-test:native:
-  stage: build-and-test
-  image: ubuntu:24.04
-  variables:
-    DEBIAN_FRONTEND: noninteractive
-  before_script:
-    - chmod +x scripts/*.sh
-    - ./scripts/install_deps.sh
-  script:
-    - mkdir -p build
-    - cd build
-    - cmake .. -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON -DENABLE_GLSINK=ON -DENABLE_GLCOMPSINK=ON
-    - make -j$(nproc)
-    - ctest --output-on-failure
-    - cd ..
-    - bash ./tests/test_install.sh build
-
 # ── Job: Docker Build & Test (Core + V4L2) ───────────────────────────────────
 # Simulates the GitHub Action docker-core-and-v4l2 environment using DinD.
 test:docker-core:
@@ -90,38 +63,48 @@ pages:
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
-# ── Job: Package Release Artifacts ────────────────────────────────────────────
-# Runs on tags (e.g. v1.0.0) to package build artifacts and upload to Package Registry.
+# ── Job: Package Release Artifacts (Docker) ────────────────────────────────────
+# Builds inside Docker (deps stage), packages, and uploads to Package Registry.
 package:release:
   stage: build-and-test
-  image: ubuntu:24.04
+  image: docker:24.0.9
+  services:
+    - docker:24.0.9-dind
   variables:
-    DEBIAN_FRONTEND: noninteractive
+    DOCKER_TLS_CERTDIR: "/certs"
   rules:
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
   before_script:
     - chmod +x scripts/*.sh
-    - ./scripts/install_deps.sh
-    - apt-get install -y --no-install-recommends curl
+    - docker build --target deps -t zstreamer-deps:$CI_COMMIT_SHA .
   script:
-    - ./scripts/package.sh "${CI_COMMIT_TAG}"
-    # Verify the generated packages exist
-    - DEB_VERSION="${CI_COMMIT_TAG#v}"
-    - test -f "dist/zstreamer-${CI_COMMIT_TAG}-linux-x86_64.tar.gz"
-    - test -f "dist/zstreamer-elements-${CI_COMMIT_TAG}-linux-x86_64.tar.gz"
-    - test -f "dist/zstreamer-${CI_COMMIT_TAG}-linux-x86_64.zip"
-    - test -f "dist/zstreamer-elements-${CI_COMMIT_TAG}-linux-x86_64.zip"
-    - test -f "dist/zstreamer-dev_${DEB_VERSION}_amd64.deb"
-    - test -f "dist/zstreamer-elements-dev_${DEB_VERSION}_amd64.deb"
-    # Upload to GitLab Generic Package Registry
+    - mkdir -p dist
     - |
-      for filepath in dist/*; do
-        filename=$(basename "$filepath")
-        echo "Uploading $filename to Package Registry..."
-        curl --header "JOB-TOKEN: $CI_JOB_TOKEN" \
-             --upload-file "$filepath" \
-             "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/zstreamer/${CI_COMMIT_TAG}/${filename}"
-      done
+      docker run --name zstreamer-pkg --rm \
+        -e CI_API_V4_URL \
+        -e CI_JOB_TOKEN \
+        -e CI_PROJECT_ID \
+        -e CI_COMMIT_TAG \
+        -v $(pwd)/dist:/workspace/dist \
+        zstreamer-deps:$CI_COMMIT_SHA \
+        bash -c '
+          set -e
+          ./scripts/package.sh "${CI_COMMIT_TAG}"
+          DEB_VERSION="${CI_COMMIT_TAG#v}"
+          test -f "dist/zstreamer-${CI_COMMIT_TAG}-linux-x86_64.tar.gz"
+          test -f "dist/zstreamer-elements-${CI_COMMIT_TAG}-linux-x86_64.tar.gz"
+          test -f "dist/zstreamer-${CI_COMMIT_TAG}-linux-x86_64.zip"
+          test -f "dist/zstreamer-elements-${CI_COMMIT_TAG}-linux-x86_64.zip"
+          test -f "dist/zstreamer-dev_${DEB_VERSION}_amd64.deb"
+          test -f "dist/zstreamer-elements-dev_${DEB_VERSION}_amd64.deb"
+          for filepath in dist/*; do
+            filename=$(basename "$filepath")
+            echo "Uploading $filename to Package Registry..."
+            curl --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+                 --upload-file "$filepath" \
+                 "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/zstreamer/${CI_COMMIT_TAG}/${filename}"
+          done
+        '
   artifacts:
     name: "zstreamer-dist-${CI_COMMIT_TAG}"
     paths:

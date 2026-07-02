@@ -36,26 +36,32 @@ jobs:
             echo "VERSION=${{ github.ref_name }}" >> "$GITHUB_ENV"
           fi
 
-      - name: Install Release Build Dependencies
-        run: |
-          chmod +x scripts/install_deps.sh
-          ./scripts/install_deps.sh
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Build and Package
+      - name: Build Docker deps Image
         run: |
-          ./scripts/package.sh "${{ env.VERSION }}"
+          docker build --target deps -t zstreamer-deps:${{ github.sha }} .
 
-      - name: Verify Release Artifacts
+      - name: Build and Package in Docker
         run: |
-          set -euo pipefail
-          DEB_VERSION="${VERSION#v}"
-          ls -lh dist
-          test -f "dist/zstreamer-${VERSION}-linux-x86_64.tar.gz"
-          test -f "dist/zstreamer-elements-${VERSION}-linux-x86_64.tar.gz"
-          test -f "dist/zstreamer-${VERSION}-linux-x86_64.zip"
-          test -f "dist/zstreamer-elements-${VERSION}-linux-x86_64.zip"
-          test -f "dist/zstreamer-dev_${DEB_VERSION}_amd64.deb"
-          test -f "dist/zstreamer-elements-dev_${DEB_VERSION}_amd64.deb"
+          mkdir -p dist
+          docker run --name zstreamer-pkg --rm \
+            -e VERSION \
+            -v $(pwd)/dist:/workspace/dist \
+            zstreamer-deps:${{ github.sha }} \
+            bash -c '
+              set -euo pipefail
+              ./scripts/package.sh "${VERSION}"
+              DEB_VERSION="${VERSION#v}"
+              ls -lh dist
+              test -f "dist/zstreamer-${VERSION}-linux-x86_64.tar.gz"
+              test -f "dist/zstreamer-elements-${VERSION}-linux-x86_64.tar.gz"
+              test -f "dist/zstreamer-${VERSION}-linux-x86_64.zip"
+              test -f "dist/zstreamer-elements-${VERSION}-linux-x86_64.zip"
+              test -f "dist/zstreamer-dev_${DEB_VERSION}_amd64.deb"
+              test -f "dist/zstreamer-elements-dev_${DEB_VERSION}_amd64.deb"
+            '
 
       - name: Create or Update Release
         uses: softprops/action-gh-release@v2
