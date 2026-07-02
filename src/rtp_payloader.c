@@ -21,6 +21,7 @@
 #include "zst_log.h"
 #include "zst_pad.h"
 #include "zstreamer/elements/zst_rtp_payloader.h"
+#include "zst_media_utils.h"
 
 #define RTP_PAYLOADER_DEFAULT_PT         96
 #define RTP_PAYLOADER_DEFAULT_SSRC       0x53545250u /* STRP */
@@ -157,26 +158,6 @@ rtp_payloader_push_packet(rtp_payloader_t* s, const uint8_t* header, int header_
     return ret;
 }
 
-static int
-rtp_payloader_find_start_code(const uint8_t* data, int size, int offset, int* code_size)
-{
-    if (code_size) *code_size = 0;
-    if (!data || size <= 0) return -1;
-
-    for (int i = offset; i + 3 <= size; i++) {
-        if (i + 4 <= size && data[i] == 0 && data[i + 1] == 0 &&
-            data[i + 2] == 0 && data[i + 3] == 1) {
-            if (code_size) *code_size = 4;
-            return i;
-        }
-        if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
-            if (code_size) *code_size = 3;
-            return i;
-        }
-    }
-    return -1;
-}
-
 static zst_result_t
 rtp_payloader_send_h264_nal(rtp_payloader_t* s, const uint8_t* nal, int nal_len,
                             uint32_t ts, int marker, uint64_t pts_ns)
@@ -224,7 +205,7 @@ rtp_payloader_packetize_h264(rtp_payloader_t* s, const uint8_t* data, int size, 
 
     uint32_t ts = rtp_payloader_pts_to_rtp_ts(pts_ns, 90000);
     int code = 0;
-    int pos = rtp_payloader_find_start_code(data, size, 0, &code);
+    int pos = zst_find_start_code(data, size, 0, &code);
     if (pos < 0) {
         return rtp_payloader_send_h264_nal(s, data, size, ts, 1, pts_ns);
     }
@@ -233,7 +214,7 @@ rtp_payloader_packetize_h264(rtp_payloader_t* s, const uint8_t* data, int size, 
     while (pos >= 0 && pos < size) {
         int nal_start = pos + code;
         int next_code = 0;
-        int next = rtp_payloader_find_start_code(data, size, nal_start, &next_code);
+        int next = zst_find_start_code(data, size, nal_start, &next_code);
         int nal_end = next >= 0 ? next : size;
         while (nal_end > nal_start && data[nal_end - 1] == 0) nal_end--;
         int nal_len = nal_end - nal_start;
@@ -301,7 +282,7 @@ rtp_payloader_packetize_h265(rtp_payloader_t* s, const uint8_t* data, int size, 
 
     uint32_t ts = rtp_payloader_pts_to_rtp_ts(pts_ns, 90000);
     int code = 0;
-    int pos = rtp_payloader_find_start_code(data, size, 0, &code);
+    int pos = zst_find_start_code(data, size, 0, &code);
     if (pos < 0) {
         return rtp_payloader_send_h265_nal(s, data, size, ts, 1, pts_ns);
     }
@@ -310,7 +291,7 @@ rtp_payloader_packetize_h265(rtp_payloader_t* s, const uint8_t* data, int size, 
     while (pos >= 0 && pos < size) {
         int nal_start = pos + code;
         int next_code = 0;
-        int next = rtp_payloader_find_start_code(data, size, nal_start, &next_code);
+        int next = zst_find_start_code(data, size, nal_start, &next_code);
         int nal_end = next >= 0 ? next : size;
         while (nal_end > nal_start && data[nal_end - 1] == 0) nal_end--;
         int nal_len = nal_end - nal_start;
