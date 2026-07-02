@@ -48,6 +48,7 @@ zst_element_create(const zst_element_ops_t* ops, void* priv)
     atomic_init(&el->is_queued, false);
     atomic_init(&el->sched_task_refs, 0);
     atomic_init(&el->pool_sizing_seen_pool, NULL);
+    atomic_init(&el->pool_sizing_seen_generation, 0);
     atomic_init(&el->pool_sizing_seen_min_buffers, 0);
     atomic_init(&el->pool_sizing_seen_max_buffers, 0);
     atomic_init(&el->pool_sizing_seen_buffer_size, 0);
@@ -596,6 +597,46 @@ zst_element_snapshot_sink_pads(zst_element_t* el, zst_pad_t*** pads_out, uint32_
     pthread_mutex_unlock(&el->state_lock);
 
     return ZST_OK;
+}
+
+uint32_t
+zst_element_get_src_pad_count(zst_element_t* el)
+{
+    if (!el) return 0;
+    pthread_mutex_lock(&el->state_lock);
+    uint32_t count = el->nb_src_pads;
+    pthread_mutex_unlock(&el->state_lock);
+    return count;
+}
+
+uint32_t
+zst_element_get_sink_pad_count(zst_element_t* el)
+{
+    if (!el) return 0;
+    pthread_mutex_lock(&el->state_lock);
+    uint32_t count = el->nb_sink_pads;
+    pthread_mutex_unlock(&el->state_lock);
+    return count;
+}
+
+zst_pad_t*
+zst_element_get_first_src_pad_ref(zst_element_t* el)
+{
+    if (!el) return NULL;
+    pthread_mutex_lock(&el->state_lock);
+    zst_pad_t* pad = el->nb_src_pads > 0 ? zst_pad_ref(el->src_pads[0]) : NULL;
+    pthread_mutex_unlock(&el->state_lock);
+    return pad;
+}
+
+zst_pad_t*
+zst_element_get_first_sink_pad_ref(zst_element_t* el)
+{
+    if (!el) return NULL;
+    pthread_mutex_lock(&el->state_lock);
+    zst_pad_t* pad = el->nb_sink_pads > 0 ? zst_pad_ref(el->sink_pads[0]) : NULL;
+    pthread_mutex_unlock(&el->state_lock);
+    return pad;
 }
 
 void

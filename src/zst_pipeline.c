@@ -29,6 +29,7 @@ zst_pipeline_create(void)
     pipe->priv        = NULL;
     pipe->bus         = zst_bus_create();
     pipe->clock       = NULL;
+    atomic_store_explicit(&pipe->graph_version, 1, memory_order_relaxed);
     atomic_store_explicit(&pipe->buffer_pool_sizing_dirty, true, memory_order_relaxed);
     atomic_store_explicit(&pipe->reconfiguration_active, false, memory_order_relaxed);
     memset(&pipe->reconfiguration_owner, 0, sizeof(pipe->reconfiguration_owner));
@@ -258,6 +259,9 @@ pipeline_cache_pool_snapshot(zst_element_t* el, zst_buffer_pool_t* pool)
     if (!el) return;
 
     atomic_store_explicit(&el->pool_sizing_seen_pool, pool, memory_order_release);
+    atomic_store_explicit(&el->pool_sizing_seen_generation,
+                          pool ? zst_buffer_pool_get_generation(pool) : 0,
+                          memory_order_release);
     if (!pool) {
         atomic_store_explicit(&el->pool_sizing_seen_min_buffers, 0, memory_order_release);
         atomic_store_explicit(&el->pool_sizing_seen_max_buffers, 0, memory_order_release);
@@ -284,12 +288,12 @@ pipeline_element_pool_snapshot_changed(zst_element_t* el)
         return seen_pool != NULL;
     }
 
-    zst_buffer_pool_config_t cfg = zst_buffer_pool_get_config(pool);
-    return pool != seen_pool ||
-           cfg.min_buffers != atomic_load_explicit(&el->pool_sizing_seen_min_buffers, memory_order_acquire) ||
-           cfg.max_buffers != atomic_load_explicit(&el->pool_sizing_seen_max_buffers, memory_order_acquire) ||
-           cfg.buffer_size != atomic_load_explicit(&el->pool_sizing_seen_buffer_size, memory_order_acquire) ||
-           cfg.buffer_type != atomic_load_explicit(&el->pool_sizing_seen_buffer_type, memory_order_acquire);
+    if (pool != seen_pool) {
+        return 1;
+    }
+
+    return zst_buffer_pool_get_generation(pool) !=
+           atomic_load_explicit(&el->pool_sizing_seen_generation, memory_order_acquire);
 }
 
 static void
@@ -316,6 +320,9 @@ apply_pool_config_cb(zst_element_t* el, void* user_data)
     }
 
     atomic_store_explicit(&el->pool_sizing_seen_pool, pool, memory_order_release);
+    atomic_store_explicit(&el->pool_sizing_seen_generation,
+                          zst_buffer_pool_get_generation(pool),
+                          memory_order_release);
     atomic_store_explicit(&el->pool_sizing_seen_min_buffers, old_config.min_buffers, memory_order_release);
     atomic_store_explicit(&el->pool_sizing_seen_max_buffers, old_config.max_buffers, memory_order_release);
     atomic_store_explicit(&el->pool_sizing_seen_buffer_size, old_config.buffer_size, memory_order_release);
@@ -326,6 +333,7 @@ void
 zst_pipeline_mark_buffer_pool_sizing_dirty(zst_pipeline_t* pipe)
 {
     if (!pipe) return;
+    atomic_fetch_add_explicit(&pipe->graph_version, 1, memory_order_acq_rel);
     atomic_store_explicit(&pipe->buffer_pool_sizing_dirty, true, memory_order_release);
 }
 

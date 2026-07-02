@@ -26,6 +26,7 @@ struct zst_pipeline {
 
     int clock_sync;
     zst_time_t base_time;
+    _Atomic(uint64_t) graph_version;
 
     /* Lock protecting structural topological modifications of the graph */
     pthread_rwlock_t elements_lock;

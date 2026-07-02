@@ -10,6 +10,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <time.h>
+#include <stdatomic.h>
 
 static int get_bytes_per_pixel_num(const char* pixel_format) {
     if (strcmp(pixel_format, "YUV420P") == 0 || strcmp(pixel_format, "NV12") == 0 || strcmp(pixel_format, "NV21") == 0) return 3;
@@ -46,6 +47,7 @@ struct zst_buffer_pool {
     pthread_mutex_t lock;
     pthread_cond_t  cond;
 
+    _Atomic(uint64_t) generation;
     int active;
 };
 
@@ -77,6 +79,7 @@ zst_buffer_pool_create(zst_allocator_t* allocator, zst_buffer_pool_config_t* con
 
     pthread_mutex_init(&pool->lock, NULL);
     pthread_cond_init(&pool->cond, NULL);
+    atomic_init(&pool->generation, 1);
     pool->active = 1;
     pool->count = 0;
     pool->total_allocated = 0;
@@ -271,6 +274,11 @@ zst_buffer_pool_config_t zst_buffer_pool_get_config(zst_buffer_pool_t* pool) {
     return config;
 }
 
+uint64_t zst_buffer_pool_get_generation(zst_buffer_pool_t* pool) {
+    if (!pool) return 0;
+    return atomic_load_explicit(&pool->generation, memory_order_acquire);
+}
+
 zst_result_t zst_buffer_pool_set_config(zst_buffer_pool_t* pool, const zst_buffer_pool_config_t* config) {
     if (!pool || !config) return ZST_ERROR;
 
@@ -310,6 +318,7 @@ zst_result_t zst_buffer_pool_set_config(zst_buffer_pool_t* pool, const zst_buffe
     }
 
     pool->config = new_config;
+    atomic_fetch_add_explicit(&pool->generation, 1, memory_order_release);
 
     /* Honor a raised min_buffers immediately for idle/open pools. */
     while (pool->active && pool->total_allocated < pool->config.min_buffers) {

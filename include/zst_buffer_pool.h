@@ -63,6 +63,7 @@ void zst_buffer_pool_destroy(
     zst_buffer_pool_t* pool);
 
 zst_buffer_pool_config_t zst_buffer_pool_get_config(zst_buffer_pool_t* pool);
+uint64_t zst_buffer_pool_get_generation(zst_buffer_pool_t* pool);
 
 zst_result_t zst_buffer_pool_set_config(zst_buffer_pool_t* pool, const zst_buffer_pool_config_t* config);
 

@@ -130,6 +130,7 @@ struct zst_element {
      * pipeline detect lazily-created/recreated pools without re-traversing the
      * whole graph on every buffer. */
     _Atomic(zst_buffer_pool_t*) pool_sizing_seen_pool;
+    _Atomic(uint64_t) pool_sizing_seen_generation;
     _Atomic(uint32_t) pool_sizing_seen_min_buffers;
     _Atomic(uint32_t) pool_sizing_seen_max_buffers;
     _Atomic(size_t) pool_sizing_seen_buffer_size;
@@ -166,6 +167,11 @@ zst_result_t zst_element_snapshot_sink_pads(
     zst_element_t* el,
     zst_pad_t*** pads_out,
     uint32_t* count_out);
+
+uint32_t zst_element_get_src_pad_count(zst_element_t* el);
+uint32_t zst_element_get_sink_pad_count(zst_element_t* el);
+zst_pad_t* zst_element_get_first_src_pad_ref(zst_element_t* el);
+zst_pad_t* zst_element_get_first_sink_pad_ref(zst_element_t* el);
 
 void zst_element_pad_snapshot_free(
     zst_pad_t** pads,

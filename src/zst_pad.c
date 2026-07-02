@@ -166,6 +166,13 @@ pad_run_probes(zst_pad_t* pad, zst_buffer_t* buf, zst_pad_probe_type_t type)
 {
     if (!pad) return ZST_PAD_PROBE_OK;
 
+    /* Hot-path fast exit: avoid probe locking/allocation when the pad is not
+     * blocked and no probes are installed. */
+    if (!atomic_load_explicit(&pad->blocked, memory_order_acquire) &&
+        atomic_load_explicit(&pad->has_probes, memory_order_acquire) == 0) {
+        return ZST_PAD_PROBE_OK;
+    }
+
     zst_pad_probe_return_t block_ret = pad_handle_block(pad, buf, type);
     if (block_ret != ZST_PAD_PROBE_OK) return block_ret;
 
@@ -221,25 +228,22 @@ default_sink_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
     zst_element_t* el = pad->parent;
     if (!el || !el->ops) return ZST_ERROR;
 
-    zst_pad_t** src_pads = NULL;
-    uint32_t nb_src_pads = 0;
-    zst_element_snapshot_src_pads(el, &src_pads, &nb_src_pads);
+    zst_pad_t* first_src_pad = zst_element_get_first_src_pad_ref(el);
 
     /* Handle drop flag (propagate downstream or skip immediately) */
     if (buf && (buf->flags & ZST_BUFFER_FLAG_DROP)) {
-        if (nb_src_pads > 0) {
-            zst_result_t r = zst_pad_push(src_pads[0], buf);
-            zst_element_pad_snapshot_free(src_pads, nb_src_pads);
+        if (first_src_pad) {
+            zst_result_t r = zst_pad_push(first_src_pad, buf);
+            zst_pad_unref(first_src_pad);
             return r;
         }
-        zst_element_pad_snapshot_free(src_pads, nb_src_pads);
         return ZST_OK;
     }
 
     if (buf && (buf->flags & ZST_BUFFER_FLAG_EOS)) {
-        if (nb_src_pads > 0) {
-            zst_result_t r = zst_pad_push(src_pads[0], buf);
-            zst_element_pad_snapshot_free(src_pads, nb_src_pads);
+        if (first_src_pad) {
+            zst_result_t r = zst_pad_push(first_src_pad, buf);
+            zst_pad_unref(first_src_pad);
             return r;
         }
         /* Sink element receiving EOS */
@@ -247,12 +251,11 @@ default_sink_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
             zst_event_t* eos_ev = zst_event_new_eos(el);
             zst_bus_post(el->bus, eos_ev);
         }
-        zst_element_pad_snapshot_free(src_pads, nb_src_pads);
         return ZST_OK;
     }
 
     /* Sink element clock synchronization and QoS dropping */
-    if (nb_src_pads == 0 && el->clock && buf && buf->pts > 0 && !(buf->flags & ZST_BUFFER_FLAG_EOS)) {
+    if (!first_src_pad && el->clock && buf && buf->pts > 0 && !(buf->flags & ZST_BUFFER_FLAG_EOS)) {
         zst_time_t current = zst_clock_get_time(el->clock);
         if (buf->pts > current + 5000000ULL) { /* 5ms early threshold */
             if (buf->pts - current < 5000000000ULL) { /* 5s safeguard */
@@ -266,7 +269,6 @@ default_sink_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
                     zst_event_t* qos_ev = zst_event_new_warning(el, ZST_ERROR, "QoS: Frame dropped (too late)");
                     zst_bus_post(el->bus, qos_ev);
                 }
-                zst_element_pad_snapshot_free(src_pads, nb_src_pads);
                 return ZST_OK;
             }
         }
@@ -284,8 +286,8 @@ default_sink_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
     }
 
     if (ret == ZST_OK && out_buf) {
-        if (nb_src_pads > 0) {
-            ret = zst_pad_push(src_pads[0], out_buf);
+        if (first_src_pad) {
+            ret = zst_pad_push(first_src_pad, out_buf);
             if (out_buf != buf) {
                 zst_buffer_unref(out_buf);
             } else if (out_buf->refcount > 1) {
@@ -298,7 +300,7 @@ default_sink_pad_push(zst_pad_t* pad, zst_buffer_t* buf)
         }
     }
 
-    zst_element_pad_snapshot_free(src_pads, nb_src_pads);
+    zst_pad_unref(first_src_pad);
 
     if (ret == ZST_OK && el->pipeline) {
         zst_pipeline_update_buffer_pool_sizing_if_needed(el->pipeline, el);
@@ -327,13 +329,11 @@ default_src_pad_pull(zst_pad_t* pad, zst_buffer_t** out)
         zst_pipeline_update_buffer_pool_sizing_if_needed(el->pipeline, el);
     }
 
-    zst_pad_t** sink_pads = NULL;
-    uint32_t nb_sink_pads = 0;
-    zst_element_snapshot_sink_pads(el, &sink_pads, &nb_sink_pads);
+    zst_pad_t* first_sink_pad = zst_element_get_first_sink_pad_ref(el);
 
-    if (nb_sink_pads > 0) {
+    if (first_sink_pad) {
         zst_buffer_t* in_buf = NULL;
-        ret = zst_pad_pull(sink_pads[0], &in_buf);
+        ret = zst_pad_pull(first_sink_pad, &in_buf);
         if (ret != ZST_OK) {
             if (ret != ZST_EOF && ret != ZST_TIMEOUT && ret != ZST_AGAIN) {
                 if (el->bus) {
@@ -341,13 +341,13 @@ default_src_pad_pull(zst_pad_t* pad, zst_buffer_t** out)
                     zst_bus_post(el->bus, err_ev);
                 }
             }
-            zst_element_pad_snapshot_free(sink_pads, nb_sink_pads);
+            zst_pad_unref(first_sink_pad);
             return ret;
         }
 
         if (in_buf && (in_buf->flags & ZST_BUFFER_FLAG_EOS)) {
             *out = in_buf;
-            zst_element_pad_snapshot_free(sink_pads, nb_sink_pads);
+            zst_pad_unref(first_sink_pad);
             return ZST_OK;
         }
 
@@ -361,7 +361,7 @@ default_src_pad_pull(zst_pad_t* pad, zst_buffer_t** out)
         }
     }
 
-    zst_element_pad_snapshot_free(sink_pads, nb_sink_pads);
+    zst_pad_unref(first_sink_pad);
 
     if (ret == ZST_OK) {
         *out = out_buf;
@@ -399,6 +399,7 @@ zst_pad_create(const char* name, zst_pad_direction_t direction)
         pad->pull = NULL;
     }
     pad->peer         = NULL;
+    atomic_init(&pad->linked, 0);
     pthread_mutex_init(&pad->link_lock, NULL);
     pad->priv         = NULL;
     pad->destroy_priv = NULL;
@@ -462,10 +463,14 @@ zst_pad_finalize(zst_pad_t* pad)
     pthread_mutex_lock(&pad->link_lock);
     zst_pad_t* stale_peer = pad->peer;
     pad->peer = NULL;
+    atomic_store_explicit(&pad->linked, 0, memory_order_release);
     pthread_mutex_unlock(&pad->link_lock);
     if (stale_peer) {
         pthread_mutex_lock(&stale_peer->link_lock);
-        if (stale_peer->peer == pad) stale_peer->peer = NULL;
+        if (stale_peer->peer == pad) {
+            stale_peer->peer = NULL;
+            atomic_store_explicit(&stale_peer->linked, 0, memory_order_release);
+        }
         pthread_mutex_unlock(&stale_peer->link_lock);
     }
 
@@ -526,6 +531,8 @@ zst_pad_link(zst_pad_t* src, zst_pad_t* sink)
 
     src->peer = zst_pad_ref(sink);
     sink->peer = zst_pad_ref(src);
+    atomic_store_explicit(&src->linked, 1, memory_order_release);
+    atomic_store_explicit(&sink->linked, 1, memory_order_release);
     pad_unlock_pair(src, sink);
 
     /* Replay sticky events */
@@ -557,10 +564,8 @@ zst_pad_get_peer(zst_pad_t* pad)
 int
 zst_pad_is_linked(zst_pad_t* pad)
 {
-    zst_pad_t* peer = zst_pad_get_peer(pad);
-    if (!peer) return 0;
-    zst_pad_unref(peer);
-    return 1;
+    if (!pad) return 0;
+    return atomic_load_explicit(&pad->linked, memory_order_acquire) != 0;
 }
 
 void
@@ -580,8 +585,10 @@ zst_pad_unlink(zst_pad_t* pad)
     pad_lock_pair(pad, peer);
     if (pad->peer == peer) {
         pad->peer = NULL;
+        atomic_store_explicit(&pad->linked, 0, memory_order_release);
         if (peer->peer == pad) {
             peer->peer = NULL;
+            atomic_store_explicit(&peer->linked, 0, memory_order_release);
         }
         unlinked = 1;
     }

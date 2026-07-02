@@ -21,7 +21,12 @@ typedef struct {
     _Atomic(bool)   running;
     pthread_t* threads;
     uint32_t        nb_threads;
-    zst_queue_t* ready_queue; 
+    zst_queue_t* ready_queue;
+    pthread_mutex_t source_cache_lock;
+    zst_element_t** source_roots;
+    uint32_t        nb_source_roots;
+    uint32_t        source_roots_capacity;
+    uint64_t        source_roots_graph_version;
 } sched_priv_t;
 
 typedef struct {
@@ -81,6 +86,104 @@ zst_scheduler_release_task_buffer(zst_buffer_t* task_buffer, bool reset_queued)
     zst_buffer_unref(task_buffer);
 }
 
+static bool
+scheduler_element_has_linked_sink_pad(zst_element_t* el)
+{
+    uint32_t nb_sink_pads = zst_element_get_sink_pad_count(el);
+    if (nb_sink_pads == 0) return false;
+
+    if (nb_sink_pads == 1) {
+        zst_pad_t* sink_pad = zst_element_get_first_sink_pad_ref(el);
+        int linked = sink_pad ? zst_pad_is_linked(sink_pad) : 0;
+        if (sink_pad) zst_pad_unref(sink_pad);
+        return linked != 0;
+    }
+
+    zst_pad_t** sink_pads = NULL;
+    if (zst_element_snapshot_sink_pads(el, &sink_pads, &nb_sink_pads) != ZST_OK) {
+        return true;
+    }
+
+    bool linked = false;
+    for (uint32_t i = 0; i < nb_sink_pads; i++) {
+        if (sink_pads[i] && zst_pad_is_linked(sink_pads[i])) {
+            linked = true;
+            break;
+        }
+    }
+    zst_element_pad_snapshot_free(sink_pads, nb_sink_pads);
+    return linked;
+}
+
+static int
+scheduler_refresh_source_roots_locked(zst_scheduler_t* sched, zst_pipeline_t* pipe)
+{
+    sched_priv_t* p = sched->priv;
+    uint64_t graph_version = atomic_load_explicit(&pipe->graph_version, memory_order_acquire);
+
+    pthread_mutex_lock(&p->source_cache_lock);
+    if (p->source_roots_graph_version == graph_version) {
+        pthread_mutex_unlock(&p->source_cache_lock);
+        return 1;
+    }
+
+    if (p->source_roots_capacity < pipe->nb_elements) {
+        zst_element_t** roots = realloc(p->source_roots,
+                                        pipe->nb_elements * sizeof(*roots));
+        if (!roots) {
+            pthread_mutex_unlock(&p->source_cache_lock);
+            return 0;
+        }
+        p->source_roots = roots;
+        p->source_roots_capacity = pipe->nb_elements;
+    }
+
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < pipe->nb_elements; i++) {
+        zst_element_t* el = pipe->elements[i];
+        if (!scheduler_element_has_linked_sink_pad(el)) {
+            p->source_roots[count++] = el;
+        }
+    }
+    p->nb_source_roots = count;
+    p->source_roots_graph_version = graph_version;
+    pthread_mutex_unlock(&p->source_cache_lock);
+    return 1;
+}
+
+static void
+scheduler_queue_source_roots(zst_scheduler_t* sched, bool playing_only)
+{
+    if (!sched || !sched->pipeline) return;
+
+    sched_priv_t* p = sched->priv;
+    zst_pipeline_t* pipe = sched->pipeline;
+    pthread_rwlock_rdlock(&pipe->elements_lock);
+
+    if (scheduler_refresh_source_roots_locked(sched, pipe)) {
+        pthread_mutex_lock(&p->source_cache_lock);
+        for (uint32_t i = 0; i < p->nb_source_roots; i++) {
+            zst_element_t* el = p->source_roots[i];
+            if (!playing_only ||
+                atomic_load_explicit(&el->state, memory_order_acquire) == ZST_STATE_PLAYING) {
+                zst_scheduler_queue_task(sched, el);
+            }
+        }
+        pthread_mutex_unlock(&p->source_cache_lock);
+    } else {
+        for (uint32_t i = 0; i < pipe->nb_elements; i++) {
+            zst_element_t* el = pipe->elements[i];
+            if ((!playing_only ||
+                 atomic_load_explicit(&el->state, memory_order_acquire) == ZST_STATE_PLAYING) &&
+                !scheduler_element_has_linked_sink_pad(el)) {
+                zst_scheduler_queue_task(sched, el);
+            }
+        }
+    }
+
+    pthread_rwlock_unlock(&pipe->elements_lock);
+}
+
 static void 
 execute_element_task(zst_scheduler_t* sched, zst_element_t* el, zst_pipeline_t* pipe) 
 {
@@ -89,11 +192,7 @@ execute_element_task(zst_scheduler_t* sched, zst_element_t* el, zst_pipeline_t* 
         return;
     }
 
-    zst_pad_t** sink_pads = NULL;
-    uint32_t nb_sink_pads = 0;
-    zst_element_snapshot_sink_pads(el, &sink_pads, &nb_sink_pads);
-    bool is_source = (nb_sink_pads == 0);
-    zst_element_pad_snapshot_free(sink_pads, nb_sink_pads);
+    bool is_source = (zst_element_get_sink_pad_count(el) == 0);
 
     if (el->ops && el->ops->process) {
         zst_buffer_t* out_buf = NULL;
@@ -103,10 +202,8 @@ execute_element_task(zst_scheduler_t* sched, zst_element_t* el, zst_pipeline_t* 
         if (ret == ZST_OK) {
             zst_pipeline_update_buffer_pool_sizing_if_needed(pipe, el);
             if (out_buf) {
-                zst_pad_t** src_pads = NULL;
-                uint32_t nb_src_pads = 0;
-                zst_element_snapshot_src_pads(el, &src_pads, &nb_src_pads);
-                if (nb_src_pads > 0 && src_pads[0]) {
+                zst_pad_t* first_src_pad = zst_element_get_first_src_pad_ref(el);
+                if (first_src_pad) {
                     if (pipe->clock_sync && el->clock && pipe->base_time > 0
                         && !(out_buf->flags & (ZST_BUFFER_FLAG_EOS | ZST_BUFFER_FLAG_DROP))) {
                         zst_time_t now = zst_clock_get_time(el->clock);
@@ -115,11 +212,11 @@ execute_element_task(zst_scheduler_t* sched, zst_element_t* el, zst_pipeline_t* 
                             zst_clock_wait(el->clock, out_buf->pts - run_time);
                         }
                     }
-                    
-                    zst_pad_push(src_pads[0], out_buf);
+
+                    zst_pad_push(first_src_pad, out_buf);
+                    zst_pad_unref(first_src_pad);
                 }
                 zst_buffer_unref(out_buf);
-                zst_element_pad_snapshot_free(src_pads, nb_src_pads);
             }
             
             if (is_source) {
@@ -132,15 +229,13 @@ execute_element_task(zst_scheduler_t* sched, zst_element_t* el, zst_pipeline_t* 
             zst_buffer_t* eos_buf = zst_buffer_create(ZST_BUFFER_USER);
             if (eos_buf) {
                 eos_buf->flags |= ZST_BUFFER_FLAG_EOS;
-                zst_pad_t** src_pads = NULL;
-                uint32_t nb_src_pads = 0;
-                zst_element_snapshot_src_pads(el, &src_pads, &nb_src_pads);
-                if (nb_src_pads > 0 && src_pads[0]) {
-                    zst_pad_push(src_pads[0], eos_buf);
+                zst_pad_t* first_src_pad = zst_element_get_first_src_pad_ref(el);
+                if (first_src_pad) {
+                    zst_pad_push(first_src_pad, eos_buf);
+                    zst_pad_unref(first_src_pad);
                 } else if (el->bus) {
                     zst_bus_post(el->bus, zst_event_new_eos(el));
                 }
-                zst_element_pad_snapshot_free(src_pads, nb_src_pads);
                 zst_buffer_unref(eos_buf);
             }
             atomic_store_explicit(&el->state, ZST_STATE_READY, memory_order_release);
@@ -179,30 +274,7 @@ worker_pool_loop(void* arg)
             }
             zst_scheduler_release_task_buffer(task_buffer, false);
         } else {
-            zst_pipeline_t* pipe = sched->pipeline;
-            if (pipe) {
-                pthread_rwlock_rdlock(&pipe->elements_lock);
-                for (uint32_t i = 0; i < pipe->nb_elements; i++) {
-                    zst_element_t* el = pipe->elements[i];
-                    if (atomic_load_explicit(&el->state, memory_order_acquire) == ZST_STATE_PLAYING) {
-                        bool is_src = true;
-                        zst_pad_t** sink_pads = NULL;
-                        uint32_t nb_sink_pads = 0;
-                        zst_element_snapshot_sink_pads(el, &sink_pads, &nb_sink_pads);
-                        for (uint32_t p_idx = 0; p_idx < nb_sink_pads; p_idx++) {
-                            if (sink_pads[p_idx] && zst_pad_is_linked(sink_pads[p_idx])) {
-                                is_src = false;
-                                break;
-                            }
-                        }
-                        zst_element_pad_snapshot_free(sink_pads, nb_sink_pads);
-                        if (is_src) {
-                            zst_scheduler_queue_task(sched, el);
-                        }
-                    }
-                }
-                pthread_rwlock_unlock(&pipe->elements_lock);
-            }
+            scheduler_queue_source_roots(sched, true);
         }
     }
 
@@ -231,6 +303,11 @@ zst_scheduler_create(const zst_scheduler_config_t* cfg)
 
     zst_queue_config_t q_cfg = { .mode = ZST_QUEUE_SYNC, .max_buffers = 2048 };
     p->ready_queue = zst_queue_create(&q_cfg);
+    pthread_mutex_init(&p->source_cache_lock, NULL);
+    p->source_roots = NULL;
+    p->nb_source_roots = 0;
+    p->source_roots_capacity = 0;
+    p->source_roots_graph_version = 0;
     atomic_store_explicit(&p->running, false, memory_order_relaxed);
     
     sched->priv = p;
@@ -245,6 +322,8 @@ zst_scheduler_destroy(zst_scheduler_t* sched)
     if (p) {
         zst_scheduler_stop(sched);
         zst_queue_destroy(p->ready_queue);
+        pthread_mutex_destroy(&p->source_cache_lock);
+        free(p->source_roots);
         free(p);
     }
     free(sched);
@@ -272,12 +351,7 @@ zst_scheduler_run(zst_scheduler_t* sched)
         pthread_rwlock_rdlock(&sched->pipeline->elements_lock);
         for (uint32_t i = 0; i < sched->pipeline->nb_elements; i++) {
             zst_element_t* el = sched->pipeline->elements[i];
-            zst_pad_t** sink_pads = NULL;
-            uint32_t nb_sink_pads = 0;
-            zst_element_snapshot_sink_pads(el, &sink_pads, &nb_sink_pads);
-            bool is_src = (nb_sink_pads == 0);
-            zst_element_pad_snapshot_free(sink_pads, nb_sink_pads);
-            if (is_src) {
+            if (zst_element_get_sink_pad_count(el) == 0) {
                 zst_scheduler_queue_task(sched, el);
             }
         }
@@ -332,28 +406,7 @@ zst_scheduler_wake(zst_scheduler_t* sched)
 
     zst_pipeline_t* pipe = sched->pipeline;
     if (pipe) {
-        pthread_rwlock_rdlock(&pipe->elements_lock);
-        for (uint32_t i = 0; i < pipe->nb_elements; i++) {
-            zst_element_t* el = pipe->elements[i];
-            if (atomic_load_explicit(&el->state, memory_order_acquire) == ZST_STATE_PLAYING) {
-                bool is_src = true;
-                zst_pad_t** sink_pads = NULL;
-                uint32_t nb_sink_pads = 0;
-                if (zst_element_snapshot_sink_pads(el, &sink_pads, &nb_sink_pads) == ZST_OK) {
-                    for (uint32_t p_idx = 0; p_idx < nb_sink_pads; p_idx++) {
-                        if (sink_pads[p_idx] && zst_pad_is_linked(sink_pads[p_idx])) {
-                            is_src = false;
-                            break;
-                        }
-                    }
-                    zst_element_pad_snapshot_free(sink_pads, nb_sink_pads);
-                }
-                if (is_src) {
-                    zst_scheduler_queue_task(sched, el);
-                }
-            }
-        }
-        pthread_rwlock_unlock(&pipe->elements_lock);
+        scheduler_queue_source_roots(sched, true);
     }
     return ZST_OK;
 }
