@@ -5205,6 +5205,47 @@ static void test_srt_parser(void)
     PASS();
 }
 
+static void test_srt_parser_errors(void)
+{
+    TEST("SRT Parser error handling");
+
+    /* 1. Non-existent file */
+    zst_element_t* srt_parser = zst_srt_parser_create("non_existent_file.srt");
+    assert(srt_parser != NULL);
+    assert(zst_element_set_state(srt_parser, ZST_STATE_READY) != ZST_OK);
+    zst_element_destroy(srt_parser);
+
+    /* 2. Empty file */
+    const char* empty_file = "test_empty.srt";
+    FILE* f = fopen(empty_file, "w");
+    assert(f != NULL);
+    fclose(f);
+
+    srt_parser = zst_srt_parser_create(empty_file);
+    assert(srt_parser != NULL);
+    /* parse_srt_file succeeds on empty file but returns 0 entries */
+    assert(zst_element_set_state(srt_parser, ZST_STATE_READY) == ZST_OK);
+    zst_element_destroy(srt_parser);
+    remove(empty_file);
+
+    /* 3. Malformed file */
+    const char* malformed_file = "test_malformed.srt";
+    f = fopen(malformed_file, "w");
+    assert(f != NULL);
+    fprintf(f, "This is not a valid SRT format\n");
+    fprintf(f, "No arrows, no timestamps\n");
+    fclose(f);
+
+    srt_parser = zst_srt_parser_create(malformed_file);
+    assert(srt_parser != NULL);
+    /* parse_srt_file doesn't fail but skips malformed blocks */
+    assert(zst_element_set_state(srt_parser, ZST_STATE_READY) == ZST_OK);
+    zst_element_destroy(srt_parser);
+    remove(malformed_file);
+
+    PASS();
+}
+
 static void
 test_text_overlay(void)
 {
@@ -8260,6 +8301,7 @@ int main(void)
     /* ── Text Overlay (Phase 11a) ── */
     printf("[text overlay]\n");
     test_srt_parser();
+    test_srt_parser_errors();
 #ifdef HAS_FREETYPE
     test_text_overlay();
     test_text_overlay_multiline();
