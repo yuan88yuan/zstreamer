@@ -32,8 +32,9 @@
 #include "zst_bus.h"
 #include "zst_pipeline.h"
 
-static int g_tests_run   = 0;
+static int g_tests_run = 0;
 static int g_tests_passed = 0;
+static int g_tests_skipped = 0;
 
 #define TEST(name)                                              \
     do {                                                        \
@@ -46,6 +47,13 @@ static int g_tests_passed = 0;
     do {                                                        \
         g_tests_passed++;                                       \
         printf("PASSED\n");                                     \
+    } while(0)
+
+#define SKIP(msg)                                               \
+    do {                                                        \
+        g_tests_skipped++;                                      \
+        printf("SKIP (%s) ", msg);                              \
+        return;                                                 \
     } while(0)
 
 #define FAIL(msg)                                               \
@@ -292,10 +300,7 @@ test_xvfb_pipeline(void)
     /* Check if Xvfb is available */
     int has_xvfb = (access("/usr/bin/Xvfb", X_OK) == 0);
     if (!has_xvfb) {
-        printf("SKIP (Xvfb not available) ");
-        g_tests_passed++;
-        g_tests_run++;
-        return;
+        SKIP("Xvfb not available");
     }
 
     /* Start Xvfb on a virtual display */
@@ -306,10 +311,7 @@ test_xvfb_pipeline(void)
         _exit(1);
     }
     if (xvfb_pid < 0) {
-        printf("SKIP (fork failed) ");
-        g_tests_passed++;
-        g_tests_run++;
-        return;
+        SKIP("fork failed");
     }
 
     /* Wait for Xvfb to start */
@@ -330,10 +332,7 @@ test_xvfb_pipeline(void)
         if (sink) zst_element_destroy(sink);
         kill(xvfb_pid, SIGTERM);
         waitpid(xvfb_pid, NULL, 0);
-        printf("SKIP (element creation failed — GL may not be available in software mode, this is expected on some systems) ");
-        g_tests_passed++;
-        g_tests_run++;
-        return;
+        SKIP("element creation failed — GL may not be available in software mode, this is expected on some systems");
     }
 
     /* Set properties */
@@ -368,13 +367,10 @@ test_xvfb_pipeline(void)
     zst_result_t r = zst_pad_link(src_pad, sink_pad);
     if (r != ZST_OK) {
         /* GL may not initialize — null mode is a valid fallback */
-        printf("SKIP (linking failed — likely GL init failure in software mode, null-mode fallback expected) ");
         zst_pipeline_destroy(pipe);
         kill(xvfb_pid, SIGTERM);
         waitpid(xvfb_pid, NULL, 0);
-        g_tests_passed++;
-        g_tests_run++;
-        return;
+        SKIP("linking failed — likely GL init failure in software mode, null-mode fallback expected");
     }
 
     /* Set state PLAYING — scheduler is auto-created internally */
@@ -460,8 +456,8 @@ int main(void)
     TEST("Xvfb pipeline test");        test_xvfb_pipeline();
     TEST("EOS on close");              test_eos_on_close();
 
-    printf("\n=== Results: %d / %d passed ===\n",
-           g_tests_passed, g_tests_run);
+    printf("\n=== Results: %d passed, %d skipped, %d total ===\n",
+           g_tests_passed, g_tests_skipped, g_tests_run);
 
-    return (g_tests_passed == g_tests_run) ? 0 : 1;
+    return ((g_tests_passed + g_tests_skipped) == g_tests_run) ? 0 : 1;
 }

@@ -21,9 +21,11 @@
 
 static int g_tests_run = 0;
 static int g_tests_passed = 0;
+static int g_tests_skipped = 0;
 
 #define TEST(name) do { g_tests_run++; printf("  TEST: %-50s ... ", name); fflush(stdout); } while (0)
 #define PASS() do { g_tests_passed++; printf("PASSED\n"); } while (0)
+#define SKIP(msg) do { g_tests_skipped++; printf("SKIP (%s) ", msg); return; } while (0)
 #define FAIL(msg) do { printf("FAILED: %s\n", msg); return; } while (0)
 
 static void
@@ -133,10 +135,7 @@ pixel_check(uint8_t* rgba, uint32_t w, uint32_t h,
     if (zst_gl_comp_sink_capture(el, w, h, buf) != ZST_OK) { \
         zst_element_set_state(el, ZST_STATE_NULL); \
         zst_element_destroy(el); \
-        printf("SKIP (no GL context) "); \
-        g_tests_passed++; \
-        g_tests_run++; \
-        return; \
+        SKIP("no GL context"); \
     } \
 } while (0)
 
@@ -277,10 +276,7 @@ test_xvfb_gl_smoke(void)
 {
     const char* display = getenv("DISPLAY");
     if (!display || display[0] == '\0') {
-        printf("SKIP (DISPLAY not set) ");
-        g_tests_passed++;
-        g_tests_run++;
-        return;
+        SKIP("DISPLAY not set");
     }
 
     zst_element_t* el = make_glcompsink();
@@ -695,6 +691,6 @@ int main(void)
 
     if (g_saved_display) free(g_saved_display);
 
-    printf("\n=== Results: %d / %d passed ===\n", g_tests_passed, g_tests_run);
-    return (g_tests_passed == g_tests_run) ? 0 : 1;
+    printf("\n=== Results: %d passed, %d skipped, %d total ===\n", g_tests_passed, g_tests_skipped, g_tests_run);
+    return ((g_tests_passed + g_tests_skipped) == g_tests_run) ? 0 : 1;
 }

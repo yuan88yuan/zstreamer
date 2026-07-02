@@ -28,7 +28,7 @@ test:native:
     - make -j$(nproc)
     - ctest --output-on-failure
     - cd ..
-    - ./tests/test_install.sh build
+    - bash ./tests/test_install.sh build
 
 # ── Job: Docker Build & Test (Core + V4L2) ───────────────────────────────────
 # Simulates the GitHub Action docker-core-and-v4l2 environment using DinD.
