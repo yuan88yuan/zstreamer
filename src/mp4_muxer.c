@@ -15,6 +15,7 @@
 #include "zst_pad.h"
 #include "zst_buffer.h"
 #include "zst_bus.h"
+#include "zst_media_utils.h"
 
 typedef struct {
     AVFormatContext* fc;
@@ -64,22 +65,6 @@ mp4_aac_freq_index(int sample_rate)
 }
 
 static int
-mp4_find_start_code(const uint8_t* data, int size, int offset, int* code_size)
-{
-    for (int i = offset; i + 3 <= size; i++) {
-        if (i + 4 <= size && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1) {
-            *code_size = 4;
-            return i;
-        }
-        if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
-            *code_size = 3;
-            return i;
-        }
-    }
-    return -1;
-}
-
-static int
 mp4_copy_nal(uint8_t** dst, int* dst_size, const uint8_t* nal, int nal_size)
 {
     uint8_t* p = av_mallocz(nal_size + AV_INPUT_BUFFER_PADDING_SIZE);
@@ -101,14 +86,14 @@ mp4_parse_h264_extradata(mp4_muxer_t* s, const uint8_t* data, int size)
     int pps_size = 0;
 
     int code_size = 0;
-    int sc = mp4_find_start_code(data, size, 0, &code_size);
+    int sc = zst_find_start_code(data, size, 0, &code_size);
     if (sc >= 0) {
         s->video_annexb = 1;
         int pos = sc;
         while (pos >= 0 && pos < size) {
             int nal_start = pos + code_size;
             int next_code_size = 0;
-            int next = mp4_find_start_code(data, size, nal_start, &next_code_size);
+            int next = zst_find_start_code(data, size, nal_start, &next_code_size);
             int nal_end = next >= 0 ? next : size;
             while (nal_end > nal_start && data[nal_end - 1] == 0) nal_end--;
             int nal_size = nal_end - nal_start;
@@ -184,7 +169,7 @@ mp4_annexb_to_avcc(const uint8_t* data, int size, int* out_size)
 {
     *out_size = 0;
     int code_size = 0;
-    int pos = mp4_find_start_code(data, size, 0, &code_size);
+    int pos = zst_find_start_code(data, size, 0, &code_size);
     if (pos < 0) return NULL;
 
     uint8_t* out = malloc((size_t)size + 4);
@@ -194,7 +179,7 @@ mp4_annexb_to_avcc(const uint8_t* data, int size, int* out_size)
     while (pos >= 0 && pos < size) {
         int nal_start = pos + code_size;
         int next_code_size = 0;
-        int next = mp4_find_start_code(data, size, nal_start, &next_code_size);
+        int next = zst_find_start_code(data, size, nal_start, &next_code_size);
         int nal_end = next >= 0 ? next : size;
         while (nal_end > nal_start && data[nal_end - 1] == 0) nal_end--;
         int nal_size = nal_end - nal_start;

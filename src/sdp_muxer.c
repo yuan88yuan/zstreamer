@@ -23,6 +23,7 @@
 #include "zst_caps.h"
 #include "zst_log.h"
 #include "zstreamer/elements/zst_sdp_muxer.h"
+#include "zst_media_utils.h"
 
 #define SDP_MUXER_TEXT_MAX       4096
 #define SDP_MUXER_EXTRA_MAX      512
@@ -97,21 +98,6 @@ static int sdp_muxer_is_audio_codec(const sdp_muxer_t* s, const char* codec) {
     return s && codec && strcasecmp(s->audio_codec, codec) == 0;
 }
 
-static int sdp_muxer_find_start_code(const uint8_t* data, int size, int offset, int* code_size) {
-    if (code_size) *code_size = 0;
-    for (int i = offset; i + 3 <= size; i++) {
-        if (i + 4 <= size && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1) {
-            if (code_size) *code_size = 4;
-            return i;
-        }
-        if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
-            if (code_size) *code_size = 3;
-            return i;
-        }
-    }
-    return -1;
-}
-
 static void sdp_muxer_copy_limited(uint8_t* dst, int* dst_len, const uint8_t* src, int len) {
     if (!dst || !dst_len || !src || len <= 0) return;
     if (len > SDP_MUXER_EXTRA_MAX) len = SDP_MUXER_EXTRA_MAX;
@@ -121,11 +107,11 @@ static void sdp_muxer_copy_limited(uint8_t* dst, int* dst_len, const uint8_t* sr
 
 static void sdp_muxer_parse_h264_annexb(sdp_muxer_t* s, const uint8_t* data, int size) {
     int code_size = 0;
-    int pos = sdp_muxer_find_start_code(data, size, 0, &code_size);
+    int pos = zst_find_start_code(data, size, 0, &code_size);
     while (pos >= 0 && pos < size) {
         int nal_start = pos + code_size;
         int next_code = 0;
-        int next = sdp_muxer_find_start_code(data, size, nal_start, &next_code);
+        int next = zst_find_start_code(data, size, nal_start, &next_code);
         int nal_end = next >= 0 ? next : size;
         while (nal_end > nal_start && data[nal_end - 1] == 0) nal_end--;
         int nal_len = nal_end - nal_start;
@@ -145,11 +131,11 @@ static void sdp_muxer_parse_h264_annexb(sdp_muxer_t* s, const uint8_t* data, int
 
 static void sdp_muxer_parse_h265_annexb(sdp_muxer_t* s, const uint8_t* data, int size) {
     int code_size = 0;
-    int pos = sdp_muxer_find_start_code(data, size, 0, &code_size);
+    int pos = zst_find_start_code(data, size, 0, &code_size);
     while (pos >= 0 && pos < size) {
         int nal_start = pos + code_size;
         int next_code = 0;
-        int next = sdp_muxer_find_start_code(data, size, nal_start, &next_code);
+        int next = zst_find_start_code(data, size, nal_start, &next_code);
         int nal_end = next >= 0 ? next : size;
         while (nal_end > nal_start && data[nal_end - 1] == 0) nal_end--;
         int nal_len = nal_end - nal_start;
